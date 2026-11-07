@@ -31,7 +31,8 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return result === "granted";
 }
 
-export function showBrowserNotification(title: string, body: string, leadName?: string) {
+/** leadId: id do lead (crm_leads.id). Nunca nome nem telefone: vão para a URL (LGPD). */
+export function showBrowserNotification(title: string, body: string, leadId?: string) {
   if (!isPushEnabled()) return;
   if (!("Notification" in window)) return;
   if (Notification.permission !== "granted") return;
@@ -46,8 +47,8 @@ export function showBrowserNotification(title: string, body: string, leadName?: 
   notification.onclick = () => {
     window.focus();
     notification.close();
-    if (leadName) {
-      window.location.href = `/chat?lead=${encodeURIComponent(leadName)}`;
+    if (leadId) {
+      window.location.href = `/chat?lead=${encodeURIComponent(leadId)}`;
     }
   };
 }

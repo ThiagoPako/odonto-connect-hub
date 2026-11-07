@@ -10822,7 +10822,10 @@ async function applyOpenWaChannelState(channel, state, { qr = null, phone = null
   ).catch(e => console.error('[openwa] estado do canal:', e.message));
   waChannels.invalidate(channel.instance_name);
   waOpenInstancesCache = { at: 0, names: waOpenInstancesCache.names };
-  broadcastSSE('whatsapp_channel_state', { channelId: channel.id, state, ...(qr ? { qr } : {}) }, tenantId);
+  // O QR nunca vai pelo SSE (que chega a todos os usuários da clínica, inclusive a recepção):
+  // só o aviso de que há QR novo. A tela do administrador busca a imagem pela rota /qr, que
+  // exige verifyAdmin (revisão F1.1, N1).
+  broadcastSSE('whatsapp_channel_state', { channelId: channel.id, state, ...(qr ? { qrAvailable: true } : {}) }, tenantId);
   if (allowPromote && state === 'open' && channel.role !== 'primary') {
     const primary = await waChannels.getPrimary(tenantId);
     const open = await getOpenEvolutionInstances();
@@ -10892,8 +10895,12 @@ app.post('/api/webhook/openwa/:channelId', async (req, res) => {
 
     // Chave de dedupe do CORPO (coberto pelo HMAC), com o canal na frente: um cabeçalho trocado
     // num replay assinado não escapa do dedupe, e canais diferentes não colidem (revisão F1, I2).
+    // Sem idempotencyKey no corpo: dedupe pelo hash do corpo bruto assinado (o reenvio do
+    // OpenWA repete o mesmo corpo; eventos reais trazem timestamp e diferem) (revisão F1.1, N4).
     const bodyKey = req.body?.idempotencyKey ? String(req.body.idempotencyKey) : '';
-    const eventId = bodyKey ? `${channel.id}:${bodyKey}` : null;
+    const eventId = bodyKey
+      ? `${channel.id}:${bodyKey}`
+      : `${channel.id}:sha256:${createHash('sha256').update(req.rawBody).digest('hex')}`;
     if (!(await claimWebhookEvent(pool, 'openwa', eventId))) return res.json({ duplicate: true });
     const events = validEvents(openWaProvider.parseWebhook(req.body))
       .filter(e => e.channelRef === String(channel.external_id));
@@ -11005,10 +11012,18 @@ app.get('/api/whatsapp/channels/:id/qr', async (req, res) => {
     if (!loaded.channel) return res.status(503).json({ error: 'Credenciais do canal indisponíveis. Desconecte e conecte de novo.' });
     let r = await openWaProvider.getQr(loaded.channel);
     if (!r.ok && r.state === 'close') { await openWaProvider.start(loaded.channel); r = await openWaProvider.getQr(loaded.channel); }
-    if (r.ok && r.qr) return res.json({ qr: r.qr, state: 'connecting' });
+    if (r.ok && r.qr) return res.json({ qr: r.qr, state: 'connecting', live: true });
     const st = await openWaProvider.getState(loaded.channel);
-    if (st.ok) await applyOpenWaChannelState(loaded.record, st.state, { phone: st.phone });
-    res.json({ qr: null, state: st.ok ? st.state : null });
+    // OpenWA fora do ar (ou sem responder): erro claro em vez de 200 {qr:null}, para a tela
+    // parar de girar "Gerando o código…" (revisão F1.1, C1).
+    if (!st.ok && (st.status === 401 || st.status === 403 || st.status === 404)) {
+      return res.status(502).json({ error: 'O servidor do número reserva recusou este canal. Remova o número reserva e conecte de novo.', live: false });
+    }
+    if (!st.ok) {
+      return res.status(502).json({ error: 'O servidor do número reserva não respondeu. Tente de novo em alguns minutos.', live: false });
+    }
+    await applyOpenWaChannelState(loaded.record, st.state, { phone: st.phone });
+    res.json({ qr: null, state: st.state, live: true });
   } catch (error) {
     const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
     res.status(status).json({ error: status === 500 ? 'Erro ao obter o QR' : error.message });
@@ -11051,7 +11066,9 @@ app.delete('/api/whatsapp/channels/:id', async (req, res) => {
     const { user } = await verifyAdmin(req);
     const loaded = await loadTenantOpenWaChannel(user, req.params.id);
     if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
-    if (loaded.channel) await openWaProvider.removeSession(loaded.channel);
+    // A sessão é apagada com a chave ADMIN: não depende de decifrar as credenciais do canal
+    // (sem elas, só a revogação da chave da sessão fica para trás) (revisão F1, I3).
+    await openWaProvider.removeSession(loaded.channel || { external_id: loaded.record.external_id, credentials: {} });
     await pool.query('DELETE FROM whatsapp_instances WHERE instance_name = $1 AND tenant_id = $2', [loaded.record.instance_name, String(user.tenant_id)]);
     await pool.query('DELETE FROM whatsapp_channels WHERE id = $1 AND tenant_id = $2', [loaded.record.id, String(user.tenant_id)]);
     waChannels.invalidate(loaded.record.instance_name);

@@ -436,7 +436,7 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned, moveTargets = 
 
     // If already attended by current user, just navigate
     if (isAttendedByMe) {
-      navigate({ to: "/chat", search: { lead: lead.name } });
+      navigate({ to: "/chat", search: { lead: lead.id } });
       return;
     }
 
@@ -465,7 +465,7 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned, moveTargets = 
       onLeadAssigned?.(lead.id, user.name, userInitials, user.avatar_url);
       toast.success(`Atendimento de ${lead.name} iniciado`);
       // Só abre o chat se o atendimento foi de fato assumido
-      navigate({ to: "/chat", search: { lead: lead.name } });
+      navigate({ to: "/chat", search: { lead: lead.id } });
     } catch (err) {
       toast.error("Erro ao assumir atendimento: " + (err instanceof Error ? err.message : String(err)));
     } finally {
@@ -590,7 +590,7 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned, moveTargets = 
                 Cadastrar como Paciente
               </button>
               <button
-                onClick={(e) => { e.stopPropagation(); setShowMenu(false); navigate({ to: "/chat", search: { lead: lead.name } }); }}
+                onClick={(e) => { e.stopPropagation(); setShowMenu(false); navigate({ to: "/chat", search: { lead: lead.id } }); }}
                 className="flex items-center gap-2 w-full px-3 py-2 text-xs hover:bg-muted transition-colors text-left text-foreground"
               >
                 <MessageSquare className="h-3.5 w-3.5 text-chart-2" />

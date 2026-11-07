@@ -22,7 +22,8 @@ export interface WhatsAppChannel {
 export interface ChannelStateEvent {
   channelId: string;
   state: ChannelState;
-  qr?: string;
+  /** Há QR novo: a tela do administrador busca a imagem pela rota /qr (o SSE não leva a imagem). */
+  qrAvailable?: boolean;
 }
 
 /** Mensagens do servidor que não são para a recepção ler como estão. */
@@ -41,7 +42,7 @@ async function call<T>(path: string, options?: Parameters<typeof vpsApiFetch>[1]
 export const whatsappChannelsApi = {
   list: () => call<{ channels: WhatsAppChannel[]; openwaAvailable: boolean }>("/whatsapp/channels", { background: true }),
   createReserva: () => call<{ channel: WhatsAppChannel; webhookRegistered: boolean }>("/whatsapp/openwa/channels", { method: "POST" }),
-  qr: (id: string) => call<{ qr: string | null; state: ChannelState | null }>(`/whatsapp/channels/${encodeURIComponent(id)}/qr`, { background: true }),
+  qr: (id: string) => call<{ qr: string | null; state: ChannelState | null; live?: boolean }>(`/whatsapp/channels/${encodeURIComponent(id)}/qr`, { background: true }),
   state: (id: string) => call<{ channel: WhatsAppChannel; live: boolean }>(`/whatsapp/channels/${encodeURIComponent(id)}/state`, { background: true }),
   disconnect: (id: string) => call<{ ok: boolean }>(`/whatsapp/channels/${encodeURIComponent(id)}/disconnect`, { method: "POST" }),
   remove: (id: string) => call<{ ok: boolean }>(`/whatsapp/channels/${encodeURIComponent(id)}`, { method: "DELETE" }),
