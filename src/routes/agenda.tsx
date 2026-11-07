@@ -84,16 +84,22 @@ function AgendaPage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isReprojecting, setIsReprojecting] = useState(false);
   const [clinicorpAtivo, setClinicorpAtivo] = useState(false);
+  // A clínica tem Clinicorp (de qualquer usuário)? Sem isso, "Atualizar agenda com
+  // Clinicorp" só confundia clínica que não usa a integração.
+  const [clinicorpDaClinica, setClinicorpDaClinica] = useState(false);
   const [showFiltros, setShowFiltros] = useState(false);
 
   // "Buscar do Clinicorp" usa as credenciais do próprio usuário (/sync/now é
-  // por usuário). "Atualizar agenda" é por clínica e continua sempre visível,
-  // porque ainda não existe um sinal de "clínica tem Clinicorp".
+  // por usuário). "Atualizar agenda" é por clínica: aparece se alguém da clínica
+  // configurou a integração (GET /api/clinicorp/tenant-status).
   useEffect(() => {
     let cancel = false;
     clinicorpApi.getMySettings()
       .then((s) => { if (!cancel) setClinicorpAtivo(!!s?.enabled); })
       .catch(() => { if (!cancel) setClinicorpAtivo(false); });
+    clinicorpApi.getTenantStatus()
+      .then((s) => { if (!cancel) setClinicorpDaClinica(!!s?.configured); })
+      .catch(() => { if (!cancel) setClinicorpDaClinica(false); });
     return () => { cancel = true; };
   }, []);
 
@@ -354,6 +360,7 @@ function AgendaPage() {
                   Buscar do Clinicorp
                 </Button>
             )}
+            {(clinicorpDaClinica || clinicorpAtivo) && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -365,6 +372,7 @@ function AgendaPage() {
                   <Send className={cn("h-4 w-4 mr-2 text-primary", isReprojecting && "animate-pulse")} />
                   Atualizar agenda com Clinicorp
                 </Button>
+            )}
             <Button size="sm" variant="outline" className="rounded-xl glass-card hover:bg-primary/10 transition-colors" onClick={loadAppointments} disabled={loading} aria-label="Recarregar agenda">
               <RefreshCw className={`h-4 w-4 text-primary ${loading ? "animate-spin" : ""}`} />
             </Button>

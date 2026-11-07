@@ -2451,6 +2451,15 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
     await fn(req, res, tId);
   });
 
+  // A clínica tem integração Clinicorp ativa? Só um booleano (nunca token ou subscriber):
+  // a agenda usa para mostrar "Atualizar agenda com Clinicorp" só a quem tem a integração.
+  app.get('/api/clinicorp/tenant-status', route(async (req, res) => {
+    const tId = await tenantOf(req);
+    if (!tId) return res.json({ configured: false });
+    const s = await loadSettingsForTenant(pool, tId);
+    res.json({ configured: !!s });
+  }));
+
   // ── Local read-only data (espelho) — escopo por tenant ───────
   app.get('/api/clinicorp/clinics', tenantList(async (req, res, tId) => {
     const { rows } = await pool.query('SELECT * FROM clinicorp_clinics WHERE tenant_id=$1 ORDER BY name', [tId]);

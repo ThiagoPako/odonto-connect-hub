@@ -372,12 +372,47 @@ function DentistaFormModal({
   const [status, setStatus] = useState<"ativo" | "inativo">(dentista?.status ?? "ativo");
   const [saving, setSaving] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const [errors, setErrors] = useState<Partial<Record<"nome" | "email" | "telefone" | "cro", string>>>({});
+
+  // Validação própria (noValidate): o aviso nativo do navegador some rápido e, no celular,
+  // o primeiro "Cadastrar" parecia não fazer nada. Aqui cada campo diz o que falta.
+  const validate = () => {
+    const next: typeof errors = {};
+    if (!nome.trim()) next.nome = "Informe o nome do dentista.";
+    if (!email.trim()) next.email = "Informe o e-mail. Use o mesmo do login dele para o painel do dentista funcionar.";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) next.email = "E-mail inválido. Exemplo: nome@clinica.com";
+    const digitos = telefone.replace(/\D/g, "");
+    if (!digitos) next.telefone = "Informe o telefone com DDD.";
+    else if (digitos.length < 10) next.telefone = "Telefone incompleto. Use DDD + número, ex.: (11) 99999-0000.";
+    if (!cro.trim()) next.cro = "Informe o CRO, ex.: CRO-SP 12345.";
+    return next;
+  };
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    const found = validate();
+    setErrors(found);
+    const first = (Object.keys(found) as (keyof typeof found)[])[0];
+    if (first) {
+      toast.error("Faltam dados para cadastrar o dentista. Confira os campos em vermelho.");
+      e.currentTarget.querySelector<HTMLInputElement>(`#dentista-${first}`)?.focus();
+      return;
+    }
     setSaving(true);
-    await onSave({ nome, email, telefone, cro, especialidade, comissao, status });
+    await onSave({ nome: nome.trim(), email: email.trim(), telefone, cro: cro.trim(), especialidade, comissao, status });
     setSaving(false);
   };
+
+  const fieldClass = (campo: keyof typeof errors) =>
+    `w-full h-10 px-4 rounded-xl bg-background border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 ${
+      errors[campo] ? "border-destructive focus:ring-destructive/30" : "border-border/60 focus:ring-primary/30"
+    }`;
+  const clearError = (campo: keyof typeof errors) =>
+    setErrors((prev) => (prev[campo] ? { ...prev, [campo]: undefined } : prev));
+  const erro = (campo: keyof typeof errors) =>
+    errors[campo] ? (
+      <p id={`dentista-${campo}-erro`} className="mt-1 text-[11px] text-destructive">{errors[campo]}</p>
+    ) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -390,27 +425,35 @@ function DentistaFormModal({
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Nome completo</label>
-              <input type="text" value={nome} onChange={(e) => setNome(e.target.value)} required placeholder="Dr. João Silva"
-                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+              <label htmlFor="dentista-nome" className="text-xs font-medium text-muted-foreground mb-1 block">Nome completo <span className="text-destructive" aria-hidden="true">*</span></label>
+              <input id="dentista-nome" type="text" value={nome} onChange={(e) => { setNome(e.target.value); clearError("nome"); }} placeholder="Dr. João Silva"
+                aria-required="true" aria-invalid={!!errors.nome} aria-describedby={errors.nome ? "dentista-nome-erro" : undefined}
+                className={fieldClass("nome")} />
+              {erro("nome")}
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">E-mail</label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="email@clinica.com"
-                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+              <label htmlFor="dentista-email" className="text-xs font-medium text-muted-foreground mb-1 block">E-mail <span className="text-destructive" aria-hidden="true">*</span></label>
+              <input id="dentista-email" type="email" value={email} onChange={(e) => { setEmail(e.target.value); clearError("email"); }} placeholder="email@clinica.com"
+                aria-required="true" aria-invalid={!!errors.email} aria-describedby={errors.email ? "dentista-email-erro" : undefined} autoComplete="email"
+                className={fieldClass("email")} />
+              {erro("email")}
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Telefone</label>
-              <input type="text" value={telefone} onChange={(e) => setTelefone(e.target.value)} required placeholder="(11) 99999-0000"
-                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+              <label htmlFor="dentista-telefone" className="text-xs font-medium text-muted-foreground mb-1 block">Telefone <span className="text-destructive" aria-hidden="true">*</span></label>
+              <input id="dentista-telefone" type="tel" value={telefone} onChange={(e) => { setTelefone(e.target.value); clearError("telefone"); }} placeholder="(11) 99999-0000"
+                aria-required="true" aria-invalid={!!errors.telefone} aria-describedby={errors.telefone ? "dentista-telefone-erro" : undefined} inputMode="tel" autoComplete="tel"
+                className={fieldClass("telefone")} />
+              {erro("telefone")}
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">CRO</label>
-              <input type="text" value={cro} onChange={(e) => setCro(e.target.value)} required placeholder="CRO-SP 12345"
-                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+              <label htmlFor="dentista-cro" className="text-xs font-medium text-muted-foreground mb-1 block">CRO <span className="text-destructive" aria-hidden="true">*</span></label>
+              <input id="dentista-cro" type="text" value={cro} onChange={(e) => { setCro(e.target.value); clearError("cro"); }} placeholder="CRO-SP 12345"
+                aria-required="true" aria-invalid={!!errors.cro} aria-describedby={errors.cro ? "dentista-cro-erro" : undefined}
+                className={fieldClass("cro")} />
+              {erro("cro")}
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Especialidade</label>
