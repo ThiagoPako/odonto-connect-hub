@@ -76,8 +76,10 @@ describe('rotas que estavam fora da matriz', () => {
         expect(res.body.error).toBe('Seu perfil não tem acesso a esta função');
         // Barrado antes de qualquer leitura/escrita na tabela da rota. DDL da auto-migração do
         // boot (assíncrona, ao importar o server) pode cair no meio do 1º teste: não conta.
+        // Nem a checagem global da assinatura (#101, lê só o status da clínica).
         const ddlDoBoot = /^\s*(ALTER|CREATE|DROP|COMMENT|DO)\b/i;
-        expect(sqlLog.filter(q => !/FROM profiles p/.test(q.text) && !ddlDoBoot.test(q.text))).toEqual([]);
+        const assinatura = /FROM tenants WHERE id = \$1/;
+        expect(sqlLog.filter(q => !/FROM profiles p/.test(q.text) && !ddlDoBoot.test(q.text) && !assinatura.test(q.text))).toEqual([]);
       }
     });
 });
