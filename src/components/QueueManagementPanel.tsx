@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Plus, Pencil, Trash2, Users, Phone, ListChecks, X } from "lucide-react";
 import { toast } from "sonner";
 import { adminListUsers, queuesApi } from "@/lib/vpsApi";
+import { useConfirm } from "@/hooks/useConfirm";
 
 export function QueueManagementPanel() {
   const [queues, setQueues] = useState<AttendanceQueue[]>([]);
@@ -18,9 +19,14 @@ export function QueueManagementPanel() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<{ id: string; name: string }[]>([]);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
 
   const loadQueues = () => {
     queuesApi.list().then(({ data, error }) => {
+      // Erro não vira "nenhuma fila": a clínica recriaria filas que já existem.
+      setLoadError(error);
+      if (error) return;
       if (data && Array.isArray(data)) {
         const mapped: AttendanceQueue[] = data.map((q) => ({
           id: q.id,
@@ -108,8 +114,15 @@ export function QueueManagementPanel() {
     loadQueues();
   };
 
-  const handleDelete = async (id: string) => {
-    const { error } = await queuesApi.delete(id);
+  const handleDelete = async (queue: AttendanceQueue) => {
+    const ok = await confirm({
+      title: `Excluir a fila "${queue.name}"?`,
+      description: "A fila sai do menu do WhatsApp e os pacientes não podem mais escolhê-la. Esta ação não pode ser desfeita.",
+      confirmLabel: "Excluir fila",
+      destructive: true,
+    });
+    if (!ok) return;
+    const { error } = await queuesApi.delete(queue.id);
     if (error) {
       toast.error("Erro ao remover: " + error);
       return;
@@ -123,12 +136,13 @@ export function QueueManagementPanel() {
     if (!queue) return;
     const { error } = await queuesApi.update(id, { active: !queue.active });
     if (error) { toast.error("Erro ao " + (queue.active ? "desativar" : "ativar") + " a fila: " + error); return; }
+    toast.success(queue.active ? `Fila "${queue.name}" desativada` : `Fila "${queue.name}" ativada`);
     loadQueues();
   };
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
             <ListChecks className="h-5 w-5 text-primary" />
@@ -145,7 +159,14 @@ export function QueueManagementPanel() {
         </Button>
       </CardHeader>
       <CardContent className="space-y-3">
-        {queues.length === 0 && (
+        {confirmDialog}
+        {loadError && (
+          <div role="alert" className="flex flex-wrap items-center justify-center gap-2 text-sm text-destructive text-center py-6">
+            Não foi possível carregar as filas. {loadError}
+            <Button variant="outline" size="sm" onClick={loadQueues}>Tentar de novo</Button>
+          </div>
+        )}
+        {!loadError && queues.length === 0 && (
           <p className="text-sm text-muted-foreground text-center py-6">
             Nenhuma fila criada. Clique em "Nova Fila" para começar.
           </p>
@@ -185,11 +206,11 @@ export function QueueManagementPanel() {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <Switch checked={queue.active} onCheckedChange={() => toggleActive(queue.id)} />
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(queue)}>
+              <Switch checked={queue.active} onCheckedChange={() => toggleActive(queue.id)} aria-label={queue.active ? `Desativar fila ${queue.name}` : `Ativar fila ${queue.name}`} />
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(queue)} aria-label={`Editar fila ${queue.name}`} title="Editar">
                 <Pencil className="h-4 w-4" />
               </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(queue.id)}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(queue)} aria-label={`Excluir fila ${queue.name}`} title="Excluir">
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
@@ -260,10 +281,24 @@ function QueueForm({
   availableUsers: { id: string; name: string }[];
 }) {
   const [newPhone, setNewPhone] = useState("");
+  const [phoneError, setPhoneError] = useState<string | null>(null);
 
+  // Número com DDI + DDD (12 ou 13 dígitos). Sem isso um número digitado errado
+  // fazia o roteamento falhar em silêncio.
   const addPhone = () => {
     if (!newPhone.trim()) return;
-    onChange({ ...queue, contactNumbers: [...queue.contactNumbers, newPhone.trim()] });
+    let digits = newPhone.replace(/\D/g, "");
+    if (digits.length === 10 || digits.length === 11) digits = "55" + digits;
+    if (digits.length < 12 || digits.length > 13) {
+      setPhoneError("Digite DDD + número, ex.: (11) 99999-0000.");
+      return;
+    }
+    if (queue.contactNumbers.some((p) => p.replace(/\D/g, "") === digits)) {
+      setPhoneError("Este número já está na lista.");
+      return;
+    }
+    setPhoneError(null);
+    onChange({ ...queue, contactNumbers: [...queue.contactNumbers, "+" + digits] });
     setNewPhone("");
   };
 
@@ -363,23 +398,29 @@ function QueueForm({
 
       {/* Contact Numbers */}
       <div>
-        <Label>Números de Contato Vinculados</Label>
+        <Label htmlFor="queue-phone">Números de Contato Vinculados</Label>
         <div className="flex gap-2 mt-1">
           <Input
+            id="queue-phone"
+            type="tel"
+            inputMode="tel"
             value={newPhone}
-            onChange={(e) => setNewPhone(e.target.value)}
-            placeholder="+55 11 99999-0000"
+            onChange={(e) => { setNewPhone(e.target.value); setPhoneError(null); }}
+            placeholder="(11) 99999-0000"
+            aria-invalid={!!phoneError}
+            aria-describedby={phoneError ? "queue-phone-error" : undefined}
             onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addPhone())}
           />
-          <Button type="button" size="sm" onClick={addPhone}>
+          <Button type="button" size="sm" onClick={addPhone} aria-label="Adicionar número">
             <Plus className="h-4 w-4" />
           </Button>
         </div>
+        {phoneError && <p id="queue-phone-error" className="mt-1 text-xs text-destructive">{phoneError}</p>}
         <div className="flex flex-wrap gap-1.5 mt-2">
           {queue.contactNumbers.map((phone, idx) => (
             <Badge key={idx} variant="secondary" className="gap-1 pr-1">
               <Phone className="h-3 w-3" /> {phone}
-              <button onClick={() => removePhone(idx)} className="ml-1 hover:text-destructive">
+              <button type="button" onClick={() => removePhone(idx)} className="ml-1 hover:text-destructive" aria-label={`Remover ${phone}`}>
                 <X className="h-3 w-3" />
               </button>
             </Badge>

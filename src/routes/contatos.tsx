@@ -17,6 +17,7 @@ import { ImportWhatsAppDialog } from "@/components/contatos/ImportWhatsAppDialog
 import { ImportMessagesDialog } from "@/components/contatos/ImportMessagesDialog";
 
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 
 export const Route = createFileRoute("/contatos")({
   ssr: false,
@@ -37,6 +38,7 @@ const TIPO_ROTULO: Record<string, string> = { pessoal: "Pessoal", paciente: "Pac
 function ContatosPage() {
   const navigate = useNavigate();
   const [contatos, setContatos] = useState<Contato[]>([]);
+  const [confirm, confirmDialog] = useConfirm();
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [tipoUrl, setTipoUrl] = useFiltroUrl("tipo", TIPOS);
@@ -72,7 +74,14 @@ function ContatosPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Excluir este contato?")) return;
+    const contato = contatos.find((c) => c.id === id);
+    const ok = await confirm({
+      title: `Excluir ${contato?.nome ? `"${contato.nome}"` : "este contato"}?`,
+      description: "O contato sai da agenda de contatos da clínica. Conversas do WhatsApp não são apagadas. Esta ação não pode ser desfeita.",
+      confirmLabel: "Excluir contato",
+      destructive: true,
+    });
+    if (!ok) return;
     const { error } = await contatosApi.delete(id);
     if (error) return toast.error("Erro ao excluir contato: " + error);
     setContatos((prev) => prev.filter((c) => c.id !== id));
@@ -81,6 +90,7 @@ function ContatosPage() {
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
+      {confirmDialog}
       <DashboardHeader title="Contatos" />
       <div className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto">
         {/* Header */}

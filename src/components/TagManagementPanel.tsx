@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tags, Plus, Trash2, Pencil, Check, X, Loader2 } from "lucide-react";
 import { tagsApi, type LeadTagApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 
 const PRESET_COLORS = [
   "#EF4444", "#F59E0B", "#10B981", "#3B82F6",
@@ -23,34 +24,45 @@ export function TagManagementPanel() {
   const [editName, setEditName] = useState("");
   const [editColor, setEditColor] = useState("");
   const [editIcon, setEditIcon] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
 
-  useEffect(() => {
+  const loadTags = () => {
+    setLoading(true);
     tagsApi.list().then(({ data, error }) => {
-      if (error) toast.error("Não foi possível carregar as etiquetas: " + error);
-      else if (data) setTags(data);
+      setLoadError(error);
+      if (!error && data) setTags(data);
       setLoading(false);
     });
-  }, []);
+  };
+  useEffect(() => { loadTags(); }, []);
 
   const handleAdd = async () => {
     const name = newName.trim();
     if (!name) return;
     if (tags.some((t) => t.name.toLowerCase() === name.toLowerCase())) {
-      toast.error("Tag já existe");
+      toast.error("Já existe uma etiqueta com esse nome");
       return;
     }
     const { data, error } = await tagsApi.create({ name, color: newColor, icon: newIcon });
     if (error) { toast.error(error); return; }
     if (data) setTags((prev) => [...prev, data]);
     setNewName("");
-    toast.success("Tag criada");
+    toast.success("Etiqueta criada");
   };
 
-  const handleDelete = async (id: string) => {
-    const { error } = await tagsApi.delete(id);
-    if (error) { toast.error(error); return; }
-    setTags((prev) => prev.filter((t) => t.id !== id));
-    toast.success("Tag removida");
+  const handleDelete = async (tag: LeadTagApi) => {
+    const ok = await confirm({
+      title: `Excluir a etiqueta "${tag.name}"?`,
+      description: "Ela sai de todos os leads que a usam. Esta ação não pode ser desfeita.",
+      confirmLabel: "Excluir etiqueta",
+      destructive: true,
+    });
+    if (!ok) return;
+    const { error } = await tagsApi.delete(tag.id);
+    if (error) { toast.error("Não foi possível excluir: " + error); return; }
+    setTags((prev) => prev.filter((t) => t.id !== tag.id));
+    toast.success("Etiqueta excluída");
   };
 
   const startEdit = (tag: LeadTagApi) => {
@@ -95,7 +107,7 @@ export function TagManagementPanel() {
           <label className="text-xs text-muted-foreground mb-1 block">Ícone</label>
           <div className="flex gap-1 flex-wrap max-w-[180px]">
             {PRESET_ICONS.slice(0, 6).map((ic) => (
-              <button key={ic} onClick={() => setNewIcon(ic)} className={`w-7 h-7 rounded text-sm flex items-center justify-center border transition-colors ${newIcon === ic ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"}`}>{ic}</button>
+              <button key={ic} type="button" aria-label={`Ícone ${ic}`} aria-pressed={newIcon === ic} onClick={() => setNewIcon(ic)} className={`w-7 h-7 rounded text-sm flex items-center justify-center border transition-colors ${newIcon === ic ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"}`}>{ic}</button>
             ))}
           </div>
         </div>
@@ -103,7 +115,7 @@ export function TagManagementPanel() {
           <label className="text-xs text-muted-foreground mb-1 block">Cor</label>
           <div className="flex gap-1">
             {PRESET_COLORS.map((c) => (
-              <button key={c} onClick={() => setNewColor(c)} className={`w-6 h-6 rounded-full border-2 transition-all ${newColor === c ? "border-foreground scale-110" : "border-transparent"}`} style={{ backgroundColor: c }} />
+              <button key={c} type="button" aria-label={`Cor ${c}`} aria-pressed={newColor === c} onClick={() => setNewColor(c)} className={`w-6 h-6 rounded-full border-2 transition-all ${newColor === c ? "border-foreground scale-110" : "border-transparent"}`} style={{ backgroundColor: c }} />
             ))}
           </div>
         </div>
@@ -120,11 +132,11 @@ export function TagManagementPanel() {
                 <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-7 text-sm flex-1" onKeyDown={(e) => e.key === "Enter" && saveEdit()} />
                 <div className="flex gap-0.5">
                   {PRESET_COLORS.map((c) => (
-                    <button key={c} onClick={() => setEditColor(c)} className={`w-4 h-4 rounded-full border ${editColor === c ? "border-foreground" : "border-transparent"}`} style={{ backgroundColor: c }} />
+                    <button key={c} type="button" aria-label={`Cor ${c}`} aria-pressed={editColor === c} onClick={() => setEditColor(c)} className={`w-4 h-4 rounded-full border ${editColor === c ? "border-foreground" : "border-transparent"}`} style={{ backgroundColor: c }} />
                   ))}
                 </div>
-                <button onClick={saveEdit} className="text-primary hover:text-primary/80"><Check className="h-4 w-4" /></button>
-                <button onClick={() => setEditingId(null)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+                <button onClick={saveEdit} aria-label="Salvar etiqueta" className="text-primary hover:text-primary/80"><Check className="h-4 w-4" /></button>
+                <button onClick={() => setEditingId(null)} aria-label="Cancelar edição" className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
               </>
             ) : (
               <>
@@ -132,14 +144,21 @@ export function TagManagementPanel() {
                   {tag.icon} {tag.name}
                 </span>
                 <span className="flex-1" />
-                <button onClick={() => startEdit(tag)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"><Pencil className="h-3.5 w-3.5" /></button>
-                <button onClick={() => handleDelete(tag.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
+                {/* Visíveis no toque; só escondem até o hover em telas grandes */}
+                <button onClick={() => startEdit(tag)} aria-label={`Editar etiqueta ${tag.name}`} title="Editar" className="p-1 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"><Pencil className="h-3.5 w-3.5" /></button>
+                <button onClick={() => handleDelete(tag)} aria-label={`Excluir etiqueta ${tag.name}`} title="Excluir" className="p-1 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
               </>
             )}
           </div>
         ))}
-        {tags.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhuma tag criada</p>}
+        {loadError ? (
+          <div role="alert" className="text-xs text-destructive text-center py-4 space-y-2">
+            <p>Não foi possível carregar as etiquetas. {loadError}</p>
+            <Button size="sm" variant="outline" onClick={loadTags}>Tentar de novo</Button>
+          </div>
+        ) : !loading && tags.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhuma etiqueta criada</p>}
       </div>
+      {confirmDialog}
     </Card>
   );
 }
