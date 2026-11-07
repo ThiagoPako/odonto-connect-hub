@@ -1,0 +1,5 @@
+# Falso positivo do gitleaks (generic-api-key): string de teste inventada, enviada ao
+# PUT /api/clinicorp/my-settings para provar que ele RECUSA segredo escolhido pelo cliente.
+# Não é credencial e não existe fora do teste. O literal foi trocado por valor montado em
+# tempo de execução; a impressão abaixo cobre o commit antigo, que o scan do PR ainda lê.
+fb1d1881fe6a56422e86825e2c53f1b796b37c39:vps-api-server/tests/clinicorp-segredo-push.test.js:generic-api-key:200

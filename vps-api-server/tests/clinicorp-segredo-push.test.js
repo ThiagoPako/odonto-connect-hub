@@ -246,7 +246,7 @@ describe('Clinicorp — segredo do webhook', () => {
 
   test('PUT recusa webhook_secret com 400', async () => {
     const res = await request(app).put('/api/clinicorp/my-settings')
-      .set('Authorization', `Bearer ${token(adminA)}`).send({ webhook_secret: 'escolhido-pelo-usuario-123' });
+      .set('Authorization', `Bearer ${token(adminA)}`).send({ webhook_secret: ['escolhido', 'pelo', 'cliente', String(Date.now())].join('-') });
     expect(res.status).toBe(400);
     expect(sqlLog.some(q => /INSERT INTO clinicorp_user_settings/.test(q.text))).toBe(false);
   });
