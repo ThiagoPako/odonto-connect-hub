@@ -4521,9 +4521,9 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
         quotedId: quoted?.key?.id || quoted?.id || null, timeoutMs: 30_000,
       });
       if (!sent.ok) {
-        const httpStatus = sent.retryAfterMs ? 429 : (sent.status >= 400 && sent.status < 600 && sent.status !== 401 && sent.status !== 403 ? sent.status : 502);
+        const f = providerSendFailure(sent, 'Falha ao enviar pelo WhatsApp. Confira se o número está conectado em Canais.');
         console.error(`❌ send-text (${routed.record.provider}) falhou → ${maskPhone(cleanNumber)} (status=${sent.status})`);
-        return res.status(httpStatus).json({ error: sent.uncertain ? 'Envio não confirmado: confira a conversa antes de reenviar.' : 'Falha ao enviar pelo WhatsApp. Confira se o número está conectado em Canais.' });
+        return res.status(f.httpStatus).json({ error: f.error });
       }
       result = { ok: true, status: 201, data: { key: { id: sent.providerMessageId }, messageId: sent.providerMessageId, sentNumber: cleanNumber } };
     } else {
@@ -10530,7 +10530,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       // Skip group presence updates (id ends with @g.us)
       const chatJid = presenceData?.id || presenceData?.chatId || '';
       if (chatJid.includes('@g.us')) {
-        console.log(`👁️ PRESENCE skipped (group chat): ${chatJid}`);
+        console.log(`👁️ PRESENCE skipped (group chat): ${maskWaIdentifiers(chatJid)}`);
         return res.json({ processed: true, event: 'presence', skipped: 'group' });
       }
 
@@ -10605,7 +10605,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           }
 
           if (!resolvedPhone) {
-            console.log(`⚠️ PRESENCE: unresolved LID ${participant?.id || presenceData?.id}, no mapping found`);
+            console.log(`⚠️ PRESENCE: unresolved LID ${maskWaIdentifiers(participant?.id || presenceData?.id)}, no mapping found`);
             continue;
           }
 
@@ -10806,7 +10806,7 @@ function publicChannel(c, state = null) {
 
 // Estado do canal vindo do OpenWA (webhook ou consulta). Atualiza canal + mapa da instância,
 // avisa a tela da clínica e, ao conectar, vira principal se o principal atual não estiver no ar.
-async function applyOpenWaChannelState(channel, state, { qr = null, phone = null } = {}) {
+async function applyOpenWaChannelState(channel, state, { qr = null, phone = null, allowPromote = true } = {}) {
   const tenantId = String(channel.tenant_id);
   await pool.query(
     `UPDATE whatsapp_channels
@@ -10820,7 +10820,7 @@ async function applyOpenWaChannelState(channel, state, { qr = null, phone = null
   waChannels.invalidate(channel.instance_name);
   waOpenInstancesCache = { at: 0, names: waOpenInstancesCache.names };
   broadcastSSE('whatsapp_channel_state', { channelId: channel.id, state, ...(qr ? { qr } : {}) }, tenantId);
-  if (state === 'open' && channel.role !== 'primary') {
+  if (allowPromote && state === 'open' && channel.role !== 'primary') {
     const primary = await waChannels.getPrimary(tenantId);
     const open = await getOpenEvolutionInstances();
     if (!primary || (primary.id !== channel.id && !open.has(primary.instance_name))) {
@@ -10887,7 +10887,10 @@ app.post('/api/webhook/openwa/:channelId', async (req, res) => {
     const porCanal = RL.evolutionInstancia.hit(`openwa:${channel.id}`);
     if (!porCanal.allowed) return sendTooMany(res, porCanal.retryAfterSec, 'Too many requests');
 
-    const eventId = req.get('x-openwa-idempotency-key') || req.body?.idempotencyKey || null;
+    // Chave de dedupe do CORPO (coberto pelo HMAC), com o canal na frente: um cabeçalho trocado
+    // num replay assinado não escapa do dedupe, e canais diferentes não colidem (revisão F1, I2).
+    const bodyKey = req.body?.idempotencyKey ? String(req.body.idempotencyKey) : '';
+    const eventId = bodyKey ? `${channel.id}:${bodyKey}` : null;
     if (!(await claimWebhookEvent(pool, 'openwa', eventId))) return res.json({ duplicate: true });
     const events = validEvents(openWaProvider.parseWebhook(req.body))
       .filter(e => e.channelRef === String(channel.external_id));
@@ -10946,11 +10949,13 @@ app.post('/api/whatsapp/openwa/channels', async (req, res) => {
         [channelId, tenantId, prim.length ? 'backup' : 'primary', provisioned.sessionId, instanceName, enc.value, waCredentialCipher.currentVersion]
       );
       // Mesma transação: o mapa da instância (dono, ritmo, pausa, saúde) — o gatilho mantém o canal.
-      await client.query(
+      // DO NOTHING + conferência: nunca reatribui uma instância existente (revisão F1, I4).
+      const ins = await client.query(
         `INSERT INTO whatsapp_instances (instance_name, tenant_id) VALUES ($1, $2)
-         ON CONFLICT (instance_name) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
+         ON CONFLICT (instance_name) DO NOTHING`,
         [instanceName, tenantId]
       );
+      if (!ins.rowCount) throw Object.assign(new Error('Nome de instância já em uso'), { code: 'WA_INSTANCE_TAKEN' });
       await client.query('COMMIT');
     } catch (e) {
       await client.query('ROLLBACK').catch(() => {});
@@ -10969,6 +10974,10 @@ app.post('/api/whatsapp/openwa/channels', async (req, res) => {
     res.status(201).json({ channel: publicChannel(created, started.state || 'connecting'), webhookRegistered: hook.ok });
   } catch (error) {
     if (provisioned?.ok) await openWaProvider.removeSession({ external_id: provisioned.sessionId, credentials: { apiKeyId: provisioned.apiKeyId } }).catch(() => {});
+    // Dois cliques ao mesmo tempo: o índice uq_wa_channels_one_openwa recusa o segundo canal.
+    if (error.code === '23505' || error.code === 'WA_INSTANCE_TAKEN') {
+      return res.status(409).json({ error: 'A clínica já tem um número reserva por QR sendo conectado. Atualize a página.' });
+    }
     const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
     if (status === 500) console.error('[openwa] criar canal:', error.message);
     res.status(status).json({ error: status === 500 ? 'Erro ao conectar o número reserva' : error.message });
@@ -10986,7 +10995,8 @@ async function loadTenantOpenWaChannel(user, channelId) {
 
 app.get('/api/whatsapp/channels/:id/qr', async (req, res) => {
   try {
-    const { user } = await verifyUser(req);
+    // Só o administrador pareia um aparelho (docs/seguranca/matriz-papeis.md; revisão F1, I1).
+    const { user } = await verifyAdmin(req);
     const loaded = await loadTenantOpenWaChannel(user, req.params.id);
     if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
     if (!loaded.channel) return res.status(503).json({ error: 'Credenciais do canal indisponíveis. Desconecte e conecte de novo.' });
@@ -10997,7 +11007,8 @@ app.get('/api/whatsapp/channels/:id/qr', async (req, res) => {
     if (st.ok) await applyOpenWaChannelState(loaded.record, st.state, { phone: st.phone });
     res.json({ qr: null, state: st.ok ? st.state : null });
   } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao obter o QR' });
+    const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
+    res.status(status).json({ error: status === 500 ? 'Erro ao obter o QR' : error.message });
   }
 });
 
@@ -11008,7 +11019,7 @@ app.get('/api/whatsapp/channels/:id/state', async (req, res) => {
     if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
     if (!loaded.channel) return res.json({ channel: publicChannel(loaded.record), live: false });
     const st = await openWaProvider.getState(loaded.channel);
-    if (st.ok && st.state !== loaded.record.connection_state) await applyOpenWaChannelState(loaded.record, st.state, { phone: st.phone });
+    if (st.ok && st.state !== loaded.record.connection_state) await applyOpenWaChannelState(loaded.record, st.state, { phone: st.phone, allowPromote: false });
     res.json({ channel: publicChannel(loaded.record, st.ok ? st.state : null), live: st.ok });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao consultar o canal' });
@@ -11931,7 +11942,9 @@ function providerSendFailure(sent, fallback) {
   const httpStatus = sent.retryAfterMs ? 429 : (sent.status >= 400 && sent.status < 600 && sent.status !== 401 && sent.status !== 403 ? sent.status : 502);
   const error = sent.uncertain
     ? 'Envio não confirmado: confira a conversa antes de reenviar.'
-    : sent.status === 413 ? 'Arquivo grande demais para o WhatsApp.' : fallback;
+    : sent.retryAfterMs
+      ? `Muitos envios seguidos por este número. Aguarde ${Math.max(1, Math.ceil(sent.retryAfterMs / 60_000))} min e envie de novo.`
+      : sent.status === 413 ? 'Arquivo grande demais para o WhatsApp.' : fallback;
   return { httpStatus, error };
 }
 
@@ -11997,9 +12010,16 @@ async function getOpenEvolutionInstances() {
   // Sessões OpenWA prontas entram no mesmo conjunto (chave = instance_name do canal).
   const owa = await getOpenWaLiveStates().catch(() => ({ ok: false, byInstance: new Map() }));
   for (const [name, st] of owa.byInstance) if (st === 'open') names.add(name);
-  // Em falha, guarda o resultado vazio por ~30 s (cache negativo) para não
-  // repetir a espera de timeout a cada mensagem enfileirada.
-  waOpenInstancesCache = result.ok ? { at: Date.now(), names } : { at: Date.now() - 30_000, names: waOpenInstancesCache.names };
+  // Evolution em falha: guarda por ~30 s (cache negativo, para não repetir o timeout a cada
+  // mensagem) o último conjunto da Evolution UNIDO às sessões OpenWA abertas agora — é
+  // justamente quando a reserva precisa sair (revisão F1, B1).
+  if (result.ok) {
+    waOpenInstancesCache = { at: Date.now(), names };
+  } else {
+    const merged = new Set([...waOpenInstancesCache.names].filter(n => !owa.names?.has?.(n)));
+    for (const [name, st] of owa.byInstance) if (st === 'open') merged.add(name);
+    waOpenInstancesCache = { at: Date.now() - 30_000, names: merged };
+  }
   return waOpenInstancesCache.names;
 }
 

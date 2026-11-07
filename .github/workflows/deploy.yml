@@ -27,6 +27,37 @@ jobs:
             echo "Previous commit (rollback target): $PREVIOUS_COMMIT"
             echo "$PREVIOUS_COMMIT" > /root/odonto-connect/.last-good-commit.tmp
 
+            # ─── Chave de cifra das credenciais dos canais de WhatsApp ─────
+            # ANTES do git reset: se estiver errada, o deploy para sem ter mexido em nada (o
+            # rollback só existe depois do reset). AES-256-GCM, 32 bytes: hex de 64 caracteres ou
+            # base64 canônico (44 com "="), as duas formas que whatsapp/crypto.mjs (parseCredentialKey)
+            # aceita. Gerada UMA vez e nunca regenerada: trocar o valor torna ilegível o que já foi
+            # cifrado (a rotação é por key_version). O valor nunca é impresso.
+            ENV_FILE=/root/odonto-connect/vps-api-server/.env
+            touch "$ENV_FILE"
+            sed -i '/^WA_CREDENTIALS_KEY=$/d' "$ENV_FILE"   # linha vazia (copiada do .env.example) não conta
+            WA_KEY_LINE=$(grep -m1 '^WA_CREDENTIALS_KEY=' "$ENV_FILE" || true)
+            if [ -z "$WA_KEY_LINE" ]; then
+              printf '\nWA_CREDENTIALS_KEY=%s\n' "$(openssl rand -hex 32)" >> "$ENV_FILE"
+              echo "WA_CREDENTIALS_KEY gerado na VPS"
+            else
+              WA_KEY_VAL=${WA_KEY_LINE#WA_CREDENTIALS_KEY=}
+              WA_KEY_OK=0
+              if printf '%s' "$WA_KEY_VAL" | grep -qE '^[0-9a-fA-F]{64}$'; then
+                WA_KEY_OK=1
+              elif printf '%s' "$WA_KEY_VAL" | grep -qE '^[A-Za-z0-9+/]{43}=$' \
+                && [ "$(printf '%s' "$WA_KEY_VAL" | base64 -d 2>/dev/null | wc -c | tr -d ' ')" = "32" ] \
+                && [ "$(printf '%s' "$WA_KEY_VAL" | base64 -d 2>/dev/null | base64 | tr -d '\n')" = "$WA_KEY_VAL" ]; then
+                WA_KEY_OK=1
+              fi
+              unset WA_KEY_VAL WA_KEY_LINE
+              if [ "$WA_KEY_OK" != "1" ]; then
+                echo "::error::WA_CREDENTIALS_KEY existe mas não é hex de 64 nem base64 canônico de 32 bytes; corrija à mão (não vou sobrescrever). Nada foi alterado na VPS."
+                false
+              fi
+              echo "WA_CREDENTIALS_KEY já existe (mantido)"
+            fi
+
             git fetch origin main
             NEW_COMMIT=$(git rev-parse origin/main)
             echo "New commit: $NEW_COMMIT"
@@ -115,19 +146,6 @@ jobs:
               echo "EVOLUTION_WEBHOOK_SECRET gerado na VPS"
             else
               echo "EVOLUTION_WEBHOOK_SECRET já existe (mantido)"
-            fi
-            # Chave de cifra das credenciais dos canais de WhatsApp (AES-256-GCM; 32 bytes em hex).
-            # Gerada UMA vez e nunca regenerada: trocar o valor torna ilegível o que já foi cifrado
-            # (a rotação é feita com key_version, não aqui). O valor nunca é impresso.
-            if ! grep -qE '^WA_CREDENTIALS_KEY=[0-9a-f]{64}$' "$ENV_FILE"; then
-              sed -i '/^WA_CREDENTIALS_KEY=$/d' "$ENV_FILE"   # linha vazia (copiada do .env.example) não conta
-              if grep -q '^WA_CREDENTIALS_KEY=' "$ENV_FILE"; then
-                echo "::error::WA_CREDENTIALS_KEY existe mas não tem 64 hex; corrija à mão (não vou sobrescrever)"; exit 1
-              fi
-              printf '\nWA_CREDENTIALS_KEY=%s\n' "$(openssl rand -hex 32)" >> "$ENV_FILE"
-              echo "WA_CREDENTIALS_KEY gerado na VPS"
-            else
-              echo "WA_CREDENTIALS_KEY já existe (mantido)"
             fi
             if grep -q '^TZ=' "$ENV_FILE"; then
               sed -i 's|^TZ=.*|TZ=America/Sao_Paulo|' "$ENV_FILE"

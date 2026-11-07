@@ -30,6 +30,9 @@ const tenantB = '22222222-2222-2222-2222-222222222222';
 const auth = (tenant) => ({
   Authorization: `Bearer ${jwt.sign({ sub: '44444444-4444-4444-4444-444444444444', email: 'a@a.com', role: 'admin', tenant_id: tenant, is_super_admin: false }, JWT_SECRET)}`,
 });
+const authRole = (tenant, role) => ({
+  Authorization: `Bearer ${jwt.sign({ sub: '55555555-5555-5555-5555-555555555555', email: 'r@a.com', role, tenant_id: tenant, is_super_admin: false }, JWT_SECRET)}`,
+});
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // Banco em memória (só o necessário).
@@ -141,6 +144,20 @@ describe('Canal OpenWA: criação e QR', () => {
     expect(fake.sessions.get(chA.external_id).engineLoaded).toBe(true);
   });
 
+  test('clique duplo (índice de um reserva por clínica): 409 e a sessão criada é apagada (revisão F1, I4)', async () => {
+    const tenantC = '33333333-3333-3333-3333-333333333333';
+    const sessoesAntes = fake.sessions.size;
+    connectSpy.mockImplementation(async () => ({
+      query: (sql, p) => /INSERT INTO whatsapp_channels/.test(String(sql))
+        ? Promise.reject(Object.assign(new Error('duplicate key value violates unique constraint "uq_wa_channels_one_openwa"'), { code: '23505' }))
+        : mockQuery(sql, p),
+      release() {},
+    }));
+    const r = await request(app).post('/api/whatsapp/openwa/channels').set(auth(tenantC)).send({});
+    expect(r.status).toBe(409);
+    expect(fake.sessions.size).toBe(sessoesAntes);
+  });
+
   test('segundo canal reserva na mesma clínica: 409', async () => {
     const r = await request(app).post('/api/whatsapp/openwa/channels').set(auth(tenantA)).send({});
     expect(r.status).toBe(409);
@@ -152,6 +169,19 @@ describe('Canal OpenWA: criação e QR', () => {
     const a = await request(app).get(`/api/whatsapp/channels/${chA.id}/qr`).set(auth(tenantA));
     expect(a.status).toBe(200);
     expect(a.body.qr).toBe('data:image/png;base64,QRFALSO');
+  });
+
+  test('QR só para o administrador: recepção recebe 403 (revisão F1, I1)', async () => {
+    const r = await request(app).get(`/api/whatsapp/channels/${chA.id}/qr`).set(authRole(tenantA, 'recepcao'));
+    expect(r.status).toBe(403);
+  });
+
+  test('consulta de estado pela tela não troca o principal (revisão F1, I1)', async () => {
+    fake.connect(chA.external_id);
+    const before = sqlLog.length;
+    const r = await request(app).get(`/api/whatsapp/channels/${chA.id}/state`).set(authRole(tenantA, 'recepcao'));
+    expect(r.status).toBe(200);
+    expect(sqlLog.slice(before).some(q => /SET role = 'primary'|SET role = 'backup'/.test(q.text))).toBe(false);
   });
 
   test('lista de canais: só os da clínica, sem credenciais', async () => {
@@ -183,6 +213,15 @@ describe('Webhook OpenWA', () => {
     expect(chA.connection_state).toBe('open');
     const again = await deliver('session.status', { status: 'ready' }, { idempotencyKey: 'sess_ready_1' });
     expect(again.body).toEqual({ duplicate: true });
+  });
+
+  test('dedupe pelo idempotencyKey do corpo assinado: trocar o cabeçalho não reprocessa (revisão F1, I2)', async () => {
+    const d1 = fake.signedDelivery(chA.external_id, 'session.status', { status: 'ready' }, { idempotencyKey: 'replay_1' });
+    expect((await request(app).post(`/api/webhook/openwa/${chA.id}`).set(d1.headers).send(d1.body)).body).toMatchObject({ accepted: true });
+    const replay = { ...d1.headers, 'x-openwa-idempotency-key': 'cabecalho-trocado' };
+    expect((await request(app).post(`/api/webhook/openwa/${chA.id}`).set(replay).send(d1.body)).body).toEqual({ duplicate: true });
+    const key = [...webhookEvents].find(k => k.endsWith('replay_1'));
+    expect(key).toBe(`openwa:${chA.id}:replay_1`);
   });
 
   test('mensagem recebida entra no chat da clínica do canal (A), nunca de B', async () => {
@@ -250,6 +289,30 @@ describe('Fila pelo canal OpenWA', () => {
     chA.tenant_id = tenantA; instances.set(chA.instance_name, tenantA);
   });
 
+  test('Evolution fora do ar (500) e OpenWA pronto: o job sai pelo OpenWA (revisão F1, B1)', async () => {
+    fake.connect(chA.external_id);
+    resetWhatsAppQueueStateForTests();
+    fetchSpy.mockImplementation(async (url, init) => {
+      if (String(url).startsWith(fake.baseUrl)) return realFetch(url, init);
+      return { ok: false, status: 500, json: async () => ({ error: 'evolution fora' }) };
+    });
+    queueJob = makeJob({ id: 'job-owa-evo-fora' });
+    const antes = fake.sent.length;
+    await processAutomationJobs();
+    expect({ jobStatus, released }).toEqual({ jobStatus: 'sent', released: null });
+    expect(released).toBeNull();
+    expect(fake.sent.length).toBe(antes + 1);
+  });
+
+  test('429 com prazo só no cabeçalho Retry-After: respeita o cabeçalho (revisão F1, B6)', async () => {
+    fake.connect(chA.external_id);
+    fake.fail({ status: 429, code: 'SEND_PACING_LIMITED', retryAfterHeader: 900 });
+    queueJob = makeJob({ id: 'job-owa-ra' });
+    await processAutomationJobs();
+    expect(jobStatus).toBeNull();
+    expect(new Date(released.at).getTime()).toBeGreaterThan(Date.now() + 890_000);
+  });
+
   test('429 SEND_PACING_LIMITED do OpenWA: reagenda (não falha, não conta para o disjuntor)', async () => {
     fake.fail({ status: 429, code: 'SEND_PACING_LIMITED', retryAfterSeconds: 600 });
     queueJob = makeJob({ id: 'job-owa-4' });
@@ -270,6 +333,13 @@ describe('Chat humano pelo canal OpenWA', () => {
     expect(a.body.messageId).toMatch(/^true_5511988887777@c\.us_/);
     expect(fake.sent.length).toBe(antes + 1);
     expect(fake.sent.at(-1).body.text).toBe('Bom dia!');
+  });
+
+  test('429 no chat humano: mensagem de limite de ritmo, não "confira a conexão" (revisão F1, B6)', async () => {
+    fake.fail({ status: 429, code: 'SEND_PACING_LIMITED', retryAfterSeconds: 120 });
+    const r = await request(app).post('/api/whatsapp/send-text').set(auth(tenantA)).send({ instance: chA.instance_name, number: '5511988887777', text: 'oi' });
+    expect(r.status).toBe(429);
+    expect(r.body.error).toMatch(/Aguarde 2 min/);
   });
 });
 

@@ -108,6 +108,29 @@ test('canal OpenWA criado antes é respeitado (não vira canal Evolution duplica
   expect(await channelsOf('11111111-owa-1')).toEqual([]);
 });
 
+test('migração reaplicada com canal OpenWA existente não quebra nem duplica (revisão F1, B2)', async () => {
+  await q(`INSERT INTO whatsapp_channels (tenant_id, provider, role, external_id, instance_name)
+           VALUES ($1, 'openwa', 'backup', 'sessao-uuid-b2', '11111111-owa-b2')`, [A]);
+  await q(`INSERT INTO whatsapp_instances (instance_name, tenant_id) VALUES ('11111111-owa-b2', $1)`, [A]);
+  await applyMigration();
+  await applyMigration();
+  expect((await channelsOf('11111111-owa-b2')).map(r => r.provider)).toEqual(['openwa']);
+});
+
+test('canal OpenWA reatribuído a outra clínica: desativado, sem sessão/telefone (revisão F1, M1)', async () => {
+  await q(`UPDATE whatsapp_channels SET display_phone = '5562900000000', credentials_enc = 'v1:a:b:c', connection_state = 'open'
+            WHERE instance_name = '11111111-owa-b2'`);
+  await q(`INSERT INTO whatsapp_instances (instance_name, tenant_id) VALUES ('11111111-owa-b2', $1)
+           ON CONFLICT (instance_name) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`, [B]);
+  const { rows: [c] } = await q(`SELECT id::text, tenant_id::text, status, role, external_id, display_phone, credentials_enc, connection_state
+                                   FROM whatsapp_channels WHERE instance_name = '11111111-owa-b2'`);
+  expect(c).toMatchObject({ tenant_id: B, status: 'disabled', role: 'backup', display_phone: null, credentials_enc: null, connection_state: null });
+  expect(c.external_id).toBe(`revogado:${c.id}`);
+  expect((await q(`SELECT 1 FROM whatsapp_channels WHERE external_id = 'sessao-uuid-b2'`)).rows).toEqual([]);
+  await applyMigration(); // continua idempotente com canal desativado
+  expect((await channelsOf('11111111-owa-b2')).map(r => r.provider)).toEqual(['openwa']);
+});
+
 test('dois principais ativos na mesma clínica: recusado pelo índice', async () => {
   await expect(q(`INSERT INTO whatsapp_channels (tenant_id, provider, role, external_id, instance_name)
                   VALUES ($1, 'openwa', 'primary', 'sessao-uuid-2', '11111111-owa-2')`, [A])).rejects.toThrow(/uq_wa_channels_one_primary/);

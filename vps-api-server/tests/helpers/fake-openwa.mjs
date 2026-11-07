@@ -103,6 +103,7 @@ export async function startFakeOpenWa({ adminKey = 'fake-admin-key' } = {}) {
       if (k && idem.has(`${s.id}:${k}`)) { res.setHeader('Idempotent-Replayed', 'true'); return json(res, 201, idem.get(`${s.id}:${k}`)); }
       if (failPlan && failPlan.count > 0) {
         failPlan.count -= 1;
+        if (failPlan.retryAfterHeader) res.setHeader('retry-after', String(failPlan.retryAfterHeader));
         return json(res, failPlan.status, { statusCode: failPlan.status, message: 'falha simulada', ...(failPlan.code ? { code: failPlan.code } : {}), ...(failPlan.retryAfterSeconds ? { retryAfterSeconds: failPlan.retryAfterSeconds } : {}) });
       }
       const body = await readBody(req);

@@ -42,6 +42,9 @@ UPDATE whatsapp_channels SET instance_name = external_id WHERE instance_name IS 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_wa_channels_provider_ext ON whatsapp_channels (provider, external_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_wa_channels_instance_name ON whatsapp_channels (instance_name) WHERE instance_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_wa_channels_tenant ON whatsapp_channels (tenant_id, role, status);
+-- No máximo um número reserva (OpenWA) ativo por clínica: dois cliques simultâneos em "conectar"
+-- não criam duas sessões (revisão F1, I4). Hoje não há canal OpenWA em produção.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_wa_channels_one_openwa ON whatsapp_channels (tenant_id) WHERE provider = 'openwa' AND status = 'active';
 
 -- Dedupe dos webhooks (Meta reentrega por até 7 dias; OpenWA manda X-OpenWA-Idempotency-Key).
 -- Sem tenant: a linha é gravada antes de saber a clínica e não guarda conteúdo. Limpar > 8 dias.
@@ -69,6 +72,10 @@ SELECT wi.tenant_id, 'evolution',
        wi.last_checked_at, wi.last_alert_at, wi.paused_until, wi.pause_reason, COALESCE(wi.created_at, NOW())
   FROM whatsapp_instances wi
  WHERE wi.tenant_id IS NOT NULL
+   -- Instância que já tem canal de outro provedor (OpenWA/Cloud, criado pela API) fica como está:
+   -- sem isto o INSERT viola uq_wa_channels_instance_name e aborta o resto do arquivo no deploy
+   -- (revisão F1, B2).
+   AND NOT EXISTS (SELECT 1 FROM whatsapp_channels c WHERE c.instance_name = wi.instance_name AND c.provider <> 'evolution')
 ON CONFLICT (provider, external_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, instance_name = EXCLUDED.instance_name, updated_at = NOW();
 
 -- Canal 'evolution' cuja instância não existe mais (ou ficou sem clínica) sai.
@@ -105,7 +112,7 @@ BEGIN
     DELETE FROM whatsapp_channels WHERE instance_name = NEW.instance_name;
     RETURN NEW;
   END IF;
-  SELECT id, tenant_id INTO ch FROM whatsapp_channels WHERE instance_name = NEW.instance_name LIMIT 1;
+  SELECT id, tenant_id, provider INTO ch FROM whatsapp_channels WHERE instance_name = NEW.instance_name LIMIT 1;
   SELECT EXISTS (SELECT 1 FROM whatsapp_channels
                   WHERE tenant_id = NEW.tenant_id AND role = 'primary' AND status = 'active'
                     AND (ch.id IS NULL OR id <> ch.id)) INTO has_primary;
@@ -115,6 +122,15 @@ BEGIN
             NEW.instance_name, NEW.instance_name, COALESCE(NEW.created_at, NOW()))
     ON CONFLICT (provider, external_id) DO UPDATE
       SET tenant_id = EXCLUDED.tenant_id, instance_name = EXCLUDED.instance_name, updated_at = NOW();
+  ELSIF ch.tenant_id <> NEW.tenant_id AND ch.provider <> 'evolution' THEN
+    -- Canal OpenWA/Cloud reatribuído (revisão F1, M1): o número no provedor continua sendo da
+    -- clínica antiga. Desativa e troca o external_id por um valor que nunca casa com sessão nem
+    -- phone_number_id real — a clínica nova nunca recebe mensagens dos pacientes da antiga.
+    UPDATE whatsapp_channels
+       SET tenant_id = NEW.tenant_id, role = 'backup', status = 'disabled',
+           external_id = 'revogado:' || id::text, display_phone = NULL, waba_id = NULL,
+           credentials_enc = NULL, credentials_key_version = NULL, connection_state = NULL, updated_at = NOW()
+     WHERE id = ch.id;
   ELSIF ch.tenant_id <> NEW.tenant_id THEN
     -- Reatribuição: credenciais cifradas usam AAD com a clínica antiga, então ficam inválidas
     -- e são apagadas (o canal precisa ser reconectado pela clínica nova).

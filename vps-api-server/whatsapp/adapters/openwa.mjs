@@ -156,9 +156,12 @@ export function createOpenWaAdapter({ baseUrl, adminKey, env = process.env } = {
       }
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        console.warn(`⚠️ OpenWA ${res.status} em ${maskWaIdentifiers(path)}:`, maskWaIdentifiers(JSON.stringify(data)).slice(0, 300));
+        // Só código e status: o corpo de erro pode repetir o texto da mensagem (revisão F1, I5).
+        const code = typeof data?.code === 'string' ? data.code.slice(0, 60) : '-';
+        console.warn(`⚠️ OpenWA ${res.status} em ${maskWaIdentifiers(path)} (code=${code})`);
       }
-      return { ok: res.ok, status: res.status, data };
+      const ra = Number(res.headers?.get?.('retry-after'));
+      return { ok: res.ok, status: res.status, data, retryAfterSeconds: Number.isFinite(ra) && ra > 0 ? ra : null };
     } catch (err) {
       const aborted = err?.name === 'AbortError';
       console.error(`❌ OpenWA (${maskWaIdentifiers(path)}):`, maskWaIdentifiers(err?.message));
@@ -181,7 +184,8 @@ export function createOpenWaAdapter({ baseUrl, adminKey, env = process.env } = {
       providerMessageId: r.ok ? (r.data?.messageId || null) : null,
       uncertain,
       retryable: r.status >= 500 || r.status === 409,
-      retryAfterMs: pacing ? Math.max(1, Number(r.data?.retryAfterSeconds) || 60) * 1000 : 0,
+      // Prazo do corpo (retryAfterSeconds) ou do cabeçalho Retry-After; 60 s se nenhum (revisão F1, B6).
+      retryAfterMs: pacing ? Math.max(1, Number(r.data?.retryAfterSeconds) || Number(r.retryAfterSeconds) || 60) * 1000 : 0,
       status: r.status,
       error: r.ok ? null : (Array.isArray(r.data?.message) ? r.data.message.join('; ') : (r.data?.message || r.data?.error || `HTTP ${r.status}`)),
       raw: r,
