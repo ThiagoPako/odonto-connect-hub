@@ -172,7 +172,7 @@ function EstoquePage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Controle de Estoque" />
-      <main className="flex-1 p-4 sm:p-6 space-y-5 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 space-y-5 overflow-auto">
         {loadErrors.length > 0 && (
           <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             <div>
@@ -439,7 +439,7 @@ function EstoquePage() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-      </main>
+      </div>
     </div>
   );
 }

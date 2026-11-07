@@ -89,7 +89,7 @@ function MinhaAssinaturaPage() {
     return (
       <div className="flex-1 flex flex-col min-h-screen">
         <DashboardHeader title="Minha Assinatura" />
-        <main className="flex-1 p-6 flex items-start justify-center">
+        <div className="flex-1 p-6 flex items-start justify-center">
           <div className="w-full max-w-md rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center space-y-3">
             <AlertTriangle className="h-6 w-6 text-destructive mx-auto" />
             <p className="text-sm font-medium text-foreground">Não foi possível carregar sua assinatura</p>
@@ -98,7 +98,7 @@ function MinhaAssinaturaPage() {
               <RefreshCw className="h-4 w-4 mr-2" /> Tentar de novo
             </Button>
           </div>
-        </main>
+        </div>
       </div>
     );
   }
@@ -118,7 +118,7 @@ function MinhaAssinaturaPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Minha Assinatura" />
-      <main className="flex-1 p-4 sm:p-6 overflow-auto space-y-6">
+      <div className="flex-1 p-4 sm:p-6 overflow-auto space-y-6">
         <Card>
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -221,7 +221,7 @@ function MinhaAssinaturaPage() {
             )}
           </CardContent>
         </Card>
-      </main>
+      </div>
 
       <AlertDialog open={!!confirmPlan} onOpenChange={(o) => { if (!o) setConfirmPlan(null); }}>
         <AlertDialogContent>

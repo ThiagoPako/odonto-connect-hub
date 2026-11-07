@@ -86,6 +86,23 @@ function DisparosPage() {
     const { data, error } = await campaignsApi.execute(disparo.id);
     setExecutingId(null);
     if (error) { toast.error("Erro ao executar: " + error); return; }
+    if (data?.agendada) {
+      const [y, m, d] = String(data.inicio || "").split("-");
+      toast.success(`Campanha ativada. Os envios começam em ${d && m ? `${d}/${m}/${y}` : "a data de início"}.`);
+      loadCampaigns();
+      return;
+    }
+    if (data && data.porDia) {
+      // Disparo único: previsão pelo limite diário do número.
+      const br = (ymd?: string) => { const [y, m, d] = String(ymd || "").split("-"); return d && m ? `${d}/${m}` : ""; };
+      const partes = [`${data.enqueued} na fila`];
+      if (data.inicio) partes.push(`os envios começam em ${br(data.inicio)}`);
+      partes.push(`o número envia até ${data.cotaDiaUtil ?? data.porDia} por dia útil para campanhas (menos no sábado, nada no domingo), previsão de término em ${br(data.previsaoTermino)}`);
+      if (data.naoCabem) partes.push(`${data.naoCabem} não couberam em 7 dias e ficaram de fora`);
+      toast.success(partes.join("; ") + ".");
+      loadCampaigns();
+      return;
+    }
     if (data) {
       toast.success(`${data.enqueued} mensagens na fila (${data.skipped} ignoradas: já receberam ou pediram para sair). O envio é gradual, em horário comercial.`);
       loadCampaigns();
@@ -105,7 +122,7 @@ function DisparosPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Disparos Programados" />
-      <main className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto">
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <MiniKpi icon={Send} label="Total Enviadas" value={totalEnviadas.toString()} />
@@ -185,7 +202,7 @@ function DisparosPage() {
             ))}
           </div>
         )}
-      </main>
+      </div>
 
       <NovoDisparoWizard
         open={wizardOpen}
@@ -252,6 +269,10 @@ function DisparoCard({
             }`}>
               {disparo.tipo === "recorrente" ? "Recorrente" : "Único"}
             </span>
+            {disparo.tipo === "recorrente" && !disparo.ativo && !disparo.campanhaPerpetua && !!dataFimIso(disparo.dataFim)
+              && dataFimIso(disparo.dataFim)! < new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }) && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground">Encerrada</span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground mb-3">
@@ -446,4 +467,13 @@ function CampaignJobsPanel({ campaignId, campaignName, onClose }: { campaignId: 
       </div>
     </div>
   );
+}
+
+// dataFim chega como YYYY-MM-DD (input date) ou dd/mm/aaaa (dados antigos).
+function dataFimIso(v?: string): string | null {
+  const t = String(v || "").trim();
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }

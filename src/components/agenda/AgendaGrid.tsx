@@ -4,6 +4,8 @@ import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2
 import { CategoriaBadge } from "./CategoriaBadge";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { iniciaisNome } from "@/lib/iniciais";
 
 interface Prof {
   id: string;
@@ -170,14 +172,7 @@ function layoutLanes(apts: AgendamentoVPS[]): Map<string, { lane: number; lanes:
   return out;
 }
 
-function initials(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((s) => s[0]?.toUpperCase() ?? "")
-    .join("");
-}
+const initials = iniciaisNome;
 
 export function AgendaGrid({
   professionals, appointments, intervalo, inicio, fim, onCellClick, onAppointmentClick,
@@ -241,6 +236,15 @@ export function AgendaGrid({
   const profNome = (id: string | null | undefined) =>
     professionals.find((p) => p.id === id)?.nome;
 
+  // Celular: uma coluna de profissional por vez (escolhida no seletor acima da grade).
+  // Duas colunas de 200 px não cabem em 375 px e a 2ª ficava escondida atrás de rolagem lateral.
+  const isMobile = useIsMobile();
+  const [profAtivoId, setProfAtivoId] = useState<string | null>(null);
+  const umPorVez = isMobile && professionals.length > 1;
+  const profAtivo = professionals.find((p) => p.id === profAtivoId) ?? professionals[0];
+  const colunas = umPorVez && profAtivo ? [profAtivo] : professionals;
+  const corDe = (id: string) => PROF_COLORS[Math.max(0, professionals.findIndex((p) => p.id === id)) % PROF_COLORS.length];
+
   if (professionals.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground p-10">
@@ -276,15 +280,38 @@ export function AgendaGrid({
           })}
         </div>
       )}
+      {umPorVez && (
+        <div role="tablist" aria-label="Profissional exibido na agenda" className="flex flex-wrap gap-1.5 p-2 border-b border-border/40">
+          {professionals.map((p) => {
+            const ativo = p.id === profAtivo?.id;
+            const total = byProf.get(p.id)?.length ?? 0;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                role="tab"
+                aria-selected={ativo}
+                onClick={() => setProfAtivoId(p.id)}
+                className={cn(
+                  "min-h-10 px-3 py-1.5 rounded-lg text-xs font-semibold text-left break-words transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  ativo ? "bg-primary text-primary-foreground" : "bg-muted/60 text-foreground hover:bg-muted",
+                )}
+              >
+                {p.nome} <span className={ativo ? "opacity-80" : "text-muted-foreground"}>({total})</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="min-w-fit">
         {/* Header com nomes dos profissionais */}
         <div
           className="grid sticky top-0 z-20 bg-card/60 backdrop-blur-md border-b border-border/40"
-          style={{ gridTemplateColumns: `72px repeat(${professionals.length}, minmax(200px, 1fr))` }}
+          style={{ gridTemplateColumns: `${umPorVez ? 56 : 72}px repeat(${colunas.length}, minmax(200px, 1fr))` }}
         >
           <div className="border-r border-border/60" />
-          {professionals.map((p, i) => {
-            const c = PROF_COLORS[i % PROF_COLORS.length];
+          {colunas.map((p) => {
+            const c = corDe(p.id);
             return (
               <div
                 key={p.id}
@@ -309,7 +336,7 @@ export function AgendaGrid({
         <div
           className="relative grid"
           style={{
-            gridTemplateColumns: `72px repeat(${professionals.length}, minmax(200px, 1fr))`,
+            gridTemplateColumns: `${umPorVez ? 56 : 72}px repeat(${colunas.length}, minmax(200px, 1fr))`,
             height: totalHeight,
           }}
         >
@@ -338,10 +365,10 @@ export function AgendaGrid({
           </div>
 
           {/* Colunas dos profissionais */}
-          {professionals.map((prof, profIdx) => {
+          {colunas.map((prof) => {
             const apts = byProf.get(prof.id) || [];
             const lanes = layoutLanes(apts);
-            const profColor = PROF_COLORS[profIdx % PROF_COLORS.length];
+            const profColor = corDe(prof.id);
             return (
               <div key={prof.id} className="relative border-r border-border/60">
                 {/* células base (clicáveis) */}

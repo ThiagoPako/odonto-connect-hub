@@ -646,7 +646,7 @@ function ConsultaPage() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <DashboardHeader title="Consulta" />
-      <main className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-6">
         {pacienteSelecionado && (
           <div className="sticky -top-6 z-20 -mt-6 mb-4 pt-6 pb-1 bg-background max-w-[1600px] mx-auto">
             <AlertasMedicosBanner
@@ -1380,7 +1380,7 @@ function ConsultaPage() {
                 )}
               </div>
             </div>
-      </main>
+      </div>
     </div>
   );
 }
