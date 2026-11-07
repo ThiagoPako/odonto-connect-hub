@@ -105,7 +105,7 @@ function DisparosPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Disparos Programados" />
-      <main className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto">
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <MiniKpi icon={Send} label="Total Enviadas" value={totalEnviadas.toString()} />
@@ -185,7 +185,7 @@ function DisparosPage() {
             ))}
           </div>
         )}
-      </main>
+      </div>
 
       <NovoDisparoWizard
         open={wizardOpen}
