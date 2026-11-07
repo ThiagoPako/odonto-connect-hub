@@ -1,13 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useState, useEffect, useCallback } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import {
   especialidades,
   type Dentista,
 } from "@/data/dentistasMockData";
 import {
   UserPlus,
-  Search,
+  
   MoreVertical,
   Edit,
   Trash2,
@@ -20,7 +22,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { dentistasApi } from "@/lib/vpsApi";
+import { adminListUsers, dentistasApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -56,6 +58,7 @@ function mapDentista(r: any): Dentista {
     comissao: Number(r.comissao_percentual ?? r.comissao ?? 35),
     status: r.ativo === false ? 'inativo' : 'ativo',
     criadoEm: r.created_at ? new Date(r.created_at) : new Date(),
+    userId: r.user_id ?? null,
   };
 }
 
@@ -63,6 +66,8 @@ function DentistasPage() {
   const [dentistas, setDentistas] = useState<Dentista[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFiltro, setStatusFiltro] = useFiltroUrl("status", ["ativo", "inativo"]);
+  const [especialidadeUrl, setEspecialidadeFiltro] = useFiltroUrl("especialidade");
   const [showForm, setShowForm] = useState(false);
   const [editingDentista, setEditingDentista] = useState<Dentista | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -84,11 +89,18 @@ function DentistasPage() {
 
   useEffect(() => { loadDentistas(); }, [loadDentistas]);
 
+  const termo = searchTerm.trim().toLowerCase();
+  const especialidades = [...new Set(dentistas.map((d) => d.especialidade).filter(Boolean))].sort();
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const especialidadeFiltro = especialidades.includes(especialidadeUrl) ? especialidadeUrl : "";
   const filtered = dentistas.filter(
     (d) =>
-      d.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      d.cro.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      d.especialidade.toLowerCase().includes(searchTerm.toLowerCase())
+      (!statusFiltro || d.status === statusFiltro) &&
+      (!especialidadeFiltro || d.especialidade === especialidadeFiltro) &&
+      (!termo ||
+        (d.nome || "").toLowerCase().includes(termo) ||
+        (d.cro || "").toLowerCase().includes(termo) ||
+        (d.especialidade || "").toLowerCase().includes(termo))
   );
 
   /** Devolve true se salvou; em erro mantém o formulário aberto. */
@@ -98,6 +110,7 @@ function DentistasPage() {
       cro: data.cro, especialidade: data.especialidade,
       comissao_percentual: data.comissao,
       ativo: data.status === 'ativo',
+      user_id: data.userId || null,
     };
     const { error } = editingDentista
       ? await dentistasApi.update(editingDentista.id, payload)
@@ -146,7 +159,7 @@ function DentistasPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Gestão de Dentistas" />
-      <main className="flex-1 p-4 sm:p-8 space-y-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-8 space-y-6 overflow-auto">
         {loadError && (
           <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             <span>Não foi possível carregar os dentistas. {loadError}</span>
@@ -155,48 +168,78 @@ function DentistasPage() {
         )}
 
         {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
-          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+        <div className="grid grid-cols-3 gap-3 sm:gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
+          <div className="group bg-card rounded-2xl border border-border/60 p-3 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Total Cadastrados</p>
+            <p className="text-[11px] sm:text-xs uppercase sm:tracking-wider text-muted-foreground font-medium break-words">Total</p>
             <p className="text-2xl font-bold text-card-foreground mt-1 font-heading">{dentistas.length}</p>
           </div>
-          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+          <div className="group bg-card rounded-2xl border border-border/60 p-3 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-success/5 to-transparent rounded-bl-full pointer-events-none" />
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Ativos</p>
+            <p className="text-[11px] sm:text-xs uppercase sm:tracking-wider text-muted-foreground font-medium break-words">Ativos</p>
             <p className="text-2xl font-bold text-success mt-1 font-heading">{dentistas.filter((d) => d.status === "ativo").length}</p>
           </div>
-          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+          <div className="group bg-card rounded-2xl border border-border/60 p-3 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-destructive/5 to-transparent rounded-bl-full pointer-events-none" />
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Inativos</p>
+            <p className="text-[11px] sm:text-xs uppercase sm:tracking-wider text-muted-foreground font-medium break-words">Inativos</p>
             <p className="text-2xl font-bold text-destructive mt-1 font-heading">{dentistas.filter((d) => d.status === "inativo").length}</p>
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Buscar por nome, CRO ou especialidade..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-10 pl-10 pr-4 rounded-xl bg-card border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-            />
-          </div>
-          <button
-            onClick={() => { setEditingDentista(null); setShowForm(true); }}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
-          >
-            <UserPlus className="h-4 w-4" />
-            Novo Dentista
-          </button>
-        </div>
+        {/* Busca + filtros + ação */}
+        <BarraFiltros
+          busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Nome, CRO ou especialidade", rotulo: "Buscar dentista por nome, CRO ou especialidade" }}
+          filtros={[
+            { id: "status", rotulo: "Status", valor: statusFiltro, onChange: setStatusFiltro, opcoes: [{ valor: "ativo", rotulo: "Ativo" }, { valor: "inativo", rotulo: "Inativo" }] },
+            ...(especialidades.length > 1 || especialidadeFiltro
+              ? [{ id: "especialidade", rotulo: "Especialidade", valor: especialidadeFiltro, onChange: setEspecialidadeFiltro, rotuloTodos: "Todas", opcoes: especialidades.map((e) => ({ valor: e, rotulo: e })) }]
+              : []),
+          ]}
+          onLimpar={() => { setSearchTerm(""); setStatusFiltro(""); setEspecialidadeFiltro(""); }}
+          resultado={`${filtered.length} dentista${filtered.length !== 1 ? "s" : ""}`}
+          acoes={
+            <button
+              onClick={() => { setEditingDentista(null); setShowForm(true); }}
+              className="flex items-center gap-2 px-5 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
+            >
+              <UserPlus className="h-4 w-4" />
+              Novo dentista
+            </button>
+          }
+        />
 
-        {/* Table */}
-        <div className="bg-card rounded-2xl border border-border/60 shadow-card overflow-hidden animate-slide-up">
-          <div className="overflow-x-auto">
+        {/* Celular: cartões */}
+        <ul className="lg:hidden space-y-2">
+          {filtered.map((dentista) => (
+            <li key={dentista.id} className="bg-card rounded-2xl border border-border/60 shadow-card p-4">
+              <div className="flex items-start gap-3">
+                <div className="h-10 w-10 shrink-0 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
+                  {dentista.nome.split(" ").filter((_, i, arr) => i === 0 || i === arr.length - 1).map((n) => n[0]).join("")}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-foreground break-words">{dentista.nome}</p>
+                  <p className="text-xs text-muted-foreground break-words">{[dentista.especialidade, dentista.cro && (/^cro/i.test(dentista.cro) ? dentista.cro : `CRO ${dentista.cro}`), `Comissão ${dentista.comissao}%`].filter(Boolean).join(" · ")}</p>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+                    {dentista.email && <span className="flex items-center gap-1 break-all"><Mail className="h-3 w-3 shrink-0" />{dentista.email}</span>}
+                    {dentista.telefone && <span className="flex items-center gap-1"><Phone className="h-3 w-3 shrink-0" />{dentista.telefone}</span>}
+                  </div>
+                </div>
+                <span className={`shrink-0 inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${dentista.status === "ativo" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>
+                  {dentista.status === "ativo" ? "Ativo" : "Inativo"}
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link to="/painel-dentista" search={{ id: dentista.id }} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-border text-xs font-medium hover:bg-muted"><Eye className="h-3.5 w-3.5" />Ver painel</Link>
+                <button type="button" onClick={() => handleEdit(dentista)} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-border text-xs font-medium hover:bg-muted"><Edit className="h-3.5 w-3.5" />Editar</button>
+                <button type="button" onClick={() => setToDelete(dentista)} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-destructive/30 text-xs font-medium text-destructive hover:bg-destructive/10"><Trash2 className="h-3.5 w-3.5" />Excluir</button>
+              </div>
+            </li>
+          ))}
+        </ul>
+
+        {/* Tabela (tablet e desktop) */}
+        <div className="bg-card rounded-2xl border border-border/60 shadow-card overflow-hidden animate-slide-up max-lg:border-0 max-lg:shadow-none max-lg:bg-transparent">
+          <div className="hidden lg:block overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border/60">
@@ -213,12 +256,12 @@ function DentistasPage() {
                   <tr key={dentista.id} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
+                        <div className="h-10 w-10 shrink-0 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
                           {dentista.nome.split(" ").filter((_, i, arr) => i === 0 || i === arr.length - 1).map((n) => n[0]).join("")}
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-foreground">{dentista.nome}</p>
-                          <div className="flex items-center gap-3 mt-0.5">
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
                             <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Mail className="h-3 w-3" />{dentista.email}</span>
                             <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Phone className="h-3 w-3" />{dentista.telefone}</span>
                           </div>
@@ -272,7 +315,7 @@ function DentistasPage() {
               <p className="text-muted-foreground text-sm">
                 {dentistas.length === 0
                   ? "Nenhum dentista cadastrado ainda. Clique em \"Novo Dentista\" para começar."
-                  : "Nenhum dentista encontrado para essa busca."}
+                  : "Nenhum dentista encontrado com essa busca ou filtros."}
               </p>
             </div>
           )}
@@ -308,7 +351,7 @@ function DentistasPage() {
             onClose={() => { setShowForm(false); setEditingDentista(null); }}
           />
         )}
-      </main>
+      </div>
     </div>
   );
 }
@@ -329,12 +372,22 @@ function DentistaFormModal({
   const [especialidade, setEspecialidade] = useState(dentista?.especialidade ?? especialidades[0]);
   const [comissao, setComissao] = useState(dentista?.comissao ?? 35);
   const [status, setStatus] = useState<"ativo" | "inativo">(dentista?.status ?? "ativo");
+  const [userId, setUserId] = useState(dentista?.userId ?? "");
+  const [usuarios, setUsuarios] = useState<Array<{ id: string; name: string; email: string }>>([]);
+  const [usuariosErro, setUsuariosErro] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    adminListUsers().then(({ data, error }) => {
+      if (error) setUsuariosErro(error);
+      else setUsuarios(Array.isArray(data) ? data : []);
+    });
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    await onSave({ nome, email, telefone, cro, especialidade, comissao, status });
+    await onSave({ nome, email, telefone, cro, especialidade, comissao, status, userId: userId || null });
     setSaving(false);
   };
 
@@ -390,6 +443,21 @@ function DentistaFormModal({
                 <option value="ativo">Ativo</option>
                 <option value="inativo">Inativo</option>
               </select>
+            </div>
+            <div className="col-span-2">
+              <label htmlFor="dentista-usuario" className="text-xs font-medium text-muted-foreground mb-1 block">Usuário de acesso</label>
+              <select id="dentista-usuario" value={userId} onChange={(e) => setUserId(e.target.value)} disabled={!!usuariosErro}
+                aria-describedby="dentista-usuario-ajuda"
+                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60">
+                <option value="">Nenhum (não aprova relatórios clínicos)</option>
+                {usuarios.map((u) => <option key={u.id} value={u.id}>{u.name} — {u.email}</option>)}
+                {userId && !usuarios.some((u) => u.id === userId) && <option value={userId}>Usuário vinculado</option>}
+              </select>
+              <p id="dentista-usuario-ajuda" className="text-[11px] text-muted-foreground mt-1">
+                {usuariosErro
+                  ? "Não foi possível carregar os usuários da clínica; o vínculo atual não será alterado."
+                  : "Quem entra no sistema com este usuário é reconhecido como este dentista (por exemplo, para aprovar relatórios clínicos)."}
+              </p>
             </div>
           </div>
           <div className="flex justify-end gap-3 pt-2">

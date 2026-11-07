@@ -13,7 +13,7 @@ function CampanhasPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Campanhas & Meta Ads" />
-      <main className="flex-1 p-6 space-y-6 overflow-auto">
+      <div className="flex-1 p-6 space-y-6 overflow-auto">
         <Tabs defaultValue="campanhas" className="space-y-4">
           <TabsList className="max-w-full overflow-x-auto justify-start">
             <TabsTrigger value="campanhas">
@@ -31,7 +31,7 @@ function CampanhasPage() {
             <MetaAdsDashboard />
           </TabsContent>
         </Tabs>
-      </main>
+      </div>
     </div>
   );
 }
