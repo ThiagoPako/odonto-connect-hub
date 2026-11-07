@@ -9592,20 +9592,34 @@ function consumePendingMessageStatus(tenantId, messageId) {
   return entry.status;
 }
 
+// Fila por clínica: evento com mídia espera a assinatura do link; os eventos seguintes da
+// mesma clínica esperam ele, para o navegador não receber o status/ACK de uma mensagem
+// antes da própria mensagem. Sem nada pendente, o envio continua síncrono.
+const sseFilaPorClinica = new Map(); // tenantId -> Promise do último envio pendente
+
 function broadcastSSE(event, data, tenantId = null) {
   if (!isValidTenantId(tenantId)) {
     console.warn(`⚠️ SSE broadcast '${event}' bloqueado: tenant_id ausente ou inválido`);
     return;
   }
   const texto = JSON.stringify(data);
-  if (MEDIA_AUTH_MODE !== 'public' && texto && texto.includes('/uploads/media/')) {
-    // Mensagem nova com mídia: o link vai assinado para a clínica do evento
-    assinarMidiasNoCorpo(data, { tenantId, isSuperAdmin: false })
-      .then((assinado) => enviarSSE(event, JSON.stringify(assinado), tenantId))
-      .catch(() => enviarSSE(event, texto, tenantId));
+  const assinar = MEDIA_AUTH_MODE !== 'public' && texto && texto.includes('/uploads/media/');
+  const pendente = sseFilaPorClinica.get(tenantId);
+  if (!assinar && !pendente) {
+    enviarSSE(event, texto, tenantId);
     return;
   }
-  enviarSSE(event, texto, tenantId);
+  // Mensagem nova com mídia: o link vai assinado para a clínica do evento (a assinatura
+  // começa já; só o envio respeita a ordem).
+  const corpo = assinar
+    ? assinarMidiasNoCorpo(data, { tenantId, isSuperAdmin: false }).then((a) => JSON.stringify(a)).catch(() => texto)
+    : Promise.resolve(texto);
+  const fim = (pendente || Promise.resolve())
+    .then(() => corpo)
+    .then((t) => enviarSSE(event, t, tenantId))
+    .catch(() => {});
+  sseFilaPorClinica.set(tenantId, fim);
+  fim.then(() => { if (sseFilaPorClinica.get(tenantId) === fim) sseFilaPorClinica.delete(tenantId); });
 }
 
 function enviarSSE(event, texto, tenantId) {
@@ -18533,3 +18547,4 @@ export function resetWhatsAppQueueStateForTests() {
 export { parseAppointmentReminderReply };
 export { parseWaitlistOfferReply };
 export { isWhatsAppOptOutText };
+export { broadcastSSE as broadcastSSEForTests, sseClients as sseClientsForTests };
