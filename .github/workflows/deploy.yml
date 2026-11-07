@@ -212,6 +212,11 @@ jobs:
             # + versões, tenant_id da reativação. Só de deploy (blocos DO). Depois da schema-alinhamento.
             cat /root/odonto-connect/vps-api-server/migration-schema-b2-b3.sql | sudo -u postgres env PGOPTIONS='-c lock_timeout=5s' psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
               || echo "::warning::migration-schema-b2-b3.sql falhou: orçamentos (titulo/print_config/odontograma_snapshot), procedimentos_catalogo_versoes e tenant_id da reativação continuam faltando"
+            # Índices de desempenho — por último: não cria tabela e um lock_timeout aqui não atrasa o schema (CREATE INDEX CONCURRENTLY, sem travar escrita; só cria).
+            if ! cat /root/odonto-connect/vps-api-server/migration-indices-desempenho.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+              echo "::warning title=Índices de desempenho não aplicados::migration-indices-desempenho.sql falhou (lock ou erro). Só desempenho: o deploy segue e o próximo tenta de novo. Ver log acima."
+              echo "!!! ATENÇÃO: migration-indices-desempenho.sql NÃO foi aplicada por completo."
+            fi
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────

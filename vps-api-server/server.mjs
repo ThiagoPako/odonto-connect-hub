@@ -24,6 +24,7 @@ import { promisify } from 'util';
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
+import { sqlFoneIgual, foneIndexado, candidatosFone } from './telefone-sql.mjs';
 import { createLimiter, rateLimitMiddleware, sendTooMany, clientIp, ipKey, sleep } from './rate-limit.mjs';
 import { registerProvider, providerForChannel, sendResult } from './whatsapp/provider.mjs';
 import { credentialCipherFromEnv } from './whatsapp/crypto.mjs';
@@ -9179,7 +9180,9 @@ async function findMessageStatusContext({ tenantId, lookupIds = [], phone = '', 
     const phoneSuffixes = getWhatsappPhoneSuffixVariants(phone);
     params.push(phoneSuffixes.length ? phoneSuffixes : [phoneSuffix]);
     const phoneParam = params.length;
-    matchers.push(`RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = ANY($${phoneParam}::text[])`);
+    // Mesma expressão do índice parcial idx_chat_messages_tenant_fone11 (sem COALESCE + IS NOT NULL),
+    // senão o planner não usa o índice. NULL nunca casava com um sufixo não vazio: resultado igual.
+    matchers.push(`(cm.phone IS NOT NULL AND ${foneIndexado('cm.phone')} = ANY($${phoneParam}::text[]))`);
   }
 
   if (instance) {
@@ -11250,7 +11253,8 @@ app.post('/api/sessions/assign', async (req, res) => {
               OR cm.id::text = $2
               OR (
                 REGEXP_REPLACE($2, '\\D', '', 'g') <> ''
-                AND RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($2, '\\D', '', 'g'), 11)
+                AND cm.phone IS NOT NULL
+                AND RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($2, '\\D', '', 'g'), 11)
               )
             )
           ORDER BY cm.timestamp DESC
@@ -12340,7 +12344,15 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
 
   // 0) Validade
   if (job.expires_at && new Date(job.expires_at) < new Date()) {
-    return fail('Expirado: a mensagem não saiu a tempo (WhatsApp desconectado ou fila parada)');
+    // Motivo real: a última nota de espera do job diz por que ele não saiu.
+    const nota = String(job.error || '');
+    const motivo = /^Limite diário/.test(nota) ? 'limite diário de envio do número'
+      : /^Limite por hora/.test(nota) ? 'limite por hora de envio do número'
+      : /^Fora do horário/.test(nota) ? 'fora do horário de envio'
+      : /desconectad|Aguardando WhatsApp/i.test(nota) ? 'WhatsApp da clínica desconectado'
+      : /pausa/i.test(nota) ? 'número em pausa automática'
+      : 'fila parada ou WhatsApp desconectado';
+    return fail(`Expirado: a mensagem não saiu a tempo (${motivo})`);
   }
 
   // 1) Clínica dona do envio
@@ -13232,9 +13244,115 @@ async function resolveCampaignAudience(camp, tenantId) {
      LIMIT $1`);
 }
 
+// ─── Período da campanha (data_inicio / data_fim / campanha_perpetua) ───
+// As colunas são TEXT (o assistente grava YYYY-MM-DD de <input type="date">): a
+// comparação é feita aqui, com o dia de São Paulo (spClock), e não por cast no SQL,
+// para um valor vazio ou fora do formato não derrubar o agendador de todas as clínicas.
+const campaignDateWarned = new Set(); // aviso único por campanha/campo (sem dado de paciente)
+function campaignDateKey(value, { campId = null, field = '' } = {}) {
+  const t = String(value ?? '').trim();
+  if (!t) return null;
+  let ymd = null;
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) ymd = `${m[1]}-${m[2]}-${m[3]}`;
+  else if ((m = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/))) ymd = `${m[3]}-${m[2]}-${m[1]}`;
+  // Ida e volta pelo Date: 2026-13-45 ou 2026-02-30 não são datas.
+  if (ymd) {
+    const d = new Date(`${ymd}T12:00:00Z`);
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== ymd) ymd = null;
+  }
+  if (!ymd && campId) {
+    const k = `${campId}:${field}`;
+    if (!campaignDateWarned.has(k)) {
+      campaignDateWarned.add(k);
+      console.warn(`[campaign] ${field || 'data'} fora do formato na campanha ${campId}: ignorada (vale como sem limite)`);
+    }
+  }
+  return ymd;
+}
+
+function addDaysYmd(ymd, n) {
+  return new Date(new Date(`${ymd}T12:00:00Z`).getTime() + n * 86_400_000).toISOString().slice(0, 10);
+}
+
+// 'antes' (início no futuro), 'encerrada' (passou do fim) ou 'vigente'.
+function campaignPeriodStatus(camp, today = spClock().day) {
+  const inicio = campaignDateKey(camp.data_inicio, { campId: camp.id, field: 'data_inicio' });
+  const fim = camp.campanha_perpetua ? null : campaignDateKey(camp.data_fim, { campId: camp.id, field: 'data_fim' });
+  if (inicio && today < inicio) return 'antes';
+  if (fim && today > fim) return 'encerrada';
+  return 'vigente';
+}
+
+function spDateTime(ymd, hhmm, fallback) {
+  const h = /^\d{2}:\d{2}/.test(String(hhmm || '')) ? String(hhmm).slice(0, 5) : fallback;
+  return new Date(`${ymd}T${h}:00-03:00`); // Brasil sem horário de verão
+}
+
+// Validade de envio de marketing: 3 dias (padrão da fila) ou o fim da campanha, o que vier antes.
+function campaignExpiry(fimYmd) {
+  const padrao = Date.now() + 3 * 86_400_000;
+  return new Date(fimYmd ? Math.min(padrao, spDateTime(fimYmd, '23:59', '23:59').getTime()) : padrao);
+}
+
+async function cancelPendingCampaignJobs(tenantId, campId, motivo) {
+  const { rowCount } = await pool.query(
+    `UPDATE automation_jobs SET status = 'cancelled', error = $3, claimed_at = NULL
+      WHERE tenant_id = $1 AND flow_id = $2 AND trigger_event = 'campaign' AND status = 'pending'`,
+    [tenantId, String(campId), motivo]
+  ).catch(e => { console.error('[campaign] cancelar pendentes:', e.message); return { rowCount: 0 }; });
+  return rowCount || 0;
+}
+
 // Coloca a campanha na fila anti-bloqueio. A fila decide quando cada mensagem
 // sai (horário, limites do número, intervalo aleatório, SAIR).
-async function enqueueCampaignForTenant(camp, tenantId) {
+// scheduledAt/expiresAt: disparo único com data marcada e fim da campanha.
+// spread (disparo único): reparte os contatos pelos dias de envio, até
+// WA_CAMPAIGN_MAX_SPREAD_DAYS dias COM janela; o que não cabe não entra na fila.
+// Cota do dia = perDay × folga (lembretes e confirmações dividem o mesmo limite do
+// número) × fração da janela de envio disponível naquele dia (domingo = 0; sábado
+// proporcional; no 1º dia só o que ainda resta da janela).
+const WA_CAMPAIGN_MAX_SPREAD_DAYS = 7;
+const WA_CAMPAIGN_DAILY_SHARE = 0.8;
+const WA_CAMPAIGN_REF_WINDOW_MIN = 12 * 60; // janela cheia de dia útil (8h–20h)
+
+function hhmmToMinutes(v) {
+  const m = String(v || '').match(/^(\d{2}):(\d{2})/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+// Plano de envio: [{ dia, cota, inicio (Date), fim (Date|null) }] só com dias que têm janela.
+// horaFim (horário de término marcado pela clínica) corta a janela do dia: a cota é
+// calculada só sobre [horaInicio, horaFim] e `fim` vira a validade dos envios daquele
+// dia (o que não sair até lá expira, com o motivo, em vez de sair fora do horário).
+// Sem horaFim (ou horaFim <= horaInicio, dado inválido): janela da fila e fim = null.
+function planCampaignSpread({ startYmd, firstAt, horaInicio, horaFim = null, perDay, now = new Date() }) {
+  const plan = [];
+  const hoje = spClock(now).day;
+  const iniMarcado = hhmmToMinutes(horaInicio);
+  let fimMarcado = hhmmToMinutes(horaFim);
+  if (fimMarcado != null && iniMarcado != null && fimMarcado <= iniMarcado) fimMarcado = null;
+  for (let d = 0; d < 31 && plan.length < WA_CAMPAIGN_MAX_SPREAD_DAYS; d++) {
+    const dia = addDaysYmd(startYmd, d);
+    const win = WA_SEND_WINDOWS[new Date(`${dia}T12:00:00Z`).getUTCDay()];
+    if (!win) continue;
+    let inicioMin = Math.max(win[0], hhmmToMinutes(horaInicio) ?? win[0]);
+    if (d === 0 && firstAt) inicioMin = Math.max(inicioMin, spClock(firstAt).minutes);
+    if (dia === hoje) inicioMin = Math.max(inicioMin, spClock(now).minutes);
+    const fimMin = fimMarcado == null ? win[1] : Math.min(win[1], fimMarcado);
+    const disponivel = Math.max(0, fimMin - inicioMin);
+    const cota = Math.floor(perDay * WA_CAMPAIGN_DAILY_SHARE * Math.min(1, disponivel / WA_CAMPAIGN_REF_WINDOW_MIN));
+    if (cota <= 0) continue;
+    const hh = String(Math.floor(inicioMin / 60)).padStart(2, '0');
+    const mm = String(inicioMin % 60).padStart(2, '0');
+    const inicio = new Date(Math.max(now.getTime(), spDateTime(dia, `${hh}:${mm}`, '08:00').getTime()));
+    const fim = fimMarcado == null ? null
+      : spDateTime(dia, `${String(Math.floor(fimMin / 60)).padStart(2, '0')}:${String(fimMin % 60).padStart(2, '0')}`, '20:00');
+    plan.push({ dia, cota, inicio, fim });
+  }
+  return plan;
+}
+async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, expiresAt = null, spread = null } = {}) {
   const template = typeof camp.template === 'string' ? JSON.parse(camp.template) : camp.template;
   const message = template?.mensagem || template?.message || '';
   if (!message) return { error: 'Template sem mensagem configurada', status: 400 };
@@ -13256,23 +13374,52 @@ async function enqueueCampaignForTenant(camp, tenantId) {
   );
   const recentKeys = new Set(recentlySent.map(r => waPhoneKey(r.patient_phone)));
 
-  let enqueued = 0, optedOut = 0;
+  let perDay = null, plan = [], planIdx = 0, usadosNoDia = 0;
+  if (spread) {
+    const { rows: [inst] } = await pool.query('SELECT created_at FROM whatsapp_instances WHERE instance_name = $1 AND tenant_id = $2', [instance, tenantId])
+      .catch(() => ({ rows: [] }));
+    perDay = getRateTier(inst?.created_at).perDay;
+    plan = planCampaignSpread({ startYmd: spread.startYmd, firstAt: spread.firstAt, horaInicio: spread.horaInicio, horaFim: spread.horaFim, perDay });
+  }
+  let enqueued = 0, optedOut = 0, naoCabem = 0, ultimoDia = spread?.startYmd || null;
   const clinica = await getTenantClinicName(tenantId);
   for (const contact of contacts) {
     const phone = normalizeWhatsappNumber(contact.telefone);
     if (!phone || recentKeys.has(waPhoneKey(phone))) continue;
     if (await isWhatsAppOptedOut(tenantId, phone)) { optedOut++; continue; }
+    let jobScheduledAt = scheduledAt, jobExpiresAt = expiresAt;
+    if (spread) {
+      while (planIdx < plan.length && usadosNoDia >= plan[planIdx].cota) { planIdx++; usadosNoDia = 0; }
+      if (planIdx >= plan.length) { naoCabem++; continue; }
+      ultimoDia = plan[planIdx].dia;
+      jobScheduledAt = plan[planIdx].inicio;
+      usadosNoDia++;
+      // Com horário de término: vale até o fim do horário daquele dia. Sem: definido
+      // depois, quando se sabe o último dia.
+      jobExpiresAt = plan[planIdx].fim;
+    }
     recentKeys.add(waPhoneKey(phone));
     const personalizedMsg = message
       .replace(/\{\{nome\}\}/gi, (contact.nome || 'Cliente').split(' ')[0])
       .replace(/\{\{telefone\}\}/gi, contact.telefone || '')
       .replace(/\{\{clinica\}\}/gi, clinica)
       .replace(/\{\{\s*(procedimento|valor)\s*\}\}/gi, '');
-    await enqueueWhatsAppJob({
+    const jobId = await enqueueWhatsAppJob({
       tenantId, instance, phone, message: personalizedMsg, category: 'marketing',
       flowId: camp.id, flowName: camp.nome, patientName: contact.nome || '', triggerEvent: 'campaign',
+      ...(jobScheduledAt ? { scheduledAt: jobScheduledAt } : {}), ...(jobExpiresAt ? { expiresAt: jobExpiresAt } : {}),
     });
+    if (spread && jobId && !jobExpiresAt) (spread.jobIds ||= []).push(jobId);
     enqueued++;
+  }
+  // Validade dos envios do disparo sem horário de término: fim do dia seguinte ao
+  // último dia previsto (1 dia de folga para atrasos da fila).
+  if (spread && spread.jobIds?.length) {
+    const ate = spDateTime(addDaysYmd(ultimoDia, 1), '23:59', '23:59');
+    await pool.query(
+      `UPDATE automation_jobs SET expires_at = $3 WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+      [tenantId, spread.jobIds, ate]
+    ).catch(e => console.error('[campaign] validade do disparo:', e.message));
   }
 
   if (enqueued > 0) {
@@ -13284,7 +13431,10 @@ async function enqueueCampaignForTenant(camp, tenantId) {
       [enqueued, contacts.length, camp.id, tenantId]
     );
   }
-  return { enqueued, total: contacts.length, skipped: contacts.length - enqueued, optedOut };
+  return {
+    enqueued, total: contacts.length, skipped: contacts.length - enqueued, optedOut,
+    ...(spread ? { porDia: perDay, cotaDiaUtil: Math.floor(perDay * WA_CAMPAIGN_DAILY_SHARE), previsaoTermino: ultimoDia, naoCabem } : {}),
+  };
 }
 
 // Execute campaign — resolve contacts by audience, enqueue jobs
@@ -13297,8 +13447,41 @@ app.post('/api/campaigns/:id/execute', async (req, res) => {
     );
     if (campRows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
     const camp = campRows[0];
-    const result = await enqueueCampaignForTenant(camp, String(user.tenant_id));
+    const tenantId = String(user.tenant_id);
+    const today = spClock().day;
+    let opts = {};
+    if (camp.tipo === 'recorrente') {
+      const periodo = campaignPeriodStatus(camp, today);
+      if (periodo === 'encerrada') return res.status(409).json({ error: 'A campanha já passou da data de término' });
+      if (periodo === 'antes') {
+        // Só ativa: o agendador começa a enviar na data de início.
+        await pool.query(`UPDATE broadcast_campaigns SET ativo = true, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [camp.id, tenantId]);
+        return res.json({ success: true, queued: false, enqueued: 0, agendada: true, inicio: campaignDateKey(camp.data_inicio) });
+      }
+      const fim = camp.campanha_perpetua ? null : campaignDateKey(camp.data_fim);
+      if (fim) opts.expiresAt = campaignExpiry(fim);
+    } else {
+      // Disparo único: sai na data e no horário marcados (sem data = hoje, agora).
+      // O 409 só vale para data/horário que a própria clínica marcou.
+      const dataMarcada = campaignDateKey(camp.data_inicio, { campId: camp.id, field: 'data_inicio' });
+      const dia = dataMarcada || today;
+      if (dataMarcada && dia < today) return res.status(409).json({ error: 'A data do disparo já passou' });
+      const inicio = spDateTime(dia, camp.horario_inicio, '08:00');
+      const fimJanela = spDateTime(dia, camp.horario_fim, '23:59');
+      // O wizard sempre grava horarioFim (padrão 18:00): só a data marcada justifica o 409.
+      if (dataMarcada && fimJanela.getTime() <= Date.now()) {
+        return res.status(409).json({ error: 'O horário do disparo já passou' });
+      }
+      // Hoje já depois do horário (sem nada marcado): começa amanhã.
+      const startYmd = fimJanela.getTime() <= Date.now() ? addDaysYmd(today, 1) : dia;
+      const firstAt = startYmd === dia ? new Date(Math.max(Date.now(), inicio.getTime())) : spDateTime(startYmd, camp.horario_inicio, '08:00');
+      opts = { spread: { startYmd, firstAt, horaInicio: camp.horario_inicio, horaFim: camp.horario_fim } };
+      if (startYmd > today) opts.comecaEm = startYmd;
+    }
+    const { comecaEm = null, ...enqueueOpts } = opts;
+    const result = await enqueueCampaignForTenant(camp, tenantId, enqueueOpts);
     if (result.error) return res.status(result.status || 400).json({ error: result.error });
+    if (comecaEm) result.inicio = comecaEm;
     await pool.query(
       `UPDATE broadcast_campaigns SET ativo = true, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
       [camp.id, user.tenant_id]
@@ -13344,6 +13527,18 @@ async function processCampaignScheduler() {
     const currentTime = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 
     for (const camp of activeCampaigns) {
+      // Período: início no futuro não envia; passou do fim não envia e cancela o que
+      // ainda estava na fila dessa campanha (só desta clínica).
+      const periodo = campaignPeriodStatus(camp, day);
+      if (periodo === 'antes') continue;
+      if (periodo === 'encerrada') {
+        const n = await cancelPendingCampaignJobs(String(camp.tenant_id), camp.id, 'Cancelado: campanha passou da data de término');
+        // Desativa: a tela mostra "Encerrada" e o cancelamento não roda a cada ciclo.
+        await pool.query(`UPDATE broadcast_campaigns SET ativo = false, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [camp.id, camp.tenant_id])
+          .catch(e => console.error('[campaign] encerrar:', e.message));
+        console.log(`   ⏹️ Campaign "${camp.nome}" encerrada${n ? `: ${n} envio(s) pendente(s) cancelado(s)` : ''}`);
+        continue;
+      }
       const diasSemana = typeof camp.dias_semana === 'string' ? JSON.parse(camp.dias_semana) : (camp.dias_semana || []);
       if (diasSemana.length > 0 && !diasSemana.includes(currentDay)) continue;
       if (camp.horario_inicio && currentTime < camp.horario_inicio) continue;
@@ -13358,7 +13553,9 @@ async function processCampaignScheduler() {
       if (todayJobs.length > 0) continue;
 
       try {
-        const result = await enqueueCampaignForTenant(camp, String(camp.tenant_id));
+        // Mensagem desta rodada não sai depois do fim da campanha.
+        const fim = camp.campanha_perpetua ? null : campaignDateKey(camp.data_fim);
+        const result = await enqueueCampaignForTenant(camp, String(camp.tenant_id), fim ? { expiresAt: campaignExpiry(fim) } : {});
         if (result.enqueued > 0) console.log(`   ✅ Campaign "${camp.nome}" auto-enfileirada: ${result.enqueued}`);
       } catch (campErr) {
         console.error(`   ❌ Campaign "${camp.nome}" auto-execute error:`, campErr.message);
@@ -13952,10 +14149,14 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
 
     // Check if patient already exists with same phone
     if (lead.telefone) {
-      const clean = lead.telefone.replace(/\D/g, '');
-      const { rows: existing } = await pool.query(
-        "SELECT id, nome, telefone FROM pacientes WHERE REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1 AND tenant_id = $2", [clean.slice(-8), user.tenant_id]
-      );
+      // Mesmo telefone pelos 11 últimos dígitos (com ou sem 55, com máscara), ou
+      // cadastro salvo sem DDD.
+      const candidatos = candidatosFone(lead.telefone, { semDdd: true });
+      const { rows: existing } = candidatos.length ? await pool.query(
+        `SELECT id, nome, telefone FROM pacientes
+          WHERE tenant_id = $2 AND ${foneIndexado("COALESCE(telefone, '')")} = ANY($1::text[])`,
+        [candidatos, user.tenant_id]
+      ) : { rows: [] };
       if (existing.length > 0) {
         return res.json({
           success: false,
@@ -14034,18 +14235,18 @@ app.get('/api/crm/leads/:id/history', async (req, res) => {
       );
       appointments = rows;
     } else if (telefone) {
-      // Try matching by phone
-      const clean = telefone.replace(/\D/g, '');
-      const { rows } = await pool.query(
+      // Pelo telefone: 11 últimos dígitos (com ou sem 55, com máscara), ou cadastro sem DDD.
+      const candidatos = candidatosFone(telefone, { semDdd: true });
+      const { rows } = candidatos.length ? await pool.query(
         `SELECT a.id, a.data, a.hora, a.procedimento, a.status, d.nome as dentista_nome
          FROM agendamentos a
          LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id
          LEFT JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
-         WHERE REPLACE(REPLACE(REPLACE(p.telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1
+         WHERE ${foneIndexado("COALESCE(p.telefone, '')")} = ANY($1::text[])
            AND a.tenant_id = $2
          ORDER BY a.data DESC, a.hora DESC LIMIT 10`,
-        [clean.slice(-8), user.tenant_id]
-      );
+        [candidatos, user.tenant_id]
+      ) : { rows: [] };
       appointments = rows;
     }
 
@@ -15613,7 +15814,7 @@ app.get('/api/queue/leads', async (req, res) => {
               AND cm_unread.sender = 'lead'
               AND (
                 cm_unread.lead_id = s.lead_id
-                OR (s.lead_phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm_unread.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+                OR (s.lead_phone IS NOT NULL AND cm_unread.phone IS NOT NULL AND ${sqlFoneIgual('cm_unread.phone', 's.lead_phone')})
               )
               AND cm_unread.timestamp > COALESCE(
                 (SELECT last_read_at FROM chat_read_status WHERE lead_id = s.lead_id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
@@ -15628,7 +15829,7 @@ app.get('/api/queue/leads', async (req, res) => {
            WHERE cm.tenant_id = $2
              AND (
                cm.lead_id = s.lead_id
-               OR (s.lead_phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+               OR (s.lead_phone IS NOT NULL AND cm.phone IS NOT NULL AND ${sqlFoneIgual('cm.phone', 's.lead_phone')})
              )
            ORDER BY cm.timestamp DESC
            LIMIT 1
@@ -15661,7 +15862,7 @@ app.get('/api/queue/leads', async (req, res) => {
            l.id::text = cm.lead_id
            OR (
              cm.phone IS NOT NULL
-             AND REGEXP_REPLACE(COALESCE(l.telefone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11)
+             AND ${sqlFoneIgual("COALESCE(l.telefone, '')", 'cm.phone')}
            )
          )
         WHERE cm.tenant_id = $2
@@ -15690,7 +15891,7 @@ app.get('/api/queue/leads', async (req, res) => {
               AND cm_unread.sender = 'lead'
               AND (
                 cm_unread.lead_id = mc.id
-                OR (mc.phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm_unread.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+                OR (mc.phone IS NOT NULL AND cm_unread.phone IS NOT NULL AND ${sqlFoneIgual('cm_unread.phone', 'mc.phone')})
               )
               AND cm_unread.timestamp > COALESCE(
                 (SELECT last_read_at FROM chat_read_status WHERE lead_id = mc.id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
@@ -15708,14 +15909,14 @@ app.get('/api/queue/leads', async (req, res) => {
                AND closed_s.closed_at >= mc.last_message_time
                AND (
                  closed_s.lead_id = mc.id
-                 OR (closed_s.lead_phone IS NOT NULL AND mc.phone IS NOT NULL AND REGEXP_REPLACE(closed_s.lead_phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+                 OR (closed_s.lead_phone IS NOT NULL AND mc.phone IS NOT NULL AND ${sqlFoneIgual('closed_s.lead_phone', 'mc.phone')})
                )
           )
           AND NOT EXISTS (
             SELECT 1
               FROM open_sessions os
              WHERE os.id = mc.id
-                OR (os.phone IS NOT NULL AND mc.phone IS NOT NULL AND REGEXP_REPLACE(os.phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+                OR (os.phone IS NOT NULL AND mc.phone IS NOT NULL AND ${sqlFoneIgual('os.phone', 'mc.phone')})
           )
       )
       SELECT * FROM open_sessions
@@ -18237,6 +18438,7 @@ export { app, pool };
 export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation, processAppointmentReminders };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
 
+export { processCampaignScheduler, campaignPeriodStatus, processAutomationJobs as processAutomationJobsForCampaignTests };
 export { checkWhatsAppHealth, processAutomationJobs as processAutomationJobsForHealthTests };
 export { processAutomationJobs };
 // Mídia na fila (tests/whatsapp-openwa-midia.test.js): enfileirar e assinar como o servidor.
