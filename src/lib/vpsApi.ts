@@ -116,6 +116,9 @@ export function friendlyApiError(raw: unknown, status: number): string {
   return msg;
 }
 
+/** Evento global quando a API recusa por assinatura vencida (402 ASSINATURA_BLOQUEADA / _SOMENTE_LEITURA). */
+export const ASSINATURA_BLOQUEADA_EVENT = 'odonto:assinatura-bloqueada';
+
 export async function vpsApiFetch<T = unknown>(
   path: string,
   options?: { method?: string; body?: unknown; params?: Record<string, string>; background?: boolean }
@@ -148,6 +151,10 @@ export async function vpsApiFetch<T = unknown>(
       if (response.status === 401) {
         handleAuthFailure(!!options?.background);
         return { data: null, error: data?.error || 'Sessão expirada. Faça login novamente.' };
+      }
+      if (response.status === 402 && (data?.code === 'ASSINATURA_BLOQUEADA' || data?.code === 'ASSINATURA_SOMENTE_LEITURA')) {
+        if (typeof window !== 'undefined') window.dispatchEvent(new Event(ASSINATURA_BLOQUEADA_EVENT));
+        return { data: null, error: data.error };
       }
 
       return { data: null, error: friendlyApiError(data?.error, response.status) };
@@ -1679,3 +1686,35 @@ export const reativacaoApi = {
 export const healthCheck = () => vpsApiFetch('/health');
 
 
+
+// ─── Exportação dos dados da clínica (liberada mesmo com a assinatura vencida) ───
+export interface ExportacaoGrupo {
+  grupo: string;
+  tabelas: Array<{ tabela: string; nome: string; registros: number }>;
+}
+export const exportacaoApi = {
+  listar: () => vpsApiFetch<{ grupos: ExportacaoGrupo[] }>('/exportacao'),
+  /** Baixa o CSV com Authorization (o token nunca vai na URL). */
+  baixar: async (tabela: string): Promise<{ error: string | null }> => {
+    try {
+      const headers = await getAuthHeaders();
+      delete headers['Content-Type'];
+      const res = await fetch(`${VPS_API_BASE}/exportacao/${encodeURIComponent(tabela)}.csv`, { headers });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({} as { error?: string }));
+        return { error: body?.error || `HTTP ${res.status}` };
+      }
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `${tabela}-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      return { error: null };
+    } catch (error: unknown) {
+      return { error: error instanceof Error ? error.message : 'Erro de rede' };
+    }
+  },
+};

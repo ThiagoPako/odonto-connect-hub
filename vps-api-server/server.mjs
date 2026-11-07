@@ -41,6 +41,7 @@ import {
   extractEvolutionMessages, normalizeEvolutionAckStatus, maskWaIdentifiers,
 } from './whatsapp/adapters/evolution.mjs';
 import { createOpenWaAdapter } from './whatsapp/adapters/openwa.mjs';
+import { situacaoAssinatura, sqlTenantSemMarketing, rotaLiberadaNoBloqueio, permitidoNaEtapa, etapaAoMenos, ERRO_ASSINATURA_BLOQUEADA, ERRO_ASSINATURA_SOMENTE_LEITURA, EXPORTACAO_GRUPOS, EXPORTACAO_TABELAS, celulaCsv, linhaCsv } from './assinatura.mjs';
 import { validarPaciente, CAMPOS_PACIENTE, quantidadeEstoque, TIPOS_MOVIMENTO_ESTOQUE } from './cadastros-validacao.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
@@ -191,6 +192,74 @@ app.use((req, res, next) => {
     return json(body);
   };
   next();
+});
+
+// ─── Assinatura vencida: 5 dias de carência, depois bloqueia (assinatura.mjs) ───
+// Cache curto por clínica: a regra roda em toda requisição autenticada.
+const ASSINATURA_CACHE_TTL_MS = 60_000;
+const cacheAssinatura = new Map();
+function esquecerAssinatura(tenantId) { if (tenantId) cacheAssinatura.delete(String(tenantId)); }
+async function situacaoDoTenant(tenantId) {
+  if (!isValidTenantId(tenantId)) return null;
+  const chave = String(tenantId);
+  const c = cacheAssinatura.get(chave);
+  if (c && c.ate > Date.now()) return c.sit;
+  let sit = null;
+  try {
+    const { rows } = await pool.query('SELECT status, trial_ends_at, current_period_end FROM tenants WHERE id = $1 LIMIT 1', [chave]);
+    if (rows[0]) sit = situacaoAssinatura(rows[0]);
+  } catch (err) {
+    // Falha aberta: erro de banco não tranca a clínica
+    if (err?.code !== '22P02' && err?.code !== '42P01') console.warn('[assinatura] consulta falhou:', err?.code || err?.message);
+    return null;
+  }
+  if (cacheAssinatura.size > 5000) cacheAssinatura.clear();
+  cacheAssinatura.set(chave, { sit, ate: Date.now() + ASSINATURA_CACHE_TTL_MS });
+  return sit;
+}
+// 402 com texto neutro (a equipe vê o mesmo erro; o detalhe do atraso fica para o admin, CDC 42).
+// Quem não é admin recebe só a etapa (as datas e o motivo do atraso ficam para o admin, CDC 42).
+function assinaturaParaUsuario(sit, user) {
+  if (!sit) return null;
+  if (user?.is_super_admin || user?.role === 'admin') return sit;
+  return { situacao: sit.situacao, motivo: sit.motivo === 'suspensa' || sit.motivo === 'cancelada' ? sit.motivo : null };
+}
+function respostaAssinaturaBloqueada(res, sit, user = null) {
+  if (sit?.situacao === 'somente_leitura') {
+    return res.status(402).json({
+      error: 'Sistema em modo consulta: dá para ver, exportar, responder pacientes e remarcar ou cancelar consultas, mas não criar nem alterar cadastros. O administrador da clínica pode regularizar em "Minha assinatura".',
+      code: ERRO_ASSINATURA_SOMENTE_LEITURA,
+      assinatura: assinaturaParaUsuario(sit, user),
+    });
+  }
+  const motivo = sit?.situacao === 'cancelado' ? 'a assinatura da clínica foi cancelada' : 'o acesso da clínica está suspenso';
+  return res.status(402).json({
+    error: `Acesso bloqueado: ${motivo}. Nenhum dado foi apagado: o prontuário continua disponível para consulta e os dados podem ser exportados.`,
+    code: ERRO_ASSINATURA_BLOQUEADA,
+    assinatura: assinaturaParaUsuario(sit, user),
+  });
+}
+// Antes de todas as rotas da API: aplica a etapa da escada (assinatura.mjs → permitidoNaEtapa).
+// Super-admin nunca é bloqueado. Webhooks e rotas sem Bearer seguem a própria autenticação.
+app.use('/api', async (req, res, next) => {
+  try {
+    if (isWebhookRequestPath(req) || rotaLiberadaNoBloqueio(req.originalUrl, req.method)) return next();
+    if (!/^Bearer\s/i.test(String(req.headers.authorization || ''))) return next();
+    let user;
+    try { ({ user } = await verifyUser(req)); } catch { return next(); }
+    if (user.is_super_admin || !user.tenant_id) return next();
+    const sit = await situacaoDoTenant(user.tenant_id);
+    if (sit && !permitidoNaEtapa(sit.situacao, req.method, req.originalUrl)) return respostaAssinaturaBloqueada(res, sit, user);
+    // Somente leitura: remarcar/cancelar consulta sim; mudar o resto do agendamento, não
+    if (sit?.situacao === 'somente_leitura' && req.method === 'PUT' && /^\/api\/agenda\/[^/]+\/?$/.test(req.originalUrl.split('?')[0])) {
+      const extras = Object.keys(req.body || {}).filter((k) => !['data', 'hora', 'duracao', 'status'].includes(k));
+      if (extras.length) return respostaAssinaturaBloqueada(res, sit, user);
+    }
+    return next();
+  } catch (err) {
+    console.warn('[assinatura] middleware:', err?.message);
+    return next();
+  }
 });
 
 // ─── Media File Storage ─────────────────────────────────────
@@ -950,6 +1019,8 @@ async function sendPushToAll(payload, tenantId) {
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
   // Sem tenant não envia: antes a prévia da mensagem ia para todas as clínicas.
   if (!tenantId) return;
+  // Clínica bloqueada por assinatura vencida não recebe push (a prévia mostraria a conversa)
+  if (etapaAoMenos(await situacaoDoTenant(tenantId), 'bloqueado')) return;
   try {
     const { rows: subs } = await pool.query('SELECT * FROM push_subscriptions WHERE tenant_id = $1', [tenantId]);
     const pushPayload = JSON.stringify(payload);
@@ -1784,7 +1855,7 @@ app.get('/api/super-admin/tenants', async (req, res) => {
       FROM tenants t LEFT JOIN plans p ON p.id = t.plan_id
       ORDER BY t.created_at DESC
     `);
-    res.json({ data: rows });
+    res.json({ data: rows.map((t) => ({ ...t, assinatura: situacaoAssinatura(t) })) });
   } catch (e) {
     responderErroSaas(res, e, 'super-admin:tenants');
   }
@@ -1815,10 +1886,11 @@ app.patch('/api/super-admin/tenants/:id', async (req, res) => {
       vals
     );
     if (!rows[0]) return res.status(404).json({ error: 'Clínica não encontrada' });
+    esquecerAssinatura(id);
     const campos = Object.entries({ status, plan_slug, trial_ends_at, current_period_end })
       .filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => `${k}=${v}`).join(' ');
     console.log(`[AUDIT super-admin] alterou clinica=${id} actor=${actor.id} ${campos}`);
-    res.json({ data: rows[0] });
+    res.json({ data: { ...rows[0], assinatura: situacaoAssinatura(rows[0]) } });
   } catch (e) {
     responderErroSaas(res, e, 'super-admin:tenant-update');
   }
@@ -2455,6 +2527,8 @@ app.get('/api/auth/me', async (req, res) => {
       tenant_id: profile.tenant_id || null,
       is_super_admin: !!profile.is_super_admin,
       tenant_features: tenantMetadata?.features || {},
+      // Situação da assinatura da clínica ativa (aviso na carência, tela de bloqueio depois)
+      assinatura: user.tenant_id ? assinaturaParaUsuario(await situacaoDoTenant(user.tenant_id), { ...user, role: userRole }) : null,
     });
   } catch (error) {
     console.error('auth/me error:', error.message);
@@ -9864,6 +9938,10 @@ app.get('/api/events', async (req, res) => {
   if (await usuarioDesativado(authenticatedUserId)) {
     return res.status(401).json({ error: 'Usuário desativado' });
   }
+  if (!authenticatedIsSuperAdmin) {
+    const sit = await situacaoDoTenant(tenantId);
+    if (etapaAoMenos(sit, 'bloqueado')) return respostaAssinaturaBloqueada(res, sit);
+  }
 
   // Set headers for SSE
   res.writeHead(200, {
@@ -9880,7 +9958,14 @@ app.get('/api/events', async (req, res) => {
   console.log(`📡 SSE client connected (tenant: ${tenantId || 'anonymous'}, total: ${sseClients.size})`);
 
   // Keepalive ping every 25s to prevent proxy/browser timeouts
-  const keepalive = setInterval(() => {
+  const keepalive = setInterval(async () => {
+    // Clínica bloqueada depois de a conexão abrir: encerra (consulta em cache de 60 s)
+    if (!authenticatedIsSuperAdmin && etapaAoMenos(await situacaoDoTenant(tenantId), 'bloqueado')) {
+      clearInterval(keepalive);
+      sseClients.delete(res);
+      res.end();
+      return;
+    }
     res.write(`event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
   }, 25000);
 
@@ -12656,6 +12741,8 @@ async function enqueueWhatsAppJob({
   if (!isValidTenantId(tenantId)) throw new Error('enqueueWhatsAppJob: tenantId obrigatório');
   const cleanPhone = normalizeWhatsappNumber(phone || '');
   if (!cleanPhone || !message) return null;
+  // Assinatura vencida (somente leitura em diante): não enfileira marketing (campanha, reativação, follow-up)
+  if (category === 'marketing' && etapaAoMenos(await situacaoDoTenant(tenantId), 'somente_leitura')) return null;
   // Mídia (imagem, documento, vídeo, áudio de voz): arquivo já salvo em /uploads/media; o
   // `message` vira a legenda (e o texto auditado/deduplicado). Assinada pelo servidor.
   if (media) {
@@ -13085,6 +13172,9 @@ async function processAutomationJobs() {
          FROM automation_jobs
         WHERE status = 'pending' AND scheduled_at <= NOW() AND COALESCE(channel, 'whatsapp') = 'whatsapp'
           AND (claimed_at IS NULL OR claimed_at < NOW() - ${WA_CLAIM_TIMEOUT_SQL})
+          -- Assinatura vencida (somente leitura em diante): marketing parado (lembrete e resposta ao paciente seguem)
+          AND NOT (COALESCE(category, 'transactional') = 'marketing' AND EXISTS (
+                SELECT 1 FROM tenants t WHERE t.id = automation_jobs.tenant_id AND ${sqlTenantSemMarketing('t')}))
         ORDER BY COALESCE(NULLIF(instance, ''), 'tenant:' || COALESCE(tenant_id::text, 'none')),
                  (trigger_event = 'auto_reply') DESC NULLS LAST, scheduled_at ASC
         LIMIT 200`
@@ -18009,6 +18099,112 @@ function erroExportacao(res, err, formato) {
   return res.status(500).json({ error: 'Erro ao exportar' });
 }
 
+// ─── Exportação dos dados da clínica (CSV por tabela) ──────────
+// Só admin. Liberada também com a clínica bloqueada por assinatura vencida (assinatura.mjs).
+// Tabela fora da lista ou sem tenant_id não é exportada; toda leitura filtra pela clínica.
+// Exportar exige ser admin DA clínica exportada: super-admin não exporta (acesso em massa a dado
+// de saúde sem pedido da clínica, LGPD art. 6º III), e quem trocou de clínica pelo x-tenant-id
+// precisa ser admin nela (o papel em user_roles não é por clínica).
+async function exigirAdminDaClinica(user) {
+  const erro = (msg) => { const e = new Error(msg); e.status = 403; return e; };
+  if (user.is_super_admin) throw erro('A exportação é feita pelo administrador da própria clínica');
+  const { rows } = await pool.query('SELECT 1 FROM profiles WHERE id = $1 AND tenant_id = $2 LIMIT 1', [user.id, user.tenant_id]);
+  if (rows.length) return;
+  try {
+    const { rows: r2 } = await pool.query(
+      `SELECT 1 FROM user_roles WHERE user_id = $1 AND tenant_id::text = $2 AND role::text = 'admin' LIMIT 1`, [user.id, String(user.tenant_id)]);
+    if (r2.length) return;
+  } catch (e) {
+    if (e?.code !== '42703') throw e; // sem coluna tenant_id em user_roles: só o vínculo do perfil vale
+  }
+  throw erro('Apenas o administrador desta clínica pode exportar os dados');
+}
+const EXPORTACAO_LOTE = 5000;
+RL.exportacao = createLimiter('exportacao_usuario', { windowMs: 60_000, max: 40 });
+app.use(/^\/api\/exportacao\/[^/]+\.csv$/, rateLimitMiddleware(RL.exportacao, userRateKey, { message: 'Muitas exportações seguidas. Aguarde um minuto e tente de novo.' }));
+
+async function tabelasExportaveis() {
+  const nomes = [...EXPORTACAO_TABELAS.keys()];
+  const { rows } = await pool.query(
+    `SELECT table_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND column_name = 'tenant_id' AND table_name = ANY($1::text[])`,
+    [nomes]
+  );
+  return new Set(rows.map((r) => r.table_name));
+}
+
+app.get('/api/exportacao', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    await exigirAdminDaClinica(user);
+    const existentes = await tabelasExportaveis();
+    const grupos = [];
+    for (const g of EXPORTACAO_GRUPOS) {
+      const tabelas = [];
+      for (const [tabela, nome] of g.tabelas) {
+        if (!existentes.has(tabela)) continue;
+        const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM public."${tabela}" WHERE tenant_id = $1`, [user.tenant_id]);
+        tabelas.push({ tabela, nome, registros: rows[0]?.c ?? 0 });
+      }
+      if (tabelas.length) grupos.push({ grupo: g.grupo, tabelas });
+    }
+    res.json({ grupos });
+  } catch (error) {
+    const status = httpStatusOf(error);
+    res.status(status).json({ error: status === 500 ? 'Erro ao listar os dados para exportação' : error.message });
+  }
+});
+
+app.get('/api/exportacao/:tabela.csv', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    await exigirAdminDaClinica(user);
+    const tabela = String(req.params.tabela || '');
+    // Nome de tabela só da lista fixa (nunca do usuário direto no SQL)
+    if (!EXPORTACAO_TABELAS.has(tabela) || !(await tabelasExportaveis()).has(tabela)) {
+      return res.status(404).json({ error: 'Conjunto de dados não encontrado' });
+    }
+    // Em lotes, todos no mesmo retrato do banco (REPEATABLE READ): edição simultânea não
+    // duplica nem some com linha, e a tabela inteira não vai para a memória de uma vez.
+    let cancelado = false;
+    req.on('close', () => { if (!res.writableEnded) cancelado = true; });
+    const client = await pool.connect();
+    let total = 0;
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const lote = (offset) => client.query(
+        `SELECT * FROM public."${tabela}" WHERE tenant_id = $1 ORDER BY ctid LIMIT ${EXPORTACAO_LOTE} OFFSET $2`, [user.tenant_id, offset]);
+      let { rows, fields } = await lote(0);
+      const colunas = (fields || []).map((f) => f.name);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${tabela}-${new Date().toISOString().slice(0, 10)}.csv"`);
+      res.write('\uFEFF' + colunas.map(celulaCsv).join(',') + '\n');
+      for (let offset = 0; rows.length && !cancelado; ) {
+        res.write(rows.map((r) => linhaCsv(colunas, r)).join('\n') + '\n');
+        total += rows.length;
+        if (rows.length < EXPORTACAO_LOTE) break;
+        offset += EXPORTACAO_LOTE;
+        ({ rows } = await lote(offset));
+      }
+      await client.query('COMMIT');
+    } finally {
+      client.release();
+    }
+    console.log(`[AUDIT exportacao] user=${user.id} clinica=${user.tenant_id} tabela=${tabela} registros=${total}${cancelado ? ' (interrompida pelo cliente)' : ''}`);
+    res.end();
+  } catch (error) {
+    const status = httpStatusOf(error);
+    if (status === 500) console.error('[exportacao]', error?.message);
+    // Já começou a mandar o arquivo: derruba a conexão para o download falhar em vez de
+    // entregar um CSV incompleto como se estivesse completo.
+    if (res.headersSent) return res.destroy(error);
+    res.status(status).json({ error: status === 500 ? 'Erro ao exportar' : error.message });
+  }
+});
+
+// ─── Export clinical reports as CSV ─────────────────────────
 // GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=
 // Só com Authorization: Bearer (a tela baixa por fetch). O JWT na URL (?token=) não vale mais:
 // ficava no histórico do navegador e no log de acesso do nginx por 7 dias.
