@@ -13,7 +13,7 @@ function AnalyticsPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="ROI & Analytics" />
-      <main className="flex-1 p-4 sm:p-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 overflow-auto">
         <EmBreve
           titulo="ROI e análise de campanhas"
           descricao="Estamos preparando o cálculo de retorno das campanhas com os dados reais da sua clínica (investimento, leads e pacientes fechados). Enquanto isso, acompanhe os números que já são reais."
@@ -22,7 +22,7 @@ function AnalyticsPage() {
             { to: "/painel-comercial", label: "Painel comercial" },
           ]}
         />
-      </main>
+      </div>
     </div>
   );
 }

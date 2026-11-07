@@ -290,7 +290,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
               <CheckCircle2 className="h-4 w-4" />
             </button>
           )}
-          <button onClick={onClose} className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground ml-1">
+          <button onClick={onClose} aria-label="Fechar conversa" title="Fechar conversa" className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground ml-1">
             <X className="h-4 w-4" />
           </button>
         </div>

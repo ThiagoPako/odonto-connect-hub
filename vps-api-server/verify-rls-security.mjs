@@ -28,20 +28,33 @@ async function verifyRLS() {
 
     // 1. Verificar se o usuário atual é owner (ou superuser)
     const { rows: ownerCheck } = await client.query(`
-      SELECT current_user, 
-             is_superuser,
-             (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) as is_super
-      FROM pg_user 
-      WHERE usename = current_user
+      SELECT current_user,
+             rolsuper AS is_super
+      FROM pg_roles
+      WHERE rolname = current_user
     `);
     const currentUser = ownerCheck[0].current_user;
-    console.log(`Usuário do banco de dados: ${currentUser}`);
+    const isSuper = ownerCheck[0].is_super === true;
+    console.log(`Usuário do banco de dados: ${currentUser}${isSuper ? ' (superusuário)' : ''}`);
+
+    // Superusuário ignora RLS mesmo com FORCE: o teste rodaria contra o Postgres, não
+    // contra a política. Nesse caso (CI: POSTGRES_USER é superusuário) a tabela passa a
+    // pertencer a um papel comum e os testes rodam com SET ROLE nele.
+    const TEST_OWNER = 'rls_verify_owner';
+    if (isSuper) {
+      await client.query(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${TEST_OWNER}') THEN
+          CREATE ROLE ${TEST_OWNER} NOLOGIN NOSUPERUSER NOBYPASSRLS;
+        END IF; END $$`);
+    }
+    const tableOwner = isSuper ? TEST_OWNER : currentUser;
 
     // 2. Criar tabela de teste com RLS
     await client.query('CREATE TABLE IF NOT EXISTS test_rls_security (id UUID PRIMARY KEY, name TEXT, tenant_id UUID)');
     
     // Garantir que o usuário atual é o dono (necessário para testar FORCE RLS)
-    await client.query(`ALTER TABLE test_rls_security OWNER TO ${currentUser}`);
+    await client.query(`ALTER TABLE test_rls_security OWNER TO ${tableOwner}`);
+    if (isSuper) await client.query(`SET ROLE ${TEST_OWNER}`);
     
     await client.query('ALTER TABLE test_rls_security ENABLE ROW LEVEL SECURITY');
     await client.query('ALTER TABLE test_rls_security FORCE ROW LEVEL SECURITY');
@@ -59,8 +72,10 @@ async function verifyRLS() {
     // Limpar dados anteriores
     await client.query('DELETE FROM test_rls_security WHERE tenant_id IN ($1, $2)', [tenantA, tenantB]);
 
+    // Contexto de sessão (is_local=false): fora de transação, is_local=true some ao fim
+    // do próprio SELECT set_config e as próximas queries rodariam sem contexto.
     // Inserir registros iniciais como Super Admin para garantir que os dados existam no banco
-    await client.query("SELECT set_config('app.is_super_admin', 'true', true)");
+    await client.query("SELECT set_config('app.is_super_admin', 'true', false)");
     const { rows: rowA } = await client.query('INSERT INTO test_rls_security (id, name, tenant_id) VALUES (gen_random_uuid(), $1, $2) RETURNING id', ['Segredo do Tenant A', tenantA]);
     const { rows: rowB } = await client.query('INSERT INTO test_rls_security (id, name, tenant_id) VALUES (gen_random_uuid(), $1, $2) RETURNING id', ['Segredo do Tenant B', tenantB]);
     
@@ -70,8 +85,8 @@ async function verifyRLS() {
     console.log('Dados de teste inseridos com sucesso.');
 
     // Mudar para contexto de usuário comum (Tenant A)
-    await client.query("SELECT set_config('app.is_super_admin', 'false', true)");
-    await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantA]);
+    await client.query("SELECT set_config('app.is_super_admin', 'false', false)");
+    await client.query("SELECT set_config('app.current_tenant_id', $1, false)", [tenantA]);
 
     console.log('\n--- Testando Isolamento (Simulando Usuário Owner com FORCE RLS) ---');
 
@@ -119,8 +134,12 @@ async function verifyRLS() {
     }
 
     // Limpeza
-    await client.query("SELECT set_config('app.is_super_admin', 'true', true)");
+    await client.query("SELECT set_config('app.is_super_admin', 'true', false)");
     await client.query('DROP TABLE test_rls_security');
+    if (isSuper) {
+      await client.query('RESET ROLE');
+      await client.query(`DROP ROLE IF EXISTS ${TEST_OWNER}`);
+    }
     console.log('\n--- Verificação Finalizada com Sucesso ---');
 
   } catch (err) {
