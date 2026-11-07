@@ -34,10 +34,16 @@ const agendamentoA = 'aaaaaaaa-3333-4000-8000-0000000000ac';
 const relatorioOutroDentista = 'aaaaaaaa-1111-4000-8000-0000000000a2';
 const relatorioDentistaSaiu = 'aaaaaaaa-1111-4000-8000-0000000000a0';
 const relatorioAprovadoA = 'aaaaaaaa-1111-4000-8000-0000000000a9';
-// Cadastro de dentistas da clínica A, por e-mail do usuário (ativo = ainda na clínica)
-const dentistasPorEmail = {
-  'dentista@clinica-a.com': { id: dentistaA, nome: 'Ana Lima', cro: 'SP-1234', tenant: tenantA },
-  'outra@clinica-a.com': { id: dentistaA2, nome: 'Bia Reis', cro: 'SP-5678', tenant: tenantA },
+// Cadastro de dentistas da clínica A, pelo usuário vinculado (dentistas.user_id), nunca pelo e-mail
+const userIdOutra = '45454545-4545-4545-4545-454545454545';
+const userIdSemDentista = '55555555-5555-4555-8555-555555555555';
+const idPorEmail = {
+  'dentista@clinica-a.com': userId,
+  'outra@clinica-a.com': userIdOutra,
+};
+const dentistasPorUsuario = {
+  [userId]: { id: dentistaA, nome: 'Ana Lima', cro: 'SP-1234', tenant: tenantA },
+  [userIdOutra]: { id: dentistaA2, nome: 'Bia Reis', cro: 'SP-5678', tenant: tenantA },
 };
 const dentistasCadastro = {
   [dentistaA]: { nome: 'Ana Lima', ativo: true },
@@ -57,10 +63,14 @@ let sqlLog;
 let querySpy;
 let fetchSpy;
 let opcoes;
-const token = (extra = {}) => jwt.sign({
-  sub: userId, email: 'dentista@clinica-a.com',
-  role: 'dentista', tenant_id: tenantA, is_super_admin: false, ...extra,
-}, JWT_SECRET);
+// Cada e-mail é um usuário diferente (admin, recepção etc. não têm cadastro de dentista vinculado).
+const token = (extra = {}) => {
+  const email = extra.email || 'dentista@clinica-a.com';
+  return jwt.sign({
+    sub: idPorEmail[email] || userIdSemDentista, email,
+    role: 'dentista', tenant_id: tenantA, is_super_admin: false, ...extra,
+  }, JWT_SECRET);
+};
 const chamar = (method, url, body = {}, tk = token()) =>
   request(app)[method](url).set('Authorization', `Bearer ${tk}`).send(body);
 const achar = (re) => sqlLog.find(q => re.test(q.text));
@@ -99,15 +109,15 @@ beforeEach(() => {
       return Promise.resolve(opcoes.consentimento && pacientes[params[1]]?.tenant === params[0]
         ? { rows: [{ id: 'c1', tipo: params[2], versao: '1.0' }], rowCount: 1 } : vazio);
     }
-    if (/FROM dentistas\s+WHERE tenant_id = \$1 AND LOWER\(email\) = LOWER\(\$2\)/.test(text)) {
-      const d = dentistasPorEmail[String(params[1]).toLowerCase()];
+    if (/FROM dentistas\s+WHERE tenant_id = \$1 AND user_id = \$2::uuid/.test(text)) {
+      const d = dentistasPorUsuario[String(params[1])];
       return Promise.resolve(d && d.tenant === params[0] ? { rows: [{ id: d.id, nome: d.nome, cro: d.cro }], rowCount: 1 } : vazio);
     }
     if (/SELECT dentista_id FROM agendamentos WHERE id = \$1::uuid AND tenant_id = \$2/.test(text)) {
       const a = agendamentos[params[0]];
       return Promise.resolve(a && a.tenant === params[1] ? { rows: [{ dentista_id: a.dentista_id }], rowCount: 1 } : vazio);
     }
-    if (/FROM clinical_reports r\s+LEFT JOIN profiles p/.test(text)) {
+    if (/FROM clinical_reports r\s+LEFT JOIN dentistas d2/.test(text)) {
       const r = relatorios[params[0]];
       if (!r || r.tenant !== params[1]) return Promise.resolve(vazio);
       const d = r.dentista_id ? dentistasCadastro[r.dentista_id] : null;
@@ -486,7 +496,7 @@ describe('R7 — exportações (CSV e PDF)', () => {
       expect(q.text).toMatch(/status = 'aprovado'/);
       const reg = achar(/INSERT INTO exportacoes_relatorios_ia/);
       expect(reg.params[0]).toBe(tenantA);
-      expect(reg.params[1]).toBe(userId);
+      expect(reg.params[1]).toBe(userIdSemDentista);
       expect(reg.params[3]).toBe(1);
       expect(reg.params[5]).toBe(formato);
       expect(JSON.parse(reg.params[4]).from).toBe('2026-11-01');

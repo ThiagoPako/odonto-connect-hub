@@ -11,7 +11,6 @@ import { Camera, User, Mail, Lock, Loader2, Save } from "lucide-react";
 export function UserProfilePanel() {
   const { user } = useAuth();
   const [name, setName] = useState(user?.name ?? "");
-  const [email, setEmail] = useState(user?.email ?? "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -61,7 +60,7 @@ export function UserProfilePanel() {
       return;
     }
     setSavingProfile(true);
-    const { error } = await profileApi.update({ name: name.trim(), email: email.trim() });
+    const { error } = await profileApi.update({ name: name.trim() });
     if (error) toast.error("Erro: " + error);
     else {
       toast.success("Perfil atualizado!");
@@ -184,7 +183,10 @@ export function UserProfilePanel() {
                   <Mail className="h-3.5 w-3.5 inline mr-1.5" />
                   Email
                 </Label>
-                <Input id="profile-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+                <Input id="profile-email" type="email" value={user?.email ?? ""} disabled readOnly aria-describedby="profile-email-ajuda" />
+                <p id="profile-email-ajuda" className="text-xs text-muted-foreground">
+                  Para trocar o e-mail de acesso, peça ao administrador da clínica.
+                </p>
               </div>
             </div>
             <Button type="submit" disabled={savingProfile} size="sm">

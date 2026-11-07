@@ -2337,27 +2337,18 @@ app.put('/api/auth/profile', async (req, res) => {
     const { name, email } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
 
-    const updates = ['name = $1', 'updated_at = NOW()'];
-    const values = [name.trim()];
-    let idx = 2;
-
-    if (email && email.trim()) {
-      const normalizedEmail = email.toLowerCase().trim();
-      // Check if email is taken by another user
-      const { rows: existing } = await pool.query(
-        'SELECT id FROM profiles WHERE email = $1 AND id != $2',
-        [normalizedEmail, user.id]
-      );
-      if (existing.length > 0) return res.status(409).json({ error: 'Email já em uso por outro usuário' });
-      updates.push(`email = $${idx}`);
-      values.push(normalizedEmail);
-      idx++;
+    // O próprio usuário não troca o e-mail: com ele poderia assumir o cadastro de outra pessoa
+    // (ex.: o de um dentista). Só o admin da clínica troca (rotas de admin de usuários).
+    if (email !== undefined && email !== null && String(email).trim()) {
+      const { rows: atual } = await pool.query('SELECT email FROM profiles WHERE id = $1', [user.id]);
+      if (String(email).toLowerCase().trim() !== String(atual[0]?.email || '').toLowerCase().trim()) {
+        return res.status(403).json({ error: 'Você não pode trocar o próprio e-mail. Peça ao administrador da clínica.' });
+      }
     }
 
-    values.push(user.id);
     await pool.query(
-      `UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`,
-      values
+      'UPDATE profiles SET name = $1, updated_at = NOW() WHERE id = $2',
+      [name.trim(), user.id]
     );
 
     // Return updated profile
@@ -5345,6 +5336,7 @@ function normalizarCpf(cpf) {
 const MENSAGEM_UNICO_POR_CLINICA = {
   uq_pacientes_tenant_cpf: 'Já existe um paciente com este CPF nesta clínica',
   uq_dentistas_tenant_cro: 'Já existe um profissional com este CRO nesta clínica',
+  uq_dentistas_tenant_user: 'Este usuário já está vinculado a outro profissional nesta clínica',
   uq_agenda_marcadores_tenant_nome: 'Já existe um marcador com este nome nesta clínica',
 };
 function responderErroGravacao(res, error, tag, generico = 'Não foi possível salvar com este valor. Fale com o suporte.') {
@@ -6442,6 +6434,18 @@ app.get('/api/dentistas', async (req, res) => {
   }
 });
 
+// Usuário (login) vinculado ao cadastro do dentista: é por ele, e não pelo e-mail, que o sistema
+// sabe quem é o dentista (aprovação de relatório clínico etc.). Só perfil da MESMA clínica.
+// Devolve { userId } (null = desvincular) ou { status, error }.
+async function validarUsuarioDoDentista(valor, tenantId) {
+  if (valor === null || valor === '') return { userId: null };
+  if (!UUID_RE.test(String(valor))) return { status: 400, error: 'Usuário inválido' };
+  const { rows } = await pool.query(
+    'SELECT 1 FROM profiles WHERE id = $1::uuid AND tenant_id = $2 LIMIT 1', [String(valor), tenantId]);
+  if (!rows.length) return { status: 404, error: 'Usuário não encontrado nesta clínica' };
+  return { userId: String(valor) };
+}
+
 app.post('/api/dentistas', async (req, res) => {
   try {
     const { user } = await verifyAdmin(req);
@@ -6449,9 +6453,16 @@ app.post('/api/dentistas', async (req, res) => {
     const { nome, especialidade, telefone, email, comissao_percentual } = req.body;
     const cro = normalizarCro(req.body.cro);
     const id = crypto.randomUUID();
+    const cols = ['id', 'nome', 'cro', 'especialidade', 'telefone', 'email', 'comissao_percentual', 'tenant_id'];
+    const vals = [id, nome, cro, especialidade, telefone, email, comissao_percentual || 0, user.tenant_id];
+    if (req.body.user_id !== undefined) {
+      const v = await validarUsuarioDoDentista(req.body.user_id, user.tenant_id);
+      if (v.error) return res.status(v.status).json({ error: v.error });
+      cols.push('user_id'); vals.push(v.userId);
+    }
     await pool.query(
-      'INSERT INTO dentistas (id, nome, cro, especialidade, telefone, email, comissao_percentual, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [id, nome, cro, especialidade, telefone, email, comissao_percentual || 0, user.tenant_id]
+      `INSERT INTO dentistas (${cols.join(', ')}) VALUES (${vals.map((_, i) => `$${i + 1}`).join(',')})`,
+      vals
     );
     res.json({ id, success: true });
   } catch (error) {
@@ -6478,6 +6489,11 @@ app.put('/api/dentistas/:id', async (req, res) => {
     if (ativo !== undefined) { params.push(ativo); sets.push(`ativo=$${params.length}`); }
     if (cor_agenda !== undefined) { params.push(cor_agenda); sets.push(`cor_agenda=$${params.length}`); }
     if (sala !== undefined) { params.push(sala); sets.push(`sala=$${params.length}`); }
+    if (req.body.user_id !== undefined) {
+      const v = await validarUsuarioDoDentista(req.body.user_id, user.tenant_id);
+      if (v.error) return res.status(v.status).json({ error: v.error });
+      params.push(v.userId); sets.push(`user_id=$${params.length}`);
+    }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     params.push(req.params.id, user.tenant_id);
     const { rowCount } = await pool.query(`UPDATE dentistas SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
@@ -16566,16 +16582,23 @@ async function getIaClinicaConfig(tenantId) {
   };
 }
 
-// Cadastro de cirurgião-dentista do usuário nesta clínica (pelo e-mail, ativo e com CRO), ou null.
+// Cadastro de cirurgião-dentista do usuário nesta clínica (vinculado pelo user_id, ativo e com
+// CRO), ou null. Nunca pelo e-mail: o e-mail do cadastro não prova quem é a pessoa.
 async function findDentistaDoUsuario(user) {
-  if (!isValidTenantId(user?.tenant_id) || !user?.email) return null;
-  const { rows } = await pool.query(
-    `SELECT id, nome, cro FROM dentistas
-      WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND ativo IS NOT FALSE AND COALESCE(TRIM(cro), '') <> ''
-      LIMIT 1`,
-    [user.tenant_id, user.email]
-  );
-  return rows[0] || null;
+  if (!isValidTenantId(user?.tenant_id) || !UUID_RE.test(String(user?.id || ''))) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, nome, cro FROM dentistas
+        WHERE tenant_id = $1 AND user_id = $2::uuid AND ativo IS NOT FALSE AND COALESCE(TRIM(cro), '') <> ''
+        LIMIT 1`,
+      [user.tenant_id, String(user.id)]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    // Coluna user_id ainda não criada (primeiros segundos do boot): ninguém é dentista (falha fechada).
+    if (err?.code === '42703') return null;
+    throw err;
+  }
 }
 
 // Dentista do atendimento (dono do rascunho e quem aprova): primeiro o dentista do agendamento,
@@ -16878,8 +16901,7 @@ async function autorizarRevisaoRelatorio(user, reportId) {
     `SELECT r.id, r.status, COALESCE(r.dentista_id, d2.id) AS responsavel_id,
             d.id AS responsavel_cadastro, d.ativo AS responsavel_ativo, d.nome AS responsavel_nome
        FROM clinical_reports r
-       LEFT JOIN profiles p ON r.dentista_id IS NULL AND p.id::text = r.attendant_id
-       LEFT JOIN dentistas d2 ON r.dentista_id IS NULL AND d2.tenant_id = r.tenant_id AND LOWER(d2.email) = LOWER(p.email)
+       LEFT JOIN dentistas d2 ON r.dentista_id IS NULL AND d2.tenant_id = r.tenant_id AND d2.user_id::text = r.attendant_id
        LEFT JOIN dentistas d ON d.id = COALESCE(r.dentista_id, d2.id) AND d.tenant_id = r.tenant_id
       WHERE r.id = $1 AND r.tenant_id = $2
       LIMIT 1`,
@@ -18636,6 +18658,22 @@ if (process.env.NODE_ENV !== 'test') {
 
       // ─── 4. Clinicorp Integration columns for local projection ───
       `ALTER TABLE dentistas ADD COLUMN IF NOT EXISTS clinicorp_professional_id TEXT`,
+      // Usuário (login) do dentista: identifica quem é o dentista (não o e-mail). Mesmo conteúdo de
+      // migration-ia-revisao-humana.sql. O vínculo inicial pelo e-mail roda UMA vez, quando a coluna
+      // nasce, só dentro da mesma clínica e só onde casa exatamente 1 perfil e 1 dentista.
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = 'public' AND table_name = 'dentistas' AND column_name = 'user_id') THEN
+           ALTER TABLE dentistas ADD COLUMN user_id UUID REFERENCES profiles(id) ON DELETE SET NULL;
+           UPDATE dentistas d SET user_id = p.id
+             FROM profiles p
+            WHERE d.user_id IS NULL AND d.tenant_id IS NOT NULL AND p.tenant_id = d.tenant_id
+              AND COALESCE(TRIM(d.email), '') <> '' AND LOWER(TRIM(p.email)) = LOWER(TRIM(d.email))
+              AND (SELECT COUNT(*) FROM profiles p2 WHERE p2.tenant_id = d.tenant_id AND LOWER(TRIM(p2.email)) = LOWER(TRIM(d.email))) = 1
+              AND (SELECT COUNT(*) FROM dentistas d2 WHERE d2.tenant_id = d.tenant_id AND LOWER(TRIM(d2.email)) = LOWER(TRIM(d.email))) = 1;
+         END IF;
+       END $$`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS uq_dentistas_tenant_user ON dentistas (tenant_id, user_id) WHERE user_id IS NOT NULL`,
       `ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS clinicorp_patient_id TEXT`,
       `ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
       `ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT false`,
@@ -18731,11 +18769,10 @@ if (process.env.NODE_ENV !== 'test') {
         WHERE status IS NULL`,
       `UPDATE clinical_reports SET revisao_pendente_desde = COALESCE(CASE WHEN origem_ia_sem_revisao THEN NOW() END, created_at)
         WHERE status = 'rascunho' AND revisao_pendente_desde IS NULL`,
-      // Dentista do atendimento dos relatórios já gravados: o dentista com o e-mail de quem gerou.
+      // Dentista do atendimento dos relatórios já gravados: o dentista vinculado (user_id) a quem gerou.
       `UPDATE clinical_reports r SET dentista_id = d.id
-         FROM profiles p, dentistas d
-        WHERE r.dentista_id IS NULL AND p.id::text = r.attendant_id
-          AND d.tenant_id = r.tenant_id AND LOWER(d.email) = LOWER(p.email)`,
+         FROM dentistas d
+        WHERE r.dentista_id IS NULL AND d.tenant_id = r.tenant_id AND d.user_id::text = r.attendant_id`,
       `DO $$ BEGIN
          IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'clinical_reports_status_check'
                      AND pg_get_constraintdef(oid) NOT LIKE '%nao_aprovado%') THEN

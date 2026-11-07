@@ -187,7 +187,8 @@ export async function getMe() {
 // ─── Profile (self-service) ─────────────────────────────────
 
 export const profileApi = {
-  update: (body: { name?: string; email?: string }) =>
+  // O e-mail não é trocado aqui (só o admin da clínica troca): o servidor responde 403.
+  update: (body: { name?: string }) =>
     vpsApiFetch<{ success: boolean }>('/auth/profile', { method: 'PUT', body }),
   changePassword: (currentPassword: string, newPassword: string) =>
     vpsApiFetch<{ success: boolean }>('/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),

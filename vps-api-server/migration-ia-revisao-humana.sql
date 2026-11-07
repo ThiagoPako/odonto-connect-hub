@@ -43,11 +43,32 @@ UPDATE clinical_reports
    SET revisao_pendente_desde = COALESCE(CASE WHEN origem_ia_sem_revisao THEN NOW() END, created_at)
  WHERE status = 'rascunho' AND revisao_pendente_desde IS NULL;
 
--- Dentista do atendimento dos relatórios já gravados: o dentista com o e-mail de quem gerou.
+-- Usuário (login) do dentista: é por ele, e não pelo e-mail, que o sistema sabe quem é o dentista
+-- (o e-mail do cadastro não prova quem é a pessoa). O vínculo inicial pelo e-mail roda UMA vez,
+-- quando a coluna nasce, só dentro da mesma clínica e só onde casa exatamente 1 perfil e 1 dentista;
+-- depois o admin vincula/desvincula na tela de dentistas. Mesmo conteúdo do boot (server.mjs).
+-- Rollback: DROP INDEX IF EXISTS uq_dentistas_tenant_user; ALTER TABLE dentistas DROP COLUMN IF EXISTS user_id;
+--   (perde o vínculo; ninguém mais é reconhecido como dentista até vincular de novo)
+DO $$
+BEGIN
+  IF to_regclass('public.dentistas') IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'dentistas' AND column_name = 'user_id') THEN
+    ALTER TABLE dentistas ADD COLUMN user_id UUID REFERENCES profiles(id) ON DELETE SET NULL;
+    UPDATE dentistas d SET user_id = p.id
+      FROM profiles p
+     WHERE d.user_id IS NULL AND d.tenant_id IS NOT NULL AND p.tenant_id = d.tenant_id
+       AND COALESCE(TRIM(d.email), '') <> '' AND LOWER(TRIM(p.email)) = LOWER(TRIM(d.email))
+       AND (SELECT COUNT(*) FROM profiles p2 WHERE p2.tenant_id = d.tenant_id AND LOWER(TRIM(p2.email)) = LOWER(TRIM(d.email))) = 1
+       AND (SELECT COUNT(*) FROM dentistas d2 WHERE d2.tenant_id = d.tenant_id AND LOWER(TRIM(d2.email)) = LOWER(TRIM(d.email))) = 1;
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_dentistas_tenant_user ON dentistas (tenant_id, user_id) WHERE user_id IS NOT NULL;
+
+-- Dentista do atendimento dos relatórios já gravados: o dentista vinculado (user_id) a quem gerou.
 UPDATE clinical_reports r SET dentista_id = d.id
-  FROM profiles p, dentistas d
- WHERE r.dentista_id IS NULL AND p.id::text = r.attendant_id
-   AND d.tenant_id = r.tenant_id AND LOWER(d.email) = LOWER(p.email);
+  FROM dentistas d
+ WHERE r.dentista_id IS NULL AND d.tenant_id = r.tenant_id AND d.user_id::text = r.attendant_id;
 
 -- Status: rascunho, aprovado (pelo dentista) ou nao_aprovado (guardado só para auditoria).
 DO $$
