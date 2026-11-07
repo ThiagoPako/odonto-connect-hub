@@ -17989,15 +17989,8 @@ async function buscarRelatoriosParaExportar(user, query, formato) {
     console.error(`[ai:export-${formato}] registro da exportação falhou:`, logErr.message);
     return { erroRegistro: true };
   }
-  // Também no registro de acesso ao prontuário (PR #59), se a tabela já existir.
-  const pacienteIds = [...new Set(rows.map(r => r.patient_id).filter(Boolean).map(String))];
-  if (pacienteIds.length) {
-    await pool.query(
-      `INSERT INTO acessos_prontuario (tenant_id, usuario_id, paciente_id, recurso, acao)
-       SELECT $1, $2, unnest($3::text[]), 'relatorio_clinico_ia', 'exportar'`,
-      [user.tenant_id, UUID_RE.test(String(user.id || '')) ? user.id : null, pacienteIds]
-    ).catch(e => { if (e?.code !== '42P01') console.error(`[ai:export-${formato}] acessos_prontuario:`, e.message); });
-  }
+  // Também no registro de acesso ao prontuário (lgpd.mjs, PR #59; ignora se a tabela não existir).
+  await registrarAcessoProntuario(pool, user, rows.map(r => r.patient_id), 'relatorio_clinico', 'exportar');
   return { rows };
 }
 
@@ -18025,7 +18018,6 @@ app.get('/api/ai/reports/export.csv', so(PERMISSOES.ADMIN), async (req, res) => 
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows, erroRegistro } = await buscarRelatoriosParaExportar(user, req.query, 'csv');
     if (erroRegistro) return res.status(503).json({ error: 'Não foi possível registrar a exportação. Tente novamente em instantes.' });
-    registrarAcessoProntuario(pool, user, rows.map(r => r.patient_id), 'relatorio_clinico', 'exportar');
 
     const esc = (v) => {
       if (v === null || v === undefined) return '';
@@ -18631,11 +18623,11 @@ import { registerLgpd, registrarAcessoProntuario } from './lgpd.mjs';
 import { registerLgpdExpurgo, processarExpurgoLgpd } from './lgpd-expurgo.mjs';
 registerClinicorp(app, pool, { verifyUser });
 // Aceite de Termos/Política com prova (aceites_documentos) e pendências de versão nova.
-registerLegal(app, { pool, verifyUser, verifyAdmin, verifySuperAdmin });
+registerLegal(app, { pool, verifyUser, verifyAdmin, verifySuperAdmin, papelAtual });
 // Direitos do titular (LGPD art. 18): exportar, excluir, anonimizar; log de acesso ao prontuário.
 registerLgpd(app, { pool, verifyAdmin, optOutKey: waPhoneKey });
 // Expurgo por prazo: o job só gera a lista; elimina só o aprovado, depois do dry-run.
-registerLgpdExpurgo(app, { pool, verifyUser, optOutKey: waPhoneKey });
+registerLgpdExpurgo(app, { pool, verifyUser, optOutKey: waPhoneKey, papelAtual });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
 // Each authenticated user has their own row in clinicorp_user_settings.

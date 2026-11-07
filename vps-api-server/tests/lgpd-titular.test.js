@@ -3,6 +3,7 @@
 // pool.query e pool.connect são mockados (nenhuma query chega ao Postgres).
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -22,7 +23,7 @@ const adminId = '44444444-4444-4444-4444-444444444444';
 const leadLigado = '66666666-6666-6666-6666-666666666666';
 const leadPossivel = '88888888-8888-8888-8888-888888888888';
 
-const token = (extra = {}) => jwt.sign({
+const token = (extra = {}) => assinarComPapel({
   sub: adminId, email: 'admin@clinica.test', role: 'admin', tenant_id: tenantB, is_super_admin: false, ...extra,
 }, JWT_SECRET);
 const IDENT = { conferida_por: 'Recepção (Ana)', documento: 'rg' };
@@ -390,7 +391,7 @@ describe('LGPD — direitos do titular e acesso ao prontuário', () => {
 
     test.each([
       ['/api/prontuarios', /FROM prontuarios pr/, 'paciente_id', 'prontuario', 'visualizar'],
-      [`/api/ai/reports/${pacienteDaB}`, /FROM clinical_reports WHERE patient_id/, 'patient_id', 'relatorio_clinico', 'visualizar'],
+      [`/api/ai/reports/${pacienteDaB}`, /FROM clinical_reports\s+WHERE patient_id/, 'patient_id', 'relatorio_clinico', 'visualizar'],
       ['/api/ai/reports/export.csv', /FROM clinical_reports/, 'patient_id', 'relatorio_clinico', 'exportar'],
     ])('%s registra cada paciente retornado', async (url, re, col, recurso, acao) => {
       spyQuery.mockImplementation(async (sql, params) => {

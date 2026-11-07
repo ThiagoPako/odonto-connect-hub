@@ -229,19 +229,16 @@ function erroHttp(res, err, tag) {
   return res.status(500).json({ error: 'Erro interno' });
 }
 
-export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
-  // Papel na clínica: admin (perfil ou user_roles) e/ou dentista (cadastro em dentistas VINCULADO ao
+export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey, papelAtual }) {
+  // Papel na clínica: admin (papel do banco nesta clínica — papelAtual, matriz #86; nunca o do JWT
+  // nem user_roles de outra clínica) e/ou dentista (cadastro em dentistas VINCULADO ao
   // usuário por dentistas.user_id, na mesma clínica). Não por e-mail: o e-mail do perfil pode ser
   // trocado para o de um dentista (revisão do Igor, transversal). Sem a coluna user_id (criada pela
   // migration-ia-revisao-humana.sql / boot do #79) ninguém é dentista aqui: falha fechada.
   const papel = async (req) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id || user.is_super_admin) return { user, admin: false, dentistaId: null };
-    let admin = user.role === 'admin';
-    if (!admin) {
-      const { rows } = await pool.query('SELECT 1 FROM user_roles WHERE user_id = $1 AND role = $2', [user.id, 'admin']);
-      admin = rows.length > 0;
-    }
+    const admin = (await papelAtual(user)) === 'admin';
     let dentistaId = null;
     if (user.id) {
       try {

@@ -2,6 +2,7 @@
 // entre clínicas; prontuário só com dentista. pool.query e pool.connect são mockados.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
@@ -25,7 +26,7 @@ const dentistaA = '55555555-5555-5555-5555-555555555555'; // perfil vinculado a 
 const adminA2 = '66666666-6666-6666-6666-666666666666';
 const listaA = 'aaaaaaaa-0000-0000-0000-000000000001';
 const listaB = 'bbbbbbbb-0000-0000-0000-000000000001';
-const token = (extra = {}) => jwt.sign({ sub: adminA, email: 'admin@a.test', role: 'admin', tenant_id: tenantA, is_super_admin: false, ...extra }, JWT_SECRET);
+const token = (extra = {}) => assinarComPapel({ sub: adminA, email: 'admin@a.test', role: 'admin', tenant_id: tenantA, is_super_admin: false, ...extra }, JWT_SECRET);
 
 const INV = {
   crm_leads: ['id', 'tenant_id', 'paciente_id', 'created_at', 'updated_at'],

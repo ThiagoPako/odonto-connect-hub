@@ -5,6 +5,8 @@
 // pool.query e fetch são mockados: nada chega ao Postgres nem à OpenAI.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
+import { _definirPapelParaTestes } from '../papeis.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -66,7 +68,7 @@ let opcoes;
 // Cada e-mail é um usuário diferente (admin, recepção etc. não têm cadastro de dentista vinculado).
 const token = (extra = {}) => {
   const email = extra.email || 'dentista@clinica-a.com';
-  return jwt.sign({
+  return assinarComPapel({
     sub: idPorEmail[email] || userIdSemDentista, email,
     role: 'dentista', tenant_id: tenantA, is_super_admin: false, ...extra,
   }, JWT_SECRET);
@@ -411,11 +413,14 @@ describe('R4 — agendamento do acompanhamento', () => {
     expect(res.status).toBe(403);
   });
 
-  test('dentista pelo user_roles (papel no token diferente) agenda', async () => {
+  test('dentista pelo papel do banco (papel no token diferente) agenda', async () => {
     opcoes.papeisExtras = ['dentista'];
+    const tk = token({ role: 'user' });
+    // Papel do banco nesta clínica (papelAtual, matriz #86) = dentista; o 'user' do token não conta.
+    _definirPapelParaTestes(jwt.decode(tk).sub, 'dentista', tenantA);
     const res = await chamar('post', '/api/ai/schedule-followup', {
       reportId: relatorioAprovadoA, messages: [{ delay_days: 1, text: 'Olá, {{nome}}!' }], revisado: true,
-    }, token({ role: 'user' }));
+    }, tk);
     expect(res.status).toBe(200);
   });
 

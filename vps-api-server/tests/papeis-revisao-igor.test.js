@@ -159,8 +159,8 @@ describe('CSV dos relatórios e motivo da inativação', () => {
     const res = await request(app).get(`/api/ai/reports/export.csv?token=${encodeURIComponent(tokenDe())}`);
     expect(res.status).toBe(401);
   });
-  test('com cabeçalho e papel clínico baixa o CSV', async () => {
-    _definirPapelParaTestes(usuario, 'dentista');
+  test('com cabeçalho e papel de admin baixa o CSV (exportação é só do admin desde o #79)', async () => {
+    _definirPapelParaTestes(usuario, 'admin');
     const res = await chamar('get', '/api/ai/reports/export.csv');
     expect(res.status).toBe(200);
     expect(res.headers['content-disposition']).toMatch(/attachment/);
@@ -190,5 +190,27 @@ describe("papel padrão de usuário novo é 'recepcionista'", () => {
     const vinculo = sqlLog.find(q => /INSERT INTO user_roles/.test(q.text));
     expect(vinculo.text).toMatch(/tenant_id/);
     expect(vinculo.params[1]).toBe('recepcionista');
+  });
+});
+
+describe('expurgo LGPD (#76) e aviso de Termos (#70) usam o papel do banco', () => {
+  test('JWT de admin com papel recepcionista no banco não lista expurgo', async () => {
+    _definirPapelParaTestes(usuario, 'recepcionista');
+    const res = await chamar('get', '/api/lgpd/expurgo/listas');
+    expect(res.status).toBe(403);
+    expect(sqlLog.some(q => /FROM user_roles WHERE user_id/.test(q.text))).toBe(false);
+  });
+  test('admin pelo banco lista expurgo', async () => {
+    _definirPapelParaTestes(usuario, 'admin');
+    expect((await chamar('get', '/api/lgpd/expurgo/listas')).status).not.toBe(403);
+  });
+  test('pendências de Termos: pode_aceitar só com papel admin no banco', async () => {
+    _definirPapelParaTestes(usuario, 'recepcionista');
+    const r1 = await chamar('get', '/api/legal/pendencias');
+    expect(r1.status).toBe(200);
+    expect(r1.body.pode_aceitar).toBe(false);
+    limparCachePapel();
+    _definirPapelParaTestes(usuario, 'admin');
+    expect((await chamar('get', '/api/legal/pendencias')).body.pode_aceitar).toBe(true);
   });
 });
