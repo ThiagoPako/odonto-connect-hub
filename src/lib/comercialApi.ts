@@ -17,6 +17,7 @@ export interface AcessoComercial {
   ve_todos: boolean;
   places_configurado: boolean;
   places_simulado: boolean;
+  scraper_configurado: boolean;
   etapas: string[];
   tipos_busca: { id: string; rotulo: string }[];
 }
@@ -55,7 +56,8 @@ export interface ResumoPrevia {
 
 export interface Previa {
   previa_id: string;
-  fonte: "google_places" | "csv";
+  fonte: "google_places" | "csv" | "google_maps_scraper";
+  aviso?: string | null;
   simulado?: boolean;
   formato?: string;
   excedeu_limite?: boolean;
@@ -138,7 +140,33 @@ export interface RegistroAuditoria {
   ator_nome: string | null;
 }
 
+export type StatusJobScraper = "na_fila" | "rodando" | "concluido" | "falhou" | "bloqueado" | "cancelado" | "importado";
+
+export interface JobScraper {
+  id: string;
+  cidade: string;
+  uf: string;
+  tipos: string[];
+  palavras: string[];
+  depth: number;
+  coletar_emails: boolean;
+  status: StatusJobScraper;
+  erro: string | null;
+  aviso: string | null;
+  progresso: { keywords_done?: number; keywords_total?: number; places?: number; percent?: number; stage?: string };
+  linhas: number | null;
+  criado_em: string;
+  iniciado_em: string | null;
+  concluido_em: string | null;
+  criado_por_nome: string | null;
+}
+
 export const comercialApi = {
+  jobsScraper: () => vpsApiFetch<{ data: JobScraper[]; hoje: number; limite_dia: number; depth_padrao: number; depth_max: number }>(`${BASE}/scraper/jobs`),
+  criarJobScraper: (body: { cidade: string; uf: string; tipos: string[]; depth: number; coletar_emails: boolean }) =>
+    vpsApiFetch<{ data: JobScraper }>(`${BASE}/scraper/jobs`, { method: "POST", body }),
+  cancelarJobScraper: (id: string) => vpsApiFetch<{ ok: boolean }>(`${BASE}/scraper/jobs/${id}/cancelar`, { method: "POST" }),
+  previaJobScraper: (id: string) => vpsApiFetch<Previa>(`${BASE}/scraper/jobs/${id}/previa`, { method: "POST" }),
   acesso: () => vpsApiFetch<AcessoComercial>(`${BASE}/acesso`),
   config: () => vpsApiFetch<{ config: ConfigBuscador; uso_hoje: { chamadas: number; custo_usd: number } }>(`${BASE}/config`),
   salvarConfig: (config: Partial<ConfigBuscador>) => vpsApiFetch<{ config: ConfigBuscador }>(`${BASE}/config`, { method: "PUT", body: { config } }),
@@ -172,7 +200,8 @@ export const ROTULO_ETAPA: Record<string, string> = {
 };
 
 export const ROTULO_ORIGEM: Record<string, string> = {
-  google_places: "Google Maps",
+  google_places: "Google Maps (API)",
+  google_maps_scraper: "Google Maps (scraper)",
   csv: "CSV",
   manual: "Manual",
   site: "Site",

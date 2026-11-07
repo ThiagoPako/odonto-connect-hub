@@ -35,6 +35,11 @@ export const CONFIG_PADRAO = Object.freeze({
   places_custo_geocode_usd: 0.005,      // Geocoding: US$ 5 / 1.000
   places_cache_minutos: 60,             // cache temporário em memória (nunca no banco)
   raio_max_km: 50,                      // limite da API (50.000 m)
+  // Scraper (google-maps-scraper-kit): tetos baixos de propósito (o Google bloqueia uso pesado).
+  scraper_max_jobs_dia: 5,              // jobs criados por dia (fuso de São Paulo)
+  scraper_depth_padrao: 2,              // cada nível ≈ 20 locais por palavra-chave
+  scraper_depth_max: 5,                 // teto aceito pela tela (o kit recomenda começar em 5)
+  scraper_max_tempo_s: 900,             // tempo máximo de um job no engine
 });
 
 export const CHAVES_CONFIG = Object.keys(CONFIG_PADRAO);
@@ -54,6 +59,10 @@ export function mesclarConfig(salva = {}) {
   }
   cfg.places_max_paginas_por_busca = Math.min(3, Math.max(1, Math.floor(cfg.places_max_paginas_por_busca)));
   cfg.raio_max_km = Math.min(50, cfg.raio_max_km);
+  cfg.scraper_depth_max = Math.min(10, Math.max(1, Math.floor(cfg.scraper_depth_max)));
+  cfg.scraper_depth_padrao = Math.min(cfg.scraper_depth_max, Math.max(1, Math.floor(cfg.scraper_depth_padrao)));
+  cfg.scraper_max_tempo_s = Math.min(3600, Math.max(60, Math.floor(cfg.scraper_max_tempo_s)));
+  cfg.scraper_max_jobs_dia = Math.min(50, Math.floor(cfg.scraper_max_jobs_dia));
   return cfg;
 }
 

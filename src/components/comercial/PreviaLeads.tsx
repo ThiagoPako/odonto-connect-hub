@@ -90,6 +90,9 @@ export function PreviaLeads({
           </TableBody>
         </Table>
       </div>
+      {previa.fonte === "google_maps_scraper" && (
+        <p className="text-[11px] text-muted-foreground">Coletado do Google Maps pelo scraper. Ao importar, os dados ficam no CRM com a origem e a data da coleta, e o resultado é apagado do engine.</p>
+      )}
       {previa.fonte === "google_places" && (
         <p className="text-[11px] text-muted-foreground">Dados: Google Maps. Do Google só o identificador do local (place_id) fica guardado; nome e telefone voltam a ser consultados quando o vendedor abre o lead, até ele confirmar os dados com a clínica.</p>
       )}

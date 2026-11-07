@@ -11,10 +11,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertTriangle, Ban, CheckCircle2, FileSpreadsheet, Loader2, MapPin, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Ban, Bot, CheckCircle2, FileSpreadsheet, Loader2, MapPin, RefreshCw, Search, ShieldCheck, XCircle } from "lucide-react";
 import {
   comercialApi, ROTULO_ETAPA, ROTULO_ORIGEM,
-  type AcessoComercial, type ConfigBuscador, type DadosGoogle, type LeadComercial, type MembroEquipe, type Previa, type RegistroAuditoria,
+  type AcessoComercial, type ConfigBuscador, type DadosGoogle, type JobScraper, type LeadComercial, type MembroEquipe, type Previa, type RegistroAuditoria, type StatusJobScraper,
 } from "@/lib/comercialApi";
 import { PreviaLeads } from "./PreviaLeads";
 
@@ -60,6 +60,7 @@ export default function BuscadorLeads() {
       <Tabs value={aba} onValueChange={setAba}>
         <TabsList className="bg-background border h-auto p-1 flex-wrap justify-start">
           {acesso.pode_buscar && <TabsTrigger value="google" className="gap-1.5"><MapPin className="h-3.5 w-3.5" />Buscar no Google</TabsTrigger>}
+          {acesso.pode_buscar && <TabsTrigger value="scraper" className="gap-1.5"><Bot className="h-3.5 w-3.5" />Google Maps (scraper)</TabsTrigger>}
           {acesso.pode_buscar && <TabsTrigger value="csv" className="gap-1.5"><FileSpreadsheet className="h-3.5 w-3.5" />Importar CSV</TabsTrigger>}
           <TabsTrigger value="leads">Leads</TabsTrigger>
           {acesso.ve_todos && <TabsTrigger value="config">Configurações</TabsTrigger>}
@@ -69,6 +70,11 @@ export default function BuscadorLeads() {
         {acesso.pode_buscar && (
           <TabsContent value="google" className="mt-4">
             <BuscaGoogle acesso={acesso} equipe={equipe} onImportado={aoImportar} />
+          </TabsContent>
+        )}
+        {acesso.pode_buscar && (
+          <TabsContent value="scraper" className="mt-4">
+            <BuscaScraper acesso={acesso} equipe={equipe} onImportado={aoImportar} />
           </TabsContent>
         )}
         {acesso.pode_buscar && (
@@ -178,6 +184,158 @@ function BuscaGoogle({ acesso, equipe, onImportado }: { acesso: AcessoComercial;
           </div>
         </CardContent>
       </Card>
+      {previa && <PreviaLeads key={previa.previa_id} previa={previa} equipe={equipe} podeAtribuir={acesso.papel !== "vendedor"} importando={importando} onImportar={importar} exigeOrigem={false} />}
+    </div>
+  );
+}
+
+const ROTULO_JOB: Record<StatusJobScraper, { rotulo: string; classe: string }> = {
+  na_fila: { rotulo: "Na fila", classe: "bg-muted text-muted-foreground" },
+  rodando: { rotulo: "Coletando", classe: "bg-primary/10 text-primary border-primary/20" },
+  concluido: { rotulo: "Pronto para revisar", classe: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20" },
+  importado: { rotulo: "Importado", classe: "bg-muted text-muted-foreground" },
+  falhou: { rotulo: "Falhou", classe: "bg-destructive/10 text-destructive border-destructive/20" },
+  bloqueado: { rotulo: "Bloqueado pelo Google", classe: "bg-destructive/10 text-destructive border-destructive/20" },
+  cancelado: { rotulo: "Cancelado", classe: "bg-muted text-muted-foreground" },
+};
+
+function BuscaScraper({ acesso, equipe, onImportado }: { acesso: AcessoComercial; equipe: MembroEquipe[]; onImportado: () => void }) {
+  const [cidade, setCidade] = useState("");
+  const [uf, setUf] = useState("SP");
+  const [tipos, setTipos] = useState<string[]>(acesso.tipos_busca.map(t => t.id));
+  const [depth, setDepth] = useState<number | null>(null);
+  const [emails, setEmails] = useState(false);
+  const [jobs, setJobs] = useState<JobScraper[]>([]);
+  const [info, setInfo] = useState<{ hoje: number; limite_dia: number; depth_padrao: number; depth_max: number } | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [abrindo, setAbrindo] = useState<string | null>(null);
+  const [previa, setPrevia] = useState<Previa | null>(null);
+  const { importando, importar } = useImportacao(previa, () => { onImportado(); carregar(); }, () => setPrevia(null));
+
+  const carregar = useCallback(async () => {
+    const r = await comercialApi.jobsScraper();
+    if (r.error || !r.data) return toast.error(r.error || "Falha ao carregar a fila");
+    setJobs(r.data.data);
+    setInfo({ hoje: r.data.hoje, limite_dia: r.data.limite_dia, depth_padrao: r.data.depth_padrao, depth_max: r.data.depth_max });
+  }, []);
+
+  useEffect(() => { if (acesso.scraper_configurado) carregar(); }, [acesso.scraper_configurado, carregar]);
+  const ativo = jobs.some(j => j.status === "na_fila" || j.status === "rodando");
+  useEffect(() => {
+    if (!ativo) return;
+    const t = setInterval(carregar, 5000);
+    return () => clearInterval(t);
+  }, [ativo, carregar]);
+
+  if (!acesso.scraper_configurado) {
+    return (
+      <Card><CardContent className="p-6 text-sm space-y-2">
+        <p className="font-medium flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-amber-500" />Scraper ainda não configurado</p>
+        <p className="text-muted-foreground">Falta subir o engine do google-maps-scraper-kit na VPS e preencher <code>LEADS_SCRAPER_URL</code> no <code>.env</code> do servidor (guia em docs/operacao/scraper-leads.md).</p>
+      </CardContent></Card>
+    );
+  }
+
+  const profundidade = depth ?? info?.depth_padrao ?? 2;
+  const criar = async () => {
+    if (!cidade.trim()) return toast.error("Informe a cidade");
+    if (!tipos.length) return toast.error("Escolha ao menos um tipo");
+    setEnviando(true);
+    const r = await comercialApi.criarJobScraper({ cidade: cidade.trim(), uf, tipos, depth: profundidade, coletar_emails: emails });
+    setEnviando(false);
+    if (r.error || !r.data) return toast.error(r.error || "Não foi possível criar a coleta");
+    toast.success(r.data.data.status === "na_fila" ? "Coleta na fila: começa quando a anterior terminar" : "Coleta iniciada");
+    carregar();
+  };
+  const cancelar = async (id: string) => {
+    const r = await comercialApi.cancelarJobScraper(id);
+    if (r.error) return toast.error(r.error);
+    carregar();
+  };
+  const abrirPrevia = async (id: string) => {
+    setAbrindo(id);
+    const r = await comercialApi.previaJobScraper(id);
+    setAbrindo(null);
+    if (r.error || !r.data) return toast.error(r.error || "Não foi possível baixar o resultado");
+    setPrevia(r.data);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm flex gap-3">
+        <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+        <p className="text-muted-foreground">Coleta automática no Google Maps (google-maps-scraper-kit). Isso contraria os Termos do Google, e o Google pode bloquear o servidor; nesse caso a coleta para e não tentamos contornar. Para volume, prefira a Places API. Os dados passam pelo mesmo filtro, pela mesma checagem de duplicados e pela mesma prévia.</p>
+      </div>
+      <Card className="shadow-sm">
+        <CardContent className="p-4 sm:p-5 space-y-4">
+          <div className="grid gap-3 sm:grid-cols-[1fr_6rem_9rem]">
+            <div className="grid gap-1.5">
+              <Label htmlFor="sc-cidade">Cidade</Label>
+              <Input id="sc-cidade" value={cidade} onChange={e => setCidade(e.target.value)} placeholder="Ex.: Campinas" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="sc-uf">UF</Label>
+              <Select value={uf} onValueChange={setUf}>
+                <SelectTrigger id="sc-uf"><SelectValue /></SelectTrigger>
+                <SelectContent>{UFS.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="sc-depth">Profundidade</Label>
+              <Input id="sc-depth" type="number" min={1} max={info?.depth_max ?? 5} value={profundidade} onChange={e => setDepth(Number(e.target.value) || 1)} />
+            </div>
+          </div>
+          <fieldset className="flex flex-wrap gap-x-5 gap-y-2">
+            <legend className="text-sm font-medium mb-1.5">Tipo</legend>
+            {acesso.tipos_busca.map(t => (
+              <div key={t.id} className="flex items-center gap-2 text-sm">
+                <Checkbox id={`sc-tipo-${t.id}`} checked={tipos.includes(t.id)} onCheckedChange={v => setTipos(s => v === true ? [...s, t.id] : s.filter(x => x !== t.id))} />
+                <label htmlFor={`sc-tipo-${t.id}`}>{t.rotulo}</label>
+              </div>
+            ))}
+          </fieldset>
+          <div className="flex items-start gap-2 text-sm">
+            <Checkbox id="sc-emails" checked={emails} onCheckedChange={v => setEmails(v === true)} className="mt-0.5" />
+            <label htmlFor="sc-emails">Buscar e-mail no site de cada clínica <span className="text-muted-foreground">(mais lento; todo e-mail entra marcado como dado pessoal)</span></label>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">Cada nível de profundidade traz cerca de 20 locais por tipo. Um por vez{info ? ` · hoje ${info.hoje} de ${info.limite_dia} coletas` : ""}.</p>
+            <Button onClick={criar} disabled={enviando} className="gap-2">{enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />} Iniciar coleta</Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="rounded-lg border bg-background overflow-x-auto">
+        <Table>
+          <TableHeader><TableRow><TableHead>Coleta</TableHead><TableHead>Situação</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {jobs.length === 0 && <TableRow><TableCell colSpan={3} className="py-8 text-center text-sm text-muted-foreground">Nenhuma coleta ainda.</TableCell></TableRow>}
+            {jobs.map(j => {
+              const est = ROTULO_JOB[j.status];
+              return (
+                <TableRow key={j.id}>
+                  <TableCell className="align-top">
+                    <p className="font-medium">{j.cidade}/{j.uf}</p>
+                    <p className="text-xs text-muted-foreground">{j.tipos.map(t => acesso.tipos_busca.find(x => x.id === t)?.rotulo ?? t).join(", ")} · profundidade {j.depth}{j.coletar_emails ? " · com e-mails" : ""}</p>
+                    <p className="text-[11px] text-muted-foreground tabular-nums">{new Date(j.criado_em).toLocaleString("pt-BR")}{j.criado_por_nome ? ` · ${j.criado_por_nome}` : ""}</p>
+                  </TableCell>
+                  <TableCell className="align-top max-w-[22rem]">
+                    <Badge variant="outline" className={est.classe}>{j.status === "rodando" && <Loader2 className="h-3 w-3 animate-spin mr-1" />}{est.rotulo}</Badge>
+                    {j.status === "rodando" && <p className="mt-1 text-xs text-muted-foreground tabular-nums">{j.progresso.places ?? 0} locais · palavra {j.progresso.keywords_done ?? 0}/{j.progresso.keywords_total ?? j.palavras.length}</p>}
+                    {j.linhas != null && j.status !== "rodando" && <p className="mt-1 text-xs text-muted-foreground">{j.linhas} locais coletados</p>}
+                    {(j.erro || j.aviso) && <p className="mt-1 text-xs text-destructive">{j.erro || j.aviso}</p>}
+                  </TableCell>
+                  <TableCell className="align-top text-right">
+                    {j.status === "concluido" && <Button size="sm" variant="outline" className="h-8 text-xs" disabled={abrindo === j.id} onClick={() => abrirPrevia(j.id)}>{abrindo === j.id && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />}Revisar e importar</Button>}
+                    {(j.status === "na_fila" || j.status === "rodando") && <Button size="sm" variant="ghost" className="h-8 text-xs gap-1" onClick={() => cancelar(j.id)} aria-label={`Cancelar coleta de ${j.cidade}`}><XCircle className="h-3.5 w-3.5" />Cancelar</Button>}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+      {previa?.aviso && <p className="text-xs text-amber-700 dark:text-amber-400">{previa.aviso}</p>}
       {previa && <PreviaLeads key={previa.previa_id} previa={previa} equipe={equipe} podeAtribuir={acesso.papel !== "vendedor"} importando={importando} onImportar={importar} exigeOrigem={false} />}
     </div>
   );
@@ -563,7 +721,7 @@ function ConfiguracoesBuscador({ acesso, equipe, onEquipe }: { acesso: AcessoCom
 }
 
 const ROTULO_ACAO: Record<string, string> = {
-  busca_places: "Busca no Google", previa_csv: "Prévia de CSV", importacao: "Importação", lead_alterado: "Lead alterado",
+  busca_places: "Busca no Google", scraper_job_criado: "Coleta no Google Maps (scraper)", scraper_job_cancelado: "Coleta cancelada", previa_scraper: "Prévia de coleta", previa_csv: "Prévia de CSV", importacao: "Importação", lead_alterado: "Lead alterado",
   dados_confirmados: "Dados confirmados", nao_contatar: "Não contatar", detalhes_places: "Consulta ao Google",
   config_alterada: "Configuração alterada", equipe_incluida: "Pessoa incluída", equipe_desativada: "Pessoa desativada",
 };

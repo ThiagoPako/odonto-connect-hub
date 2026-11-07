@@ -1929,7 +1929,7 @@ app.get('/api/super-admin/stats', async (req, res) => {
 
 // ─── Comercial interno: buscador e base de leads (só super-admin e equipe comercial) ───
 // Google Places API oficial + CSV; tabelas com_* sem tenant_id (comercial/rotas-leads.mjs).
-registrarRotasComercialLeads(app, { pool, verifyUser });
+const comercialLeads = registrarRotasComercialLeads(app, { pool, verifyUser });
 
 async function ensureComercialLeadsSchema() {
   let sql;
@@ -18855,6 +18855,8 @@ if (process.env.NODE_ENV !== 'test') {
   await asSystemJob(ensureWhatsAppHealthSchema)();
   await asSystemJob(ensureWhatsAppChannelsSchema)();
   await asSystemJob(ensureComercialLeadsSchema)();
+  // Fila do scraper do comercial (engine do google-maps-scraper-kit em contêiner separado): um job por vez.
+  if (comercialLeads.scraperConfigurado) setInterval(asSystemJob(comercialLeads.tickScraper), 30 * 1000);
   asSystemJob(checkWhatsAppHealth)();
   setInterval(asSystemJob(checkWhatsAppHealth), WA_HEALTH_INTERVAL_MS);
   // Dedupe de webhooks (whatsapp_webhook_events): guarda 8 dias (a Meta reentrega por 7).

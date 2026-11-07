@@ -10,12 +10,15 @@ import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 import {
   CONFIG_PADRAO, PLACES_FIELD_MASK, avaliarCategoria, candidatoDoCsv, classificarCandidatos, criarFontePlaces,
   formatoDoCsv, mesclarConfig, normalizarTelefoneBR, parseCsv, protegerFormula,
 } from '../comercial/leads-fontes.mjs';
 import { registrarRotasComercialLeads } from '../comercial/rotas-leads.mjs';
 import { criarFetchPlacesMock } from '../comercial/places-mock.mjs';
+import { candidatoDoScraper, palavrasChave, erroEhBloqueio } from '../comercial/scraper-fonte.mjs';
+import { criarEngineFalso } from './helpers/fake-scraper-engine.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 dotenv.config({ path: path.join(path.dirname(__filename), '../.env') });
@@ -245,8 +248,37 @@ const VENDEDOR = '99999999-9999-9999-9999-999999999999';
 const CLINICA = '44444444-4444-4444-4444-444444444444';
 const TENANT = '11111111-1111-1111-1111-111111111111';
 
+function jobsFalsos(db, t, params) {
+  const achar = id => db.jobs.find(j => j.id === id);
+  if (/^SELECT \* FROM com_scraper_jobs WHERE status = 'rodando'/.test(t)) return { rows: db.jobs.filter(j => j.status === 'rodando') };
+  if (/SET status = 'rodando'/.test(t)) {
+    if (db.jobs.some(j => j.status === 'rodando')) return { rows: [] };
+    const j = db.jobs.find(x => x.status === 'na_fila');
+    if (!j) return { rows: [] };
+    Object.assign(j, { status: 'rodando', iniciado_em: new Date() });
+    return { rows: [j] };
+  }
+  if (/SET engine_job_id/.test(t)) { achar(params[1]).engine_job_id = params[0]; return { rows: [] }; }
+  if (/SET status = 'concluido'/.test(t)) { Object.assign(achar(params[3]), { status: 'concluido', linhas: params[0], aviso: params[1], concluido_em: new Date() }); return { rows: [] }; }
+  if (/SET status = \$1, erro = \$2/.test(t)) { Object.assign(achar(params[3]), { status: params[0], erro: params[1], concluido_em: new Date() }); return { rows: [] }; }
+  if (/SET status = 'falhou'/.test(t)) { Object.assign(achar(params[1]), { status: 'falhou', erro: params[0] }); return { rows: [] }; }
+  if (/SET status = 'cancelado'/.test(t)) { Object.assign(achar(params[0]), { status: 'cancelado' }); return { rows: [] }; }
+  if (/SET status = 'importado'/.test(t)) { Object.assign(achar(params[0]), { status: 'importado' }); return { rows: [] }; }
+  if (/SET progresso/.test(t)) return { rows: [] };
+  if (/status = 'bloqueado' AND concluido_em >/.test(t)) return { rows: db.jobs.filter(j => j.status === 'bloqueado') };
+  if (/COUNT\(\*\)::int AS n FROM com_scraper_jobs/.test(t)) return { rows: [{ n: db.jobs.length }] };
+  if (/INSERT INTO com_scraper_jobs/.test(t)) {
+    const j = { id: crypto.randomUUID(), cidade: params[0], uf: params[1], tipos: params[2], palavras: params[3], depth: params[4], max_tempo_s: params[5], coletar_emails: params[6], status: 'na_fila', criado_em: new Date() };
+    db.jobs.push(j);
+    return { rows: [j] };
+  }
+  if (/SELECT \* FROM com_scraper_jobs WHERE id = \$1/.test(t)) return { rows: db.jobs.filter(j => j.id === params[0]) };
+  if (/FROM com_scraper_jobs j LEFT JOIN/.test(t)) return { rows: [...db.jobs].reverse() };
+  return { rows: [] };
+}
+
 function bancoFalso() {
-  const db = { leads: [], auditoria: [], supressao: new Set(), equipe: { [GESTOR]: 'gestor', [VENDEDOR]: 'vendedor', [CLINICA]: 'gestor' }, uso: 0, sql: [] };
+  const db = { jobs: [], leads: [], auditoria: [], supressao: new Set(), equipe: { [GESTOR]: 'gestor', [VENDEDOR]: 'vendedor', [CLINICA]: 'gestor' }, uso: 0, sql: [] };
   const query = jest.fn(async (sql, params = []) => {
     const t = String(sql);
     db.sql.push(t);
@@ -256,6 +288,7 @@ function bancoFalso() {
       return { rows: papel ? [{ papel }] : [] };
     }
     if (/SELECT valor FROM com_config/.test(t)) return { rows: [] };
+    if (/com_scraper_jobs/.test(t)) return jobsFalsos(db, t, params);
     if (/INSERT INTO com_places_uso/.test(t)) { if (db.uso + params[0] > params[1]) return { rows: [] }; db.uso += params[0]; return { rows: [{ custo_usd: db.uso }] }; }
     if (/FROM com_places_uso/.test(t)) return { rows: [{ chamadas: 1, custo_usd: db.uso }] };
     if (/FROM com_leads\s+WHERE place_id = ANY/.test(t)) return { rows: db.leads };
@@ -426,6 +459,118 @@ describe('rotas do buscador: CSV e não contatar', () => {
     expect((await chamar('vendedor', 'post', '/api/super-admin/comercial/leads/00000000-0000-0000-0000-000000000001/nao-contatar', {})).status).toBe(404);
     await chamar('vendedor', 'get', '/api/super-admin/comercial/leads');
     expect(db.sql.find(s => /FROM com_leads l LEFT JOIN profiles/.test(s))).toMatch(/l\.dono_id = \$1/);
+  });
+});
+
+// ─── Fonte Google Maps (scraper-kit) com engine falso ────────────────────────────────
+describe('fonte scraper-kit: unidades', () => {
+  test('palavras-chave fixas por tipo + cidade/UF', () => {
+    expect(palavrasChave(['dentista', 'clinica', 'radiologia', 'xxx'], 'Campinas', 'SP')).toEqual([
+      'dentista em Campinas SP', 'clínica odontológica em Campinas SP', 'radiologia odontológica em Campinas SP',
+    ]);
+  });
+  test('linha do engine: categorias viram tipos, fechado detectado, e-mail sempre pessoal, sem redes', () => {
+    const c = candidatoDoScraper({ title: 'X', category: 'Centro de radiologia', categories: 'Centro de radiologia, Dentista', phone: '(19) 3111-0003', emails: 'contato@x.exemplo', website: 'https://x.exemplo', instagram: 'https://instagram.com/x', status: 'Permanently closed', address: 'R. A, 1, Campinas - SP', place_id: 'ChIJ1' });
+    expect(c.tipos).toEqual(['Centro de radiologia', 'Dentista']);
+    expect(c.fechado).toBe(true);
+    expect(c.email_pessoal).toBe(true);
+    expect(c.redes).toEqual({});
+    expect([c.cidade, c.uf, c.place_id]).toEqual(['Campinas', 'SP', 'ChIJ1']);
+  });
+  test('reconhece a mensagem de bloqueio do engine', () => {
+    expect(erroEhBloqueio("Google answered with its unusual-traffic page: this IP is rate-limited for now. Wait, or add proxies")).toBe(true);
+    expect(erroEhBloqueio('keyword 1 failed: timeout')).toBe(false);
+  });
+});
+
+describe('fonte scraper-kit: rotas com engine falso', () => {
+  let engine, url;
+  afterEach(async () => { if (engine) await engine.fechar(); engine = null; });
+  const subir = async (opts = {}) => { engine = criarEngineFalso({ apiKey: 'chave-engine', ...opts }); url = await engine.ouvir(0); return url; };
+
+  test('sem LEADS_SCRAPER_URL: 503 e acesso informa não configurado', async () => {
+    const { chamar } = montarApp();
+    expect((await chamar('super', 'get', '/api/super-admin/comercial/acesso')).body.scraper_configurado).toBe(false);
+    expect((await chamar('super', 'post', '/api/super-admin/comercial/scraper/jobs', { cidade: 'Campinas', uf: 'SP' })).status).toBe(503);
+  });
+
+  test('job: envia sem proxy/redes/verify_emails, com chave; status até concluir; prévia filtrada; importa e apaga no engine', async () => {
+    await subir();
+    const { db, chamar } = montarApp({ LEADS_SCRAPER_URL: url, SCRAPER_API_KEY: 'chave-engine' });
+    const cria = await chamar('gestor', 'post', '/api/super-admin/comercial/scraper/jobs', { cidade: 'Campinas', uf: 'SP', tipos: ['dentista', 'radiologia'] });
+    expect(cria.status).toBe(201);
+    expect(cria.body.data.status).toBe('rodando');
+    const enviado = engine.recebidos[0];
+    expect(enviado).toMatchObject({ keywords: ['dentista em Campinas SP', 'radiologia odontológica em Campinas SP'], lang: 'pt', country: 'br', depth: 2, max_time: 900, email: false, socials: false, verify_emails: false, proxies: [] });
+
+    // Vendedor não dispara nem vê a fila
+    expect((await chamar('vendedor', 'post', '/api/super-admin/comercial/scraper/jobs', { cidade: 'Campinas', uf: 'SP' })).status).toBe(403);
+    // Prévia antes de terminar: 409
+    expect((await chamar('gestor', 'post', `/api/super-admin/comercial/scraper/jobs/${cria.body.data.id}/previa`)).status).toBe(409);
+
+    let lista;
+    for (let i = 0; i < 3; i++) lista = await chamar('gestor', 'get', '/api/super-admin/comercial/scraper/jobs');
+    expect(lista.body.data[0]).toMatchObject({ status: 'concluido', linhas: 6 });
+
+    const p = await chamar('gestor', 'post', `/api/super-admin/comercial/scraper/jobs/${cria.body.data.id}/previa`);
+    expect(p.status).toBe(200);
+    const porNome = Object.fromEntries(p.body.itens.map(i => [i.clinica_nome, i]));
+    expect(porNome['Dental Depósito Raspado'].status).toBe('descartado');
+    expect(porNome['Consultório Fechado Exemplo'].motivo).toBe('fechado permanentemente');
+    expect(porNome['Imagem Odonto Radiologia'].status).toBe('novo');
+    expect(porNome['Imagem Odonto Radiologia'].email_pessoal).toBe(true);
+    expect(porNome['Imagem Odonto Radiologia'].redes).toEqual({});
+    expect(porNome['=HYPERLINK("http://x")'].status).toBe('novo');
+
+    const imp = await chamar('gestor', 'post', '/api/super-admin/comercial/buscador/importar', { previa_id: p.body.previa_id });
+    expect(imp.body.importados).toBe(p.body.resumo.novos);
+    const carlos = db.leads.find(l => l.clinica_nome === 'Dr. Carlos Exemplo Dentista');
+    expect(carlos).toMatchObject({ origem: 'google_maps_scraper', email_pessoal: true, telefone_norm: '5519991110002', place_id: 'ChIJraspado000002', tipo_busca: 'dentista+radiologia' });
+    expect(carlos.origem_detalhe).toMatch(/^Google Maps \(scraper-kit, job [0-9a-f-]{36}\) "dentista em Campinas SP", "radiologia odontológica em Campinas SP" coletado em \d{4}-\d{2}-\d{2}$/);
+    expect(carlos.google_consultado_em).toBeInstanceOf(Date);
+    expect(db.jobs[0].status).toBe('importado');
+    expect(engine.jobs.size).toBe(0); // apagado no engine depois de importar
+    expect(db.auditoria.map(a => a.acao)).toEqual(expect.arrayContaining(['scraper_job_criado', 'previa_scraper', 'importacao']));
+  });
+
+  test('um job por vez: o segundo espera na fila até o primeiro terminar', async () => {
+    await subir();
+    const { chamar } = montarApp({ LEADS_SCRAPER_URL: url, SCRAPER_API_KEY: 'chave-engine' });
+    const a = await chamar('gestor', 'post', '/api/super-admin/comercial/scraper/jobs', { cidade: 'Campinas', uf: 'SP', tipos: ['dentista'] });
+    const b = await chamar('gestor', 'post', '/api/super-admin/comercial/scraper/jobs', { cidade: 'Sumaré', uf: 'SP', tipos: ['dentista'] });
+    expect([a.body.data.status, b.body.data.status]).toEqual(['rodando', 'na_fila']);
+    expect(engine.recebidos).toHaveLength(1);
+    for (let i = 0; i < 4; i++) await chamar('gestor', 'get', '/api/super-admin/comercial/scraper/jobs');
+    expect(engine.recebidos).toHaveLength(2);
+  });
+
+  test('bloqueio do Google: job "bloqueado" com aviso (sem proxy) e novas coletas pausadas', async () => {
+    await subir({ bloquear: true });
+    const { chamar } = montarApp({ LEADS_SCRAPER_URL: url, SCRAPER_API_KEY: 'chave-engine' });
+    await chamar('gestor', 'post', '/api/super-admin/comercial/scraper/jobs', { cidade: 'Campinas', uf: 'SP' });
+    let lista;
+    for (let i = 0; i < 3; i++) lista = await chamar('gestor', 'get', '/api/super-admin/comercial/scraper/jobs');
+    expect(lista.body.data[0].status).toBe('bloqueado');
+    expect(lista.body.data[0].erro).toMatch(/Não usamos proxy/);
+    expect(lista.body.data[0].erro).toMatch(/Places API/);
+    const novo = await chamar('gestor', 'post', '/api/super-admin/comercial/scraper/jobs', { cidade: 'Campinas', uf: 'SP' });
+    expect(novo.status).toBe(429);
+    expect(novo.body.error).toMatch(/pausada por 6 horas/);
+  });
+
+  test('limite diário, profundidade máxima, chave errada e cancelamento', async () => {
+    await subir();
+    const { db, chamar } = montarApp({ LEADS_SCRAPER_URL: url, SCRAPER_API_KEY: 'errada' });
+    expect((await chamar('gestor', 'post', '/api/super-admin/comercial/scraper/jobs', { cidade: 'Campinas', uf: 'SP', depth: 9 })).status).toBe(400);
+    const j = await chamar('gestor', 'post', '/api/super-admin/comercial/scraper/jobs', { cidade: 'Campinas', uf: 'SP' });
+    expect(j.body.data.status).toBe('falhou');
+    expect(j.body.data.erro).toMatch(/X-API-Key/);
+    for (let i = 0; i < 5; i++) db.jobs.push({ id: crypto.randomUUID(), status: 'cancelado' });
+    expect((await chamar('gestor', 'post', '/api/super-admin/comercial/scraper/jobs', { cidade: 'Campinas', uf: 'SP' })).status).toBe(429);
+    db.jobs.length = 0;
+    db.jobs.push({ id: '00000000-0000-0000-0000-0000000000aa', status: 'na_fila', palavras: ['x'] });
+    expect((await chamar('gestor', 'post', '/api/super-admin/comercial/scraper/jobs/00000000-0000-0000-0000-0000000000aa/cancelar')).status).toBe(200);
+    expect(db.jobs[0].status).toBe('cancelado');
   });
 });
 

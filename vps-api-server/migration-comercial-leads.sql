@@ -13,7 +13,7 @@
 -- esses campos só são gravados quando o vendedor confirma os dados com a própria clínica
 -- (dados_confirmados_em) ou quando vêm de CSV/cadastro manual.
 --
--- Rollback: DROP TABLE com_auditoria, com_places_uso, com_config, com_supressao, com_leads, com_equipe;
+-- Rollback: DROP TABLE com_scraper_jobs, com_auditoria, com_places_uso, com_config, com_supressao, com_leads, com_equipe;
 -- (perde a base de leads comerciais; nada do app das clínicas depende delas).
 
 CREATE TABLE IF NOT EXISTS com_equipe (
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS com_leads (
   redes JSONB NOT NULL DEFAULT '{}'::jsonb,
   nota_avaliacao NUMERIC(2,1),
   total_avaliacoes INTEGER,
-  origem TEXT NOT NULL CHECK (origem IN ('google_places', 'csv', 'manual', 'site', 'teste_gratis')),
+  origem TEXT NOT NULL CHECK (origem IN ('google_places', 'google_maps_scraper', 'csv', 'manual', 'site', 'teste_gratis')),
   origem_detalhe TEXT,                               -- ex.: "CSV google-maps-scraper-kit · base própria · arquivo x.csv"
   campanha TEXT,
   base_legal TEXT NOT NULL DEFAULT 'legitimo_interesse',
@@ -105,3 +105,38 @@ CREATE TABLE IF NOT EXISTS com_auditoria (
   detalhe JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS idx_com_auditoria_criado ON com_auditoria (criado_em DESC);
+
+-- Origem "Google Maps (scraper)" em bancos onde a tabela já existia com o CHECK antigo.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'com_leads_origem_check'
+             AND pg_get_constraintdef(oid) NOT LIKE '%google_maps_scraper%') THEN
+    ALTER TABLE com_leads DROP CONSTRAINT com_leads_origem_check;
+    ALTER TABLE com_leads ADD CONSTRAINT com_leads_origem_check
+      CHECK (origem IN ('google_places', 'google_maps_scraper', 'csv', 'manual', 'site', 'teste_gratis'));
+  END IF;
+END $$;
+
+-- Jobs do scraper (engine do google-maps-scraper-kit em contêiner separado). Um por vez; o
+-- resultado fica no engine até ser importado (aí o job é apagado lá) — não copiamos as linhas para cá.
+CREATE TABLE IF NOT EXISTS com_scraper_jobs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  engine_job_id TEXT,
+  cidade TEXT NOT NULL,
+  uf TEXT NOT NULL,
+  tipos TEXT[] NOT NULL,
+  palavras TEXT[] NOT NULL,
+  depth INTEGER NOT NULL,
+  max_tempo_s INTEGER NOT NULL,
+  coletar_emails BOOLEAN NOT NULL DEFAULT false,
+  status TEXT NOT NULL DEFAULT 'na_fila' CHECK (status IN ('na_fila', 'rodando', 'concluido', 'falhou', 'bloqueado', 'cancelado', 'importado')),
+  erro TEXT,
+  aviso TEXT,
+  progresso JSONB NOT NULL DEFAULT '{}'::jsonb,
+  linhas INTEGER,
+  criado_por UUID,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  iniciado_em TIMESTAMPTZ,
+  concluido_em TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_com_scraper_jobs_status ON com_scraper_jobs (status, criado_em);

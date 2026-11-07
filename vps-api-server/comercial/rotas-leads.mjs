@@ -12,6 +12,7 @@ import {
   parseCsv, telefoneEhCelular, ufValida,
 } from './leads-fontes.mjs';
 import { criarFetchPlacesMock } from './places-mock.mjs';
+import { AVISO_BLOQUEIO, candidatoDoScraper, criarClienteScraper, erroEhBloqueio, palavrasChave } from './scraper-fonte.mjs';
 
 export const ETAPAS = ['novo', 'qualificado', 'reuniao_marcada', 'demonstracao_feita', 'proposta', 'teste_gratis', 'ganho', 'perdido'];
 const PAPEIS_EQUIPE = ['gestor', 'vendedor', 'sdr'];
@@ -21,12 +22,13 @@ const MAX_LINHAS_CSV = 5000;
 
 const erro = (status, message) => Object.assign(new Error(message), { status });
 
-export function registrarRotasComercialLeads(app, { pool, verifyUser, env = process.env, fetchImpl = globalThis.fetch, agora = () => Date.now() }) {
+export function registrarRotasComercialLeads(app, { pool, verifyUser, env = process.env, fetchImpl = globalThis.fetch, scraperFetchImpl = fetchImpl, agora = () => Date.now() }) {
   const usarMock = env.GOOGLE_PLACES_MOCK === '1' && env.NODE_ENV !== 'production';
   const apiKey = usarMock ? 'mock' : (env.GOOGLE_PLACES_API_KEY || '');
   const fetchPlaces = usarMock ? criarFetchPlacesMock() : fetchImpl;
   const cachePlaces = new CacheTemporario(agora);
   const previas = new Map();
+  const scraper = criarClienteScraper({ baseUrl: env.LEADS_SCRAPER_URL, apiKey: env.SCRAPER_API_KEY || '', fetchImpl: scraperFetchImpl });
 
   let chaveHmac = env.COM_SUPRESSAO_HMAC_KEY;
   if (!chaveHmac) {
@@ -168,7 +170,7 @@ export function registrarRotasComercialLeads(app, { pool, verifyUser, env = proc
   app.get('/api/super-admin/comercial/acesso', async (req, res) => {
     try {
       const ator = await acessoComercial(req);
-      res.json({ papel: ator.papel, pode_buscar: podeBuscar(ator.papel), pode_configurar: ator.papel === 'dono', ve_todos: veTodos(ator.papel), places_configurado: !!apiKey, places_simulado: usarMock, etapas: ETAPAS, tipos_busca: Object.entries(TIPOS_BUSCA).map(([id, t]) => ({ id, rotulo: t.rotulo })) });
+      res.json({ papel: ator.papel, pode_buscar: podeBuscar(ator.papel), pode_configurar: ator.papel === 'dono', ve_todos: veTodos(ator.papel), places_configurado: !!apiKey, places_simulado: usarMock, scraper_configurado: scraper.configurado, etapas: ETAPAS, tipos_busca: Object.entries(TIPOS_BUSCA).map(([id, t]) => ({ id, rotulo: t.rotulo })) });
     } catch (e) { responder(res, e, 'acesso'); }
   });
 
@@ -282,16 +284,20 @@ export function registrarRotasComercialLeads(app, { pool, verifyUser, env = proc
       for (const it of escolhidos) {
         if (base.suprimido(it)) { pulados++; continue; }
         const google = previa.fonte === 'google_places';
+        const raspado = previa.fonte === 'google_maps_scraper';
         // Google: só place_id + a cidade/UF que NÓS buscamos + data da consulta (Termos do Google Maps).
         const detalhe = google
           ? `Google Places API (busca ${previa.tipos.join('+')} em ${previa.cidade}-${previa.uf}) em ${new Date(agora()).toISOString().slice(0, 10)}`
-          : `CSV ${previa.formato} · ${previa.nome_arquivo} · origem declarada: ${origemDeclarada}`;
+          : raspado
+            ? `Google Maps (scraper-kit, job ${previa.engine_job_id}) "${previa.palavras.join('", "')}" coletado em ${new Date(previa.coletado_em).toISOString().slice(0, 10)}`
+            : `CSV ${previa.formato} · ${previa.nome_arquivo} · origem declarada: ${origemDeclarada}`;
         const valores = google
           ? [null, null, previa.cidade, previa.uf, null, null, null, null, null, null, false, null, '{}', null, null,
             'google_places', detalhe, campanha, it.place_id, it.tipo_busca, new Date(agora()), donoId, it.ja_cliente?.tenant_id || null, ator.user.id]
           : [it.clinica_nome, it.cnpj, it.cidade, it.uf, it.endereco, it.site, it.site_dominio, it.telefone_comercial, it.telefone_norm,
             it.email_comercial, !!it.email_pessoal, it.categoria, JSON.stringify(it.redes || {}), it.nota_avaliacao, it.total_avaliacoes,
-            'csv', detalhe, campanha, it.place_id, null, null, donoId, it.ja_cliente?.tenant_id || null, ator.user.id];
+            raspado ? 'google_maps_scraper' : 'csv', detalhe, campanha, it.place_id, raspado ? previa.tipos.join('+') : null,
+            raspado ? new Date(previa.coletado_em) : null, donoId, it.ja_cliente?.tenant_id || null, ator.user.id];
         const { rows } = await pool.query(
           `INSERT INTO com_leads (clinica_nome, cnpj, cidade, uf, endereco, site, site_dominio, telefone_comercial, telefone_norm,
              email_comercial, email_pessoal, categoria, redes, nota_avaliacao, total_avaliacoes,
@@ -300,12 +306,150 @@ export function registrarRotasComercialLeads(app, { pool, verifyUser, env = proc
            ON CONFLICT DO NOTHING RETURNING id`, valores);
         if (rows[0]) { importados++; ids.push(rows[0].id); } else pulados++;
       }
+      if (previa.fonte === 'google_maps_scraper' && importados > 0) {
+        // Resultado importado: marca o job e apaga as linhas no engine (não ficam guardadas em dois lugares).
+        await pool.query("UPDATE com_scraper_jobs SET status = 'importado' WHERE id = $1", [previa.scraper_job_id]);
+        await scraper.apagarJob(previa.engine_job_id).catch(e => console.warn('[comercial] não apagou o job no engine:', e.message));
+      }
       await auditar(ator, 'importacao', 'previa', previa.id, {
         fonte: previa.fonte, importados, pulados, pedidos: pedidas.size, dono_id: donoId, campanha,
         origem_declarada: origemDeclarada || null, resumo_previa: previa.resumo,
       });
       res.json({ importados, pulados, ids, resumo_previa: previa.resumo });
     } catch (e) { responder(res, e, 'importar'); }
+  });
+
+  // ─── Google Maps (scraper-kit): fila de jobs no engine separado ─────────────────────
+  const diaSP = "(criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date";
+  let tickRodando = null;
+
+  // Avança a fila: atualiza o job em andamento e, se não houver, envia o próximo. Um por vez.
+  async function tickScraper() {
+    if (!scraper.configurado) return;
+    if (tickRodando) return tickRodando;
+    tickRodando = (async () => {
+      const { rows: [ativo] } = await pool.query("SELECT * FROM com_scraper_jobs WHERE status = 'rodando' ORDER BY iniciado_em LIMIT 1");
+      if (ativo) {
+        if (!ativo.engine_job_id) return;
+        let j;
+        try { j = await scraper.statusJob(ativo.engine_job_id); }
+        catch (e) {
+          if (e.http === 404) await pool.query("UPDATE com_scraper_jobs SET status = 'falhou', erro = $1, concluido_em = NOW() WHERE id = $2", ['O job sumiu do engine (reinstalado ou apagado).', ativo.id]);
+          return;
+        }
+        const prog = j?.Progress || {};
+        if (j?.Status === 'ok') {
+          const bloqueio = erroEhBloqueio(j.Error);
+          await pool.query("UPDATE com_scraper_jobs SET status = 'concluido', linhas = $1, aviso = $2, progresso = $3, concluido_em = NOW() WHERE id = $4",
+            [Number(prog.places) || 0, bloqueio ? `${AVISO_BLOQUEIO} As linhas coletadas antes do bloqueio foram mantidas.` : (j.Error || null), JSON.stringify(prog), ativo.id]);
+        } else if (j?.Status === 'failed') {
+          const bloqueio = erroEhBloqueio(j.Error);
+          await pool.query("UPDATE com_scraper_jobs SET status = $1, erro = $2, progresso = $3, concluido_em = NOW() WHERE id = $4",
+            [bloqueio ? 'bloqueado' : 'falhou', bloqueio ? AVISO_BLOQUEIO : String(j.Error || 'Falha no engine').slice(0, 500), JSON.stringify(prog), ativo.id]);
+        } else {
+          await pool.query('UPDATE com_scraper_jobs SET progresso = $1 WHERE id = $2', [JSON.stringify(prog), ativo.id]);
+        }
+        return;
+      }
+      const { rows: [prox] } = await pool.query(
+        `UPDATE com_scraper_jobs SET status = 'rodando', iniciado_em = NOW()
+          WHERE id = (SELECT id FROM com_scraper_jobs WHERE status = 'na_fila' ORDER BY criado_em LIMIT 1 FOR UPDATE SKIP LOCKED)
+            AND NOT EXISTS (SELECT 1 FROM com_scraper_jobs WHERE status = 'rodando')
+          RETURNING *`);
+      if (!prox) return;
+      try {
+        const engineId = await scraper.criarJob({ nome: `odonto-connect ${prox.id}`, palavras: prox.palavras, depth: prox.depth, maxTempo: prox.max_tempo_s, coletarEmails: prox.coletar_emails });
+        await pool.query('UPDATE com_scraper_jobs SET engine_job_id = $1 WHERE id = $2', [engineId, prox.id]);
+      } catch (e) {
+        await pool.query("UPDATE com_scraper_jobs SET status = 'falhou', erro = $1, concluido_em = NOW() WHERE id = $2", [String(e.message).slice(0, 500), prox.id]);
+      }
+    })().catch(e => console.error('[comercial] fila do scraper:', e.message)).finally(() => { tickRodando = null; });
+    return tickRodando;
+  }
+
+  app.post('/api/super-admin/comercial/scraper/jobs', async (req, res) => {
+    try {
+      const ator = await acessoComercial(req);
+      if (!podeBuscar(ator.papel)) throw erro(403, 'Seu papel não pode buscar leads');
+      if (!scraper.configurado) throw erro(503, 'Scraper não configurado: falta LEADS_SCRAPER_URL no .env do servidor');
+      const cidade = String(req.body?.cidade || '').trim().slice(0, 80);
+      const uf = ufValida(req.body?.uf);
+      if (!cidade || !uf) throw erro(400, 'Informe cidade e UF');
+      if (/[\r\n\t]/.test(cidade)) throw erro(400, 'Cidade inválida');
+      const tipos = (Array.isArray(req.body?.tipos) && req.body.tipos.length ? req.body.tipos : Object.keys(TIPOS_BUSCA)).filter(t => TIPOS_BUSCA[t]);
+      if (!tipos.length) throw erro(400, 'Tipo de busca inválido');
+      const cfg = await lerConfig();
+      const depth = req.body?.depth == null ? cfg.scraper_depth_padrao : Math.floor(Number(req.body.depth));
+      if (!Number.isFinite(depth) || depth < 1 || depth > cfg.scraper_depth_max) throw erro(400, `Profundidade de 1 a ${cfg.scraper_depth_max}`);
+      const { rows: [blq] } = await pool.query("SELECT concluido_em FROM com_scraper_jobs WHERE status = 'bloqueado' AND concluido_em > NOW() - INTERVAL '6 hours' ORDER BY concluido_em DESC LIMIT 1");
+      if (blq) throw erro(429, `Coleta pausada por 6 horas depois de um bloqueio do Google. ${AVISO_BLOQUEIO}`);
+      const { rows: [{ n }] } = await pool.query(`SELECT COUNT(*)::int AS n FROM com_scraper_jobs WHERE ${diaSP}`);
+      if (n >= cfg.scraper_max_jobs_dia) throw erro(429, `Limite de ${cfg.scraper_max_jobs_dia} coletas por dia atingido. Tente amanhã ou use a Places API.`);
+      const palavras = palavrasChave(tipos, cidade, uf);
+      const { rows: [job] } = await pool.query(
+        `INSERT INTO com_scraper_jobs (cidade, uf, tipos, palavras, depth, max_tempo_s, coletar_emails, criado_por)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [cidade, uf, tipos, palavras, depth, cfg.scraper_max_tempo_s, req.body?.coletar_emails === true, ator.user.id]);
+      await auditar(ator, 'scraper_job_criado', 'scraper_job', job.id, { cidade, uf, tipos, depth, coletar_emails: job.coletar_emails });
+      await tickScraper();
+      const { rows: [atual] } = await pool.query('SELECT * FROM com_scraper_jobs WHERE id = $1', [job.id]);
+      res.status(201).json({ data: atual || job });
+    } catch (e) { responder(res, e, 'scraper-criar'); }
+  });
+
+  app.get('/api/super-admin/comercial/scraper/jobs', async (req, res) => {
+    try {
+      const ator = await acessoComercial(req);
+      if (!podeBuscar(ator.papel)) throw erro(403, 'Sem permissão');
+      await tickScraper();
+      const cfg = await lerConfig();
+      const { rows } = await pool.query(
+        `SELECT j.id, j.cidade, j.uf, j.tipos, j.palavras, j.depth, j.coletar_emails, j.status, j.erro, j.aviso, j.progresso, j.linhas,
+                j.criado_em, j.iniciado_em, j.concluido_em, COALESCE(p.name, p.email) AS criado_por_nome
+           FROM com_scraper_jobs j LEFT JOIN profiles p ON p.id = j.criado_por ORDER BY j.criado_em DESC LIMIT 30`);
+      const { rows: [{ n }] } = await pool.query(`SELECT COUNT(*)::int AS n FROM com_scraper_jobs WHERE ${diaSP}`);
+      res.json({ data: rows, hoje: n, limite_dia: cfg.scraper_max_jobs_dia, depth_padrao: cfg.scraper_depth_padrao, depth_max: cfg.scraper_depth_max });
+    } catch (e) { responder(res, e, 'scraper-listar'); }
+  });
+
+  async function jobDoScraper(id) {
+    if (!/^[0-9a-f-]{36}$/i.test(String(id))) throw erro(400, 'Job inválido');
+    const { rows: [j] } = await pool.query('SELECT * FROM com_scraper_jobs WHERE id = $1', [id]);
+    if (!j) throw erro(404, 'Job não encontrado');
+    return j;
+  }
+
+  app.post('/api/super-admin/comercial/scraper/jobs/:id/cancelar', async (req, res) => {
+    try {
+      const ator = await acessoComercial(req);
+      if (!podeBuscar(ator.papel)) throw erro(403, 'Sem permissão');
+      const j = await jobDoScraper(req.params.id);
+      if (!['na_fila', 'rodando'].includes(j.status)) throw erro(409, 'Este job já terminou');
+      if (j.engine_job_id) await scraper.apagarJob(j.engine_job_id);
+      await pool.query("UPDATE com_scraper_jobs SET status = 'cancelado', concluido_em = NOW() WHERE id = $1 AND status IN ('na_fila', 'rodando')", [j.id]);
+      await auditar(ator, 'scraper_job_cancelado', 'scraper_job', j.id, {});
+      await tickScraper();
+      res.json({ ok: true });
+    } catch (e) { responder(res, e, 'scraper-cancelar'); }
+  });
+
+  // Baixa o resultado do engine e passa pelo MESMO filtro, dedupe e prévia das outras fontes.
+  app.post('/api/super-admin/comercial/scraper/jobs/:id/previa', async (req, res) => {
+    try {
+      const ator = await acessoComercial(req);
+      if (!podeBuscar(ator.papel)) throw erro(403, 'Sem permissão');
+      const j = await jobDoScraper(req.params.id);
+      if (j.status !== 'concluido') throw erro(409, 'O job ainda não terminou com resultado');
+      const linhas = await scraper.baixarJob(j.engine_job_id);
+      const cfg = await lerConfig();
+      const candidatos = linhas.slice(0, 5000).map(candidatoDoScraper);
+      const classif = classificarCandidatos(candidatos, await baseParaClassificar(candidatos), cfg);
+      const previaId = guardarPrevia(ator, 'google_maps_scraper', {
+        scraper_job_id: j.id, engine_job_id: j.engine_job_id, palavras: j.palavras, tipos: j.tipos, coletado_em: j.concluido_em || new Date(agora()),
+      }, classif);
+      await auditar(ator, 'previa_scraper', 'scraper_job', j.id, { linhas: linhas.length, resumo: classif.resumo });
+      res.json({ previa_id: previaId, fonte: 'google_maps_scraper', aviso: j.aviso, resumo: classif.resumo, itens: classif.itens.map(itemTela) });
+    } catch (e) { responder(res, e, 'scraper-previa'); }
   });
 
   app.get('/api/super-admin/comercial/leads', async (req, res) => {
@@ -499,5 +643,5 @@ export function registrarRotasComercialLeads(app, { pool, verifyUser, env = proc
     } catch (e) { responder(res, e, 'auditoria'); }
   });
 
-  return { acessoComercial, previas, cachePlaces };
+  return { acessoComercial, previas, cachePlaces, tickScraper, scraperConfigurado: scraper.configurado };
 }
