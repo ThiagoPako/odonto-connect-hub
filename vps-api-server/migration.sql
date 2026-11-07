@@ -203,20 +203,10 @@ CREATE INDEX IF NOT EXISTS idx_anamneses_paciente ON anamneses(paciente_id);
 -- Add avatar_url to crm_leads (WhatsApp profile picture)
 ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 
--- Create admin user (password: admin123 — CHANGE IN PRODUCTION!)
-INSERT INTO profiles (id, name, email, role, password_hash)
-VALUES (
-  gen_random_uuid(),
-  'Administrador',
-  'admin@odontoconnect.tech',
-  'admin',
-  '$2b$12$LJ3m4ys3uz2JVbEMKMYNWOxGMOlJPwJq2y5n0yY3vQIhzYUG0Qk2W'
-) ON CONFLICT (email) DO NOTHING;
-
--- Set admin role
-INSERT INTO user_roles (user_id, role)
-SELECT id, 'admin' FROM profiles WHERE email = 'admin@odontoconnect.tech'
-ON CONFLICT (user_id, role) DO NOTHING;
+-- (Removido em 2026-11-07) Aqui havia o INSERT do usuário admin@odontoconnect.tech com senha
+-- padrão conhecida. Como este arquivo roda a cada deploy, apagar ou renomear a conta a recriava
+-- com a senha pública (e a migration-saas.sql a promovia a super-admin). Super-admin agora só
+-- por `node create-super-admin.mjs`, manualmente.
 
 -- Transfer logs (auditoria de transferências de atendimento)
 CREATE TABLE IF NOT EXISTS transfer_logs (
