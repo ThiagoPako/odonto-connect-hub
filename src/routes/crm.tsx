@@ -1,5 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { useAuth } from "@/hooks/useAuth";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
@@ -11,7 +13,7 @@ import {
 import { crmApi, sessionsApi, pacientesApi } from "@/lib/vpsApi";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
+  Plus, Phone, Mail, Calendar, DollarSign,
   ChevronRight, MoreHorizontal, UserPlus, ExternalLink,
   Clock, MessageSquare, GripVertical, RefreshCw, RotateCcw,
   TrendingUp, Target, Loader2, UserCheck, Link2, History, X,
@@ -34,8 +36,16 @@ const statusLabels: Record<Patient["status"], { label: string; className: string
   paciente: { label: "Paciente", className: "bg-primary/15 text-primary" },
 };
 
-const origins = ["Todos", "Google Ads", "Meta Ads", "Instagram", "Indicação", "Site"];
-const statuses = ["Todos", "lead", "ativo", "inativo", "paciente"];
+// Mesmas origens do cadastro (CreateLeadDialog). Leads criados pelo WhatsApp gravam "whatsapp".
+const origins = ["WhatsApp", "Google Ads", "Meta Ads", "Instagram", "TikTok", "YouTube", "Indicação", "Site", "Telefone", "Outro"];
+const statuses: Patient["status"][] = ["lead", "ativo", "inativo", "paciente"];
+// A tela mostra "Lead"/"Ativo", mas o banco grava "novo"/"em_contato" (ver o mapeamento em loadPatients).
+const STATUS_API: Record<string, string> = { lead: "novo", ativo: "em_contato", inativo: "inativo", paciente: "paciente" };
+
+/** id de HTML sem espaço/acento: "Funil de Vendas" → "funil-de-vendas" (o id ia com espaço). */
+function slugId(texto: string): string {
+  return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
 
 function SyncAvatarsButton() {
   const [syncing, setSyncing] = useState(false);
@@ -106,10 +116,13 @@ function GenericKanbanBoard<T extends string>({
 }) {
   const [showNewLead, setShowNewLead] = useState(false);
   const [draggedLead, setDraggedLead] = useState<{ lead: KanbanLead; fromStage: T } | null>(null);
-  const [assignedFilter, setAssignedFilter] = useState("Todos");
+  const [assignedFilter, setAssignedFilter] = useState("");
+  const [buscaFunil, setBuscaFunil] = useState("");
 
   const allLeadsList = Object.values(leads).flat() as KanbanLead[];
-  const assignees = ["Todos", ...Array.from(new Set(allLeadsList.map((l) => l.assignedTo)))];
+  const assignees = Array.from(new Set(allLeadsList.map((l) => l.assignedTo).filter(Boolean))).sort() as string[];
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const responsavelEfetivo = assignees.includes(assignedFilter) ? assignedFilter : "";
 
   const handleDragStart = (lead: KanbanLead, fromStage: T) => setDraggedLead({ lead, fromStage });
   const handleDragOver = (e: React.DragEvent) => e.preventDefault();
@@ -158,10 +171,17 @@ function GenericKanbanBoard<T extends string>({
     moveLead(lead, fromStage, toStage);
   };
 
-  const filteredLeads = assignedFilter === "Todos"
+  const termoFunil = buscaFunil.trim().toLowerCase();
+  const termoFunilDig = termoFunil.replace(/\D/g, "");
+  const filtraLead = (l: KanbanLead) =>
+    (!responsavelEfetivo || l.assignedTo === responsavelEfetivo) &&
+    (!termoFunil ||
+      (l.name || "").toLowerCase().includes(termoFunil) ||
+      (termoFunilDig.length >= 3 && (l.phone || "").replace(/\D/g, "").includes(termoFunilDig)));
+  const filteredLeads = !responsavelEfetivo && !termoFunil
     ? leads
     : Object.fromEntries(
-        Object.entries(leads).map(([stage, list]) => [stage, (list as KanbanLead[]).filter((l) => l.assignedTo === assignedFilter)])
+        Object.entries(leads).map(([stage, list]) => [stage, (list as KanbanLead[]).filter(filtraLead)])
       ) as Record<T, KanbanLead[]>;
 
   const visibleList = (Object.values(filteredLeads) as KanbanLead[][]).flat();
@@ -173,31 +193,43 @@ function GenericKanbanBoard<T extends string>({
         <div className="flex items-center gap-6">
           <div>
             <span className="text-xs text-muted-foreground">Total no funil</span>
-            <p className="text-lg font-bold text-foreground">{visibleList.length} leads</p>
+            <p className="text-lg font-bold text-foreground">{visibleList.length} lead{visibleList.length !== 1 ? "s" : ""}</p>
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Valor total</span>
             <p className="text-lg font-bold text-foreground">R$ {totalValue.toLocaleString("pt-BR")}</p>
           </div>
         </div>
-        <div className="flex items-center gap-3 flex-wrap min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <UserPlus className="h-4 w-4 text-muted-foreground shrink-0" />
-            <div className="flex items-center gap-1 flex-wrap">
-              {assignees.map((a) => (
-                <button key={a} onClick={() => setAssignedFilter(a)}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors whitespace-nowrap ${
-                    assignedFilter === a ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
-                  }`}>{a}</button>
-              ))}
-            </div>
-          </div>
+        <div className="flex items-end gap-3 flex-wrap min-w-0 flex-1 justify-end">
+          <BarraFiltros
+            className="flex-1 min-w-[min(100%,18rem)]"
+            busca={{ valor: buscaFunil, onChange: setBuscaFunil, placeholder: "Nome ou telefone", rotulo: "Buscar lead no funil por nome ou telefone" }}
+            filtros={assignees.length > 0 ? [{ id: `responsavel-${slugId(title)}`, rotulo: "Responsável", valor: responsavelEfetivo, onChange: setAssignedFilter, opcoes: assignees.map((a) => ({ valor: a, rotulo: a })) }] : []}
+            onLimpar={() => { setAssignedFilter(""); setBuscaFunil(""); }}
+            resultado={`${visibleList.length} lead${visibleList.length !== 1 ? "s" : ""}`}
+          />
           <button onClick={() => setShowNewLead(true)} className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-            <Plus className="h-4 w-4" /> Novo Lead
+            <Plus className="h-4 w-4" /> Novo lead
           </button>
           <CreateLeadDialog open={showNewLead} onOpenChange={setShowNewLead} onCreated={() => { toast.success("Lead cadastrado!"); onRefresh?.(); }} />
         </div>
       </div>
+
+      {(termoFunil || responsavelEfetivo) && visibleList.length === 0 && (
+        <div role="status" className="mx-4 mt-4 rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center">
+          <p className="text-sm font-medium text-foreground break-words">
+            {termoFunil ? <>Nenhum lead encontrado para “{buscaFunil.trim()}”.</> : "Nenhum lead com esse responsável."}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">Confira a grafia, busque pelo telefone ou limpe os filtros.</p>
+          <button
+            type="button"
+            onClick={() => { setAssignedFilter(""); setBuscaFunil(""); }}
+            className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-border px-4 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Limpar busca e filtros
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 flex gap-3 p-4 overflow-x-auto min-w-0">
         {stages.map((stage) => {
@@ -209,8 +241,8 @@ function GenericKanbanBoard<T extends string>({
               <div className="flex items-center gap-2 px-3 py-3 border-b border-border/50">
                 <div className={`h-2.5 w-2.5 rounded-full ${stage.color}`} />
                 <div className="flex-1 min-w-0">
-                  <span className="text-sm font-semibold text-foreground">{stage.label}</span>
-                  <p className="text-[9px] text-muted-foreground truncate">{stage.description}</p>
+                  <span className="text-sm font-semibold text-foreground break-words">{stage.label}</span>
+                  <p className="text-[10px] leading-snug text-muted-foreground">{stage.description}</p>
                 </div>
                 <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{stageLeads.length}</span>
               </div>
@@ -766,8 +798,8 @@ function HighlightText({ text, query }: { text: string; query: string }) {
 function PatientTableView() {
   const [showNewLead, setShowNewLead] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [originFilter, setOriginFilter] = useState("Todos");
-  const [statusFilter, setStatusFilter] = useState("Todos");
+  const [originFilter, setOriginFilter] = useFiltroUrl("origem", origins);
+  const [statusFilter, setStatusFilter] = useFiltroUrl("status", statuses);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
@@ -798,8 +830,8 @@ function PatientTableView() {
         offset: String((safePage - 1) * PAGE_SIZE),
       };
       if (searchTerm.trim()) params.search = searchTerm.trim();
-      if (statusFilter !== "Todos") params.status = statusFilter;
-      if (originFilter !== "Todos") params.origin = originFilter;
+      if (statusFilter) params.status = STATUS_API[statusFilter] ?? statusFilter;
+      if (originFilter) params.origin = originFilter;
       params.sort_by = sortBy;
       params.sort_dir = sortDir;
       const { data, error } = await crmApi.list(params);
@@ -847,44 +879,26 @@ function PatientTableView() {
 
 
   return (
-    <main className="flex-1 flex overflow-hidden">
+    <div className="flex-1 flex overflow-hidden">
       <div className={`flex-col border-r border-border bg-card ${selectedPatient ? "hidden md:flex md:w-[55%]" : "flex flex-1"}`}>
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <input type="text" placeholder="Buscar por nome, telefone ou e-mail..." value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-9 pl-9 pr-4 rounded-lg bg-muted border-0 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring" />
-          </div>
-          <SyncAvatarsButton />
-          <button onClick={() => setShowNewLead(true)} className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5">
-            <UserPlus className="h-4 w-4" /> Novo
-          </button>
+        <div className="px-4 py-3 border-b border-border">
+          <BarraFiltros
+            busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Nome, telefone ou e-mail", rotulo: "Buscar por nome, telefone ou e-mail", debounce: 0 }}
+            filtros={[
+              { id: "origem", rotulo: "Origem", valor: originFilter, onChange: setOriginFilter, rotuloTodos: "Todas", opcoes: origins.map((o) => ({ valor: o, rotulo: o })) },
+              { id: "status", rotulo: "Status", valor: statusFilter, onChange: setStatusFilter, opcoes: statuses.map((st) => ({ valor: st, rotulo: statusLabels[st].label })) },
+            ]}
+            onLimpar={() => { setSearchTerm(""); setOriginFilter(""); setStatusFilter(""); }}
+            acoes={
+              <>
+                <SyncAvatarsButton />
+                <button onClick={() => setShowNewLead(true)} className="h-10 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5">
+                  <UserPlus className="h-4 w-4" /> Novo paciente
+                </button>
+              </>
+            }
+          />
           <CreateLeadDialog open={showNewLead} onOpenChange={setShowNewLead} onCreated={() => { toast.success("Paciente cadastrado!"); loadPatients(); }} />
-        </div>
-
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50 overflow-x-auto">
-          <Filter className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <div className="flex items-center gap-1">
-            {origins.map((o) => (
-              <button key={o} onClick={() => setOriginFilter(o)}
-                className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors whitespace-nowrap ${
-                  originFilter === o ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
-                }`}>{o}</button>
-            ))}
-          </div>
-          <div className="h-4 w-px bg-border mx-1" />
-          <div className="flex items-center gap-1">
-            {statuses.map((s) => {
-              const label = s === "Todos" ? "Todos" : statusLabels[s as Patient["status"]].label;
-              return (
-                <button key={s} onClick={() => setStatusFilter(s)}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors whitespace-nowrap ${
-                    statusFilter === s ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
-                  }`}>{label}</button>
-              );
-            })}
-          </div>
         </div>
 
         <div className="px-4 py-2 text-xs text-muted-foreground flex items-center justify-between">
@@ -1027,7 +1041,7 @@ function PatientTableView() {
       {selectedPatient && (
         <PatientDetail patient={selectedPatient} onClose={() => setSelectedPatient(null)} />
       )}
-    </main>
+    </div>
   );
 }
 

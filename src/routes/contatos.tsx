@@ -1,14 +1,15 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
-  Plus, Search, Star, Phone, Mail, Building2, Loader2, Trash2,
+  Plus, Star, Phone, Mail, Building2, Loader2, Trash2,
   Pencil, UserPlus, Users, StarOff, MessageSquare, Download, MessageCircle
 
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { contatosApi, type Contato } from "@/lib/vpsApi";
 import { CreateContatoDialog } from "@/components/contatos/CreateContatoDialog";
 import { EditContatoDialog } from "@/components/contatos/EditContatoDialog";
@@ -31,13 +32,17 @@ const tipoColors: Record<string, string> = {
   outro: "bg-muted text-muted-foreground",
 };
 
+const TIPOS = ["pessoal", "paciente", "fornecedor", "parceiro", "outro"];
+const TIPO_ROTULO: Record<string, string> = { pessoal: "Pessoal", paciente: "Paciente", fornecedor: "Fornecedor", parceiro: "Parceiro", outro: "Outro" };
+
 function ContatosPage() {
   const navigate = useNavigate();
   const [contatos, setContatos] = useState<Contato[]>([]);
   const [confirm, confirmDialog] = useConfirm();
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [tipoFilter, setTipoFilter] = useState<string | null>(null);
+  const [tipoUrl, setTipoUrl] = useFiltroUrl("tipo", TIPOS);
+  const tipoFilter = tipoUrl || null;
   const [createOpen, setCreateOpen] = useState(false);
   const [editContato, setEditContato] = useState<Contato | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -83,19 +88,17 @@ function ContatosPage() {
     toast.success("Contato excluído");
   };
 
-  const tipos = ["pessoal", "paciente", "fornecedor", "parceiro", "outro"];
-
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       {confirmDialog}
       <DashboardHeader title="Contatos" />
-      <main className="flex-1 p-6 space-y-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto">
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Lista de Contatos</h2>
             <p className="text-sm text-muted-foreground">
-              {contatos.length} contato{contatos.length !== 1 ? "s" : ""} cadastrado{contatos.length !== 1 ? "s" : ""}
+              {contatos.length} contato{contatos.length !== 1 ? "s" : ""} {search || tipoFilter ? "encontrado" : "cadastrado"}{contatos.length !== 1 ? "s" : ""}
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
@@ -114,38 +117,19 @@ function ContatosPage() {
           </div>
         </div>
 
-        {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Buscar por nome, telefone ou email..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-          <div className="flex gap-1.5 flex-wrap">
-            <Button
-              variant={tipoFilter === null ? "default" : "outline"}
-              size="sm"
-              onClick={() => setTipoFilter(null)}
-            >
-              Todos
-            </Button>
-            {tipos.map((t) => (
-              <Button
-                key={t}
-                variant={tipoFilter === t ? "default" : "outline"}
-                size="sm"
-                onClick={() => setTipoFilter(t === tipoFilter ? null : t)}
-                className="capitalize"
-              >
-                {t}
-              </Button>
-            ))}
-          </div>
-        </div>
+        {/* Busca + filtro */}
+        <BarraFiltros
+          busca={{ valor: search, onChange: setSearch, placeholder: "Nome, telefone ou e-mail", rotulo: "Buscar contato por nome, telefone ou e-mail", debounce: 0 }}
+          filtros={[{
+            id: "tipo",
+            rotulo: "Tipo",
+            valor: tipoUrl,
+            onChange: setTipoUrl,
+            opcoes: TIPOS.map((t) => ({ valor: t, rotulo: TIPO_ROTULO[t] })),
+          }]}
+          onLimpar={() => { setSearch(""); setTipoUrl(""); }}
+          resultado={loading ? undefined : `${contatos.length} contato${contatos.length !== 1 ? "s" : ""}`}
+        />
 
         {/* List */}
         {loading ? (
@@ -175,7 +159,7 @@ function ContatosPage() {
             {contatos.map((contato) => (
               <div
                 key={contato.id}
-                className="bg-card border border-border rounded-xl p-4 flex items-center gap-4 hover:border-primary/30 transition-colors group cursor-pointer"
+                className="bg-card border border-border rounded-xl p-4 flex flex-wrap items-center gap-x-4 gap-y-2 hover:border-primary/30 transition-colors group cursor-pointer"
                 onClick={() => navigate({ to: "/chat", search: { lead: contato.telefone || contato.nome } })}
               >
                 {/* Avatar */}
@@ -184,15 +168,15 @@ function ContatosPage() {
                 </div>
 
                 {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-card-foreground truncate">{contato.nome}</span>
+                <div className="flex-1 min-w-[min(100%,12rem)]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-card-foreground break-words min-w-0">{contato.nome}</span>
                     <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${tipoColors[contato.tipo] || ""}`}>
-                      {contato.tipo}
+                      {TIPO_ROTULO[contato.tipo] ?? contato.tipo}
                     </Badge>
                     {contato.favorito && <Star className="h-3.5 w-3.5 text-warning fill-warning" />}
                   </div>
-                  <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-muted-foreground">
                     {contato.telefone && (
                       <span className="flex items-center gap-1">
                         <Phone className="h-3 w-3" />
@@ -200,14 +184,14 @@ function ContatosPage() {
                       </span>
                     )}
                     {contato.email && (
-                      <span className="flex items-center gap-1 truncate">
-                        <Mail className="h-3 w-3" />
+                      <span className="flex items-center gap-1 break-all">
+                        <Mail className="h-3 w-3 shrink-0" />
                         {contato.email}
                       </span>
                     )}
                     {contato.empresa && (
-                      <span className="flex items-center gap-1 truncate">
-                        <Building2 className="h-3 w-3" />
+                      <span className="flex items-center gap-1 break-words">
+                        <Building2 className="h-3 w-3 shrink-0" />
                         {contato.empresa}
                       </span>
                     )}
@@ -215,7 +199,7 @@ function ContatosPage() {
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-1 shrink-0 ml-auto opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -267,7 +251,7 @@ function ContatosPage() {
             ))}
           </div>
         )}
-      </main>
+      </div>
 
       <CreateContatoDialog
         open={createOpen}
