@@ -194,7 +194,8 @@ export async function getMe() {
 // ─── Profile (self-service) ─────────────────────────────────
 
 export const profileApi = {
-  update: (body: { name?: string; email?: string }) =>
+  // O e-mail não é trocado aqui (só o admin da clínica troca): o servidor responde 403.
+  update: (body: { name?: string }) =>
     vpsApiFetch<{ success: boolean }>('/auth/profile', { method: 'PUT', body }),
   changePassword: (currentPassword: string, newPassword: string) =>
     vpsApiFetch<{ success: boolean }>('/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
@@ -519,8 +520,21 @@ export const prontuariosApi = {
   list: (params?: Record<string, string>) => vpsApiFetch('/prontuarios', { params }),
   create: (body: unknown) => vpsApiFetch('/prontuarios', { method: 'POST', body }),
   update: (id: string, body: unknown) => vpsApiFetch(`/prontuarios/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/prontuarios/${id}`, { method: 'DELETE' }),
+  // Não apaga: inativa o registro (motivo obrigatório; só autor ou admin).
+  delete: (id: string, motivo: string) => vpsApiFetch(`/prontuarios/${id}`, { method: 'DELETE', body: { motivo } }),
+  versoes: (id: string) => vpsApiFetch<ProntuarioVersao[]>(`/prontuarios/${id}/versoes`),
 };
+
+export interface ProntuarioVersao {
+  versao: number;
+  titulo: string | null;
+  descricao: string | null;
+  tipo: string | null;
+  autor_nome: string | null;
+  registrado_em: string | null;
+  substituida_por_nome: string | null;
+  substituida_em: string;
+}
 
 export interface ComercialKpis {
   atendimentosHoje: number;
@@ -1297,7 +1311,58 @@ export interface ClinicalReportApi {
   prescricoes: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }> | string;
   duration_seconds: number;
   created_at: string;
+  /** rascunho = texto da IA ainda não revisado; aprovado = registro do dentista; nao_aprovado = guardado só para auditoria */
+  status?: 'rascunho' | 'aprovado' | 'nao_aprovado' | null;
+  gerado_por_ia?: boolean;
+  dentista_id?: string | null;
+  aprovado_por_nome?: string | null;
+  aprovado_por_cro?: string | null;
+  /** aprovado por outro dentista porque o do atendimento saiu da clínica */
+  aprovado_por_outro_dentista?: boolean;
+  aprovado_em?: string | null;
+  nao_aprovado_por_nome?: string | null;
+  nao_aprovado_por_cro?: string | null;
+  nao_aprovado_em?: string | null;
+  nao_aprovado_motivo?: string | null;
+  /** relatório gravado antes da revisão obrigatória (gerado sem revisão, com o prompt antigo) */
+  origem_ia_sem_revisao?: boolean;
+  /** prazo de revisão do rascunho */
+  revisar_ate?: string | null;
+  transcricao_apagada_em?: string | null;
 }
+
+export interface AprovacaoRelatorioApi {
+  success: boolean;
+  id: string;
+  status: 'aprovado';
+  aprovado_por_nome: string;
+  aprovado_por_cro: string | null;
+  aprovado_por_outro_dentista: boolean;
+  aprovado_em: string;
+  transcricao_apagada_em: string | null;
+  transcricao_mantida: boolean;
+}
+
+export interface NaoAprovacaoRelatorioApi {
+  success: boolean;
+  id: string;
+  status: 'nao_aprovado';
+  nao_aprovado_por_nome: string;
+  nao_aprovado_por_cro: string | null;
+  nao_aprovado_em: string;
+  transcricao_apagada_em: string | null;
+  transcricao_mantida: boolean;
+}
+
+export interface IaClinicaConfigApi {
+  manter_transcricao: boolean;
+  prazo_revisao_dias: number;
+}
+
+type FiltrosRelatorios = {
+  from?: string; to?: string; status?: 'todos' | 'com_prescricao' | 'sem_prescricao';
+  patientId?: string; attendantId?: string; q?: string;
+};
 
 // ─── Consentimentos LGPD por paciente ───────────────────────
 export type ConsentimentoTipo = 'gravacao_transcricao_ia';
@@ -1308,21 +1373,62 @@ export interface ConsentimentoPaciente {
   versao: string;
   aceito_em: string;
   registrado_por_email: string | null;
+  decisao?: 'autorizo' | 'nao_autorizo' | null;
+  assinante_nome?: string | null;
+  assinante_tipo?: 'paciente' | 'responsavel' | null;
 }
+
+/** Texto do consentimento montado pelo servidor (catálogo de versões), com o hash SHA-256. */
+export interface ConsentimentoTexto {
+  versao: string;
+  /** null se o cadastro está sem o nome da clínica. */
+  curta: string | null;
+  /** null se falta CNPJ, endereço ou encarregado: aí só a recusa pode ser registrada. */
+  completa: string | null;
+  opcoes: { autorizo: string; nao_autorizo: string };
+  hash: string | null;
+  faltando: string[];
+  faltando_rotulos: string[];
+  encarregado_cadastrado: boolean;
+  idade: number | null;
+}
+
+export interface RegistrarConsentimentoBody {
+  tipo: ConsentimentoTipo;
+  decisao: 'autorizo' | 'nao_autorizo';
+  texto_hash: string;
+  assinante_tipo: 'paciente' | 'responsavel';
+  assinante_nome: string;
+  assinante_vinculo?: string;
+  responsavel_documento?: string;
+  adolescente_ciente?: boolean;
+  idade_informada?: number;
+  assinatura?: { base64: string };
+  profissional_presente_nome?: string;
+  copia_oferecida?: boolean;
+}
+
+export type CanalRevogacao = 'recepcao' | 'whatsapp' | 'dentista' | 'outro';
 
 export const consentimentosApi = {
   getAtivo: (pacienteId: string, tipo: ConsentimentoTipo) =>
-    vpsApiFetch<{ consent: ConsentimentoPaciente | null }>(
+    vpsApiFetch<{ consent: ConsentimentoPaciente | null; recusa?: { id: string; aceito_em: string; assinante_nome: string | null } | null }>(
       `/pacientes/${encodeURIComponent(pacienteId)}/consentimentos`,
       { params: { tipo }, background: true }
     ),
-  registrar: (pacienteId: string, body: { tipo: ConsentimentoTipo; versao: string; texto: string }) =>
-    vpsApiFetch<{ consent: ConsentimentoPaciente }>(
+  getTexto: (pacienteId: string, tipo: ConsentimentoTipo) =>
+    vpsApiFetch<ConsentimentoTexto>('/consentimentos/texto', { params: { tipo, paciente_id: pacienteId }, background: true }),
+  registrar: (pacienteId: string, body: RegistrarConsentimentoBody) =>
+    vpsApiFetch<{ consent: ConsentimentoPaciente | null; registro: ConsentimentoPaciente }>(
       `/pacientes/${encodeURIComponent(pacienteId)}/consentimentos`,
       { method: 'POST', body }
     ),
-  revogar: (consentId: string) =>
-    vpsApiFetch<{ success: boolean }>(`/consentimentos/${encodeURIComponent(consentId)}/revogar`, { method: 'POST' }),
+  revogar: (consentId: string, canal: CanalRevogacao = 'dentista') =>
+    vpsApiFetch<{ success: boolean }>(`/consentimentos/${encodeURIComponent(consentId)}/revogar`, { method: 'POST', body: { canal } }),
+  getEncarregado: () =>
+    vpsApiFetch<{ encarregado: { nome: string; contato: string } | null }>('/lgpd/encarregado', { background: true }),
+  setEncarregado: (body: { nome: string; contato: string }) =>
+    vpsApiFetch<{ encarregado: { nome: string; contato: string } }>('/lgpd/encarregado', { method: 'PUT', body }),
 };
 
 export const aiApi = {
@@ -1358,7 +1464,33 @@ export const aiApi = {
     patientId?: string;
     patientName?: string;
     durationSeconds?: number;
-  }) => vpsApiFetch<{ id: string; report: string; transcription: string }>('/ai/clinical-report', { method: 'POST', body }),
+    /** agendamento do atendimento: o servidor tira dele o dentista que vai aprovar */
+    appointmentId?: string;
+  }) => vpsApiFetch<{ id: string; report: string; transcription: string; status: 'rascunho' }>('/ai/clinical-report', { method: 'POST', body }),
+
+  /** "Revisei e aprovo": só o dentista do atendimento; grava o texto revisado, nome, CRO e data. */
+  approveReport: (reportId: string, report: string) =>
+    vpsApiFetch<AprovacaoRelatorioApi>(`/ai/reports/${encodeURIComponent(reportId)}/aprovar`, { method: 'POST', body: { report } }),
+
+  /** "Não aprovar": guarda o texto para auditoria e tira o rascunho da lista de pendentes. */
+  rejectReport: (reportId: string, motivo?: string) =>
+    vpsApiFetch<NaoAprovacaoRelatorioApi>(`/ai/reports/${encodeURIComponent(reportId)}/nao-aprovar`, { method: 'POST', body: { motivo } }),
+
+  getClinicSettings: () => vpsApiFetch<IaClinicaConfigApi>('/ai/clinic-settings'),
+  saveClinicSettings: (body: Partial<IaClinicaConfigApi>) =>
+    vpsApiFetch<IaClinicaConfigApi>('/ai/clinic-settings', { method: 'PUT', body }),
+
+  /** Dados do PDF: só admin, só relatórios aprovados; o servidor registra a exportação. */
+  exportReportsPdfData: (filters?: FiltrosRelatorios) => {
+    const params: Record<string, string> = {};
+    if (filters?.from) params.from = filters.from;
+    if (filters?.to) params.to = filters.to;
+    if (filters?.status && filters.status !== 'todos') params.status = filters.status;
+    if (filters?.patientId) params.patientId = filters.patientId;
+    if (filters?.attendantId) params.attendantId = filters.attendantId;
+    if (filters?.q) params.q = filters.q;
+    return vpsApiFetch<{ reports: Array<ClinicalReportApi & { rotulo_aprovacao: string }> }>('/ai/reports/export-pdf', { params });
+  },
 
   getReports: (patientId: string) =>
     vpsApiFetch<ClinicalReportApi[]>(`/ai/reports/${encodeURIComponent(patientId)}`),
@@ -1377,7 +1509,7 @@ export const aiApi = {
     if (filters?.limit) params.limit = String(filters.limit);
     return vpsApiFetch<{
       reports: ClinicalReportApi[];
-      stats: { total: number; com_prescricao: number; sem_prescricao: number; pacientes_unicos: number; duracao_total_min: number };
+      stats: { total: number; com_prescricao: number; sem_prescricao: number; pacientes_unicos: number; duracao_total_min: number; pendentes_revisao?: number; prazo_revisao_dias?: number };
     }>('/ai/reports', { params });
   },
 
@@ -1415,14 +1547,15 @@ export const aiApi = {
     }
   },
 
-  generateFollowupMessages: (body: { reportId: string; patientName?: string; patientPhone?: string }) =>
+  /** Modelos fixos de acompanhamento (sem IA). */
+  generateFollowupMessages: (body: { reportId: string }) =>
     vpsApiFetch<{ messages: Array<{ delay_days: number; text: string }>; summary: string }>('/ai/followup-messages', { method: 'POST', body }),
 
+  /** O telefone e o nome vêm do cadastro do paciente no servidor; `revisado` é a caixa "Revisei as mensagens". */
   scheduleFollowup: (body: {
     reportId: string;
-    patientName?: string;
-    patientPhone?: string;
     messages: Array<{ delay_days: number; text: string }>;
+    revisado: boolean;
     instance?: string;
   }) => vpsApiFetch<{ success: boolean; flowId: string; jobs: Array<{ id: string; scheduled_at: string; delay_days: number; message: string }> }>('/ai/schedule-followup', { method: 'POST', body }),
 

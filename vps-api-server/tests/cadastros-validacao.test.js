@@ -3,6 +3,7 @@
 // pool.query e pool.connect mockados: nenhuma query chega ao Postgres.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -19,7 +20,7 @@ const ADMIN = '44444444-4444-4444-4444-444444444444';
 const OUTRO = '55555555-5555-5555-5555-555555555555';
 const PAC = '33333333-3333-3333-3333-333333333333';
 const ITEM = '66666666-6666-6666-6666-666666666666';
-const tok = (extra = {}) => jwt.sign({ sub: ADMIN, email: 'a@x.com', role: 'admin', tenant_id: TENANT, is_super_admin: false, ...extra }, JWT_SECRET);
+const tok = (extra = {}) => assinarComPapel({ sub: ADMIN, email: 'a@x.com', role: 'admin', tenant_id: TENANT, is_super_admin: false, ...extra }, JWT_SECRET);
 
 describe('funções puras', () => {
   test('cpfValido', () => {

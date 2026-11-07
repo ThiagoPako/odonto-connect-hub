@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { Bot, Key, Save, Eye, EyeOff, Check, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { vpsApiFetch } from "@/lib/vpsApi";
+import { aiApi, vpsApiFetch } from "@/lib/vpsApi";
+import { Switch } from "@/components/ui/switch";
 
 interface AIProvider {
   provider: string;
@@ -33,12 +34,53 @@ export function AISettingsPanel() {
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Transcrição bruta da consulta: padrão é apagar quando o dentista aprova o relatório (LGPD art. 6º III)
+  const [manterTranscricao, setManterTranscricao] = useState<boolean | null>(null);
+  const [salvandoTranscricao, setSalvandoTranscricao] = useState(false);
+  // Prazo para o dentista revisar os rascunhos de IA (padrão 60 dias)
+  const [prazoRevisao, setPrazoRevisao] = useState("60");
+  const [salvandoPrazo, setSalvandoPrazo] = useState(false);
   // Sem a configuração real, "Salvar" gravaria chave vazia e IA desligada por cima da real.
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     loadSettings();
+    aiApi.getClinicSettings().then(({ data }) => {
+      setManterTranscricao(data?.manter_transcricao ?? false);
+      if (data?.prazo_revisao_dias) setPrazoRevisao(String(data.prazo_revisao_dias));
+    });
   }, []);
+
+  async function salvarPrazoRevisao() {
+    const dias = Number(prazoRevisao);
+    if (!Number.isInteger(dias) || dias < 7 || dias > 365) {
+      toast.error("Informe um prazo de 7 a 365 dias");
+      return;
+    }
+    setSalvandoPrazo(true);
+    const { data, error } = await aiApi.saveClinicSettings({ prazo_revisao_dias: dias });
+    setSalvandoPrazo(false);
+    if (error || !data) {
+      toast.error(error || "Não foi possível salvar o prazo");
+      return;
+    }
+    setPrazoRevisao(String(data.prazo_revisao_dias));
+    toast.success(`Prazo de revisão dos rascunhos: ${data.prazo_revisao_dias} dias`);
+  }
+
+  async function alterarManterTranscricao(valor: boolean) {
+    setSalvandoTranscricao(true);
+    const { data, error } = await aiApi.saveClinicSettings({ manter_transcricao: valor });
+    setSalvandoTranscricao(false);
+    if (error || !data) {
+      toast.error(error || "Não foi possível salvar a configuração");
+      return;
+    }
+    setManterTranscricao(data.manter_transcricao);
+    toast.success(data.manter_transcricao
+      ? "A transcrição será mantida junto do relatório aprovado"
+      : "A transcrição será apagada quando o dentista aprovar o relatório");
+  }
 
   async function loadSettings() {
     setLoading(true);
@@ -240,6 +282,53 @@ export function AISettingsPanel() {
           )}
         </div>
       ))}
+
+      <div className="bg-card rounded-xl border border-border/60 p-4 flex items-start justify-between gap-4">
+        <div>
+          <label htmlFor="manter-transcricao" className="text-sm font-semibold text-foreground">
+            Manter a transcrição da consulta depois da aprovação
+          </label>
+          <p className="text-xs text-muted-foreground mt-1">
+            Desligado (recomendado): a transcrição bruta, com tudo o que foi dito na consulta, é apagada quando o
+            dentista aprova o relatório. Ligue só se a clínica quiser guardá-la como parte do prontuário.
+          </p>
+        </div>
+        <Switch
+          id="manter-transcricao"
+          checked={manterTranscricao === true}
+          disabled={manterTranscricao === null || salvandoTranscricao}
+          onCheckedChange={alterarManterTranscricao}
+        />
+      </div>
+
+      <div className="bg-card rounded-xl border border-border/60 p-4 flex items-end justify-between gap-4 flex-wrap">
+        <div className="flex-1 min-w-[220px]">
+          <label htmlFor="prazo-revisao" className="text-sm font-semibold text-foreground">
+            Prazo para revisar os rascunhos de IA (dias)
+          </label>
+          <p className="text-xs text-muted-foreground mt-1">
+            Rascunho não revisado nesse prazo aparece como vencido na tela de relatórios. Padrão: 60 dias.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            id="prazo-revisao"
+            type="number"
+            min={7}
+            max={365}
+            value={prazoRevisao}
+            onChange={e => setPrazoRevisao(e.target.value)}
+            className="w-20 h-9 rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <button
+            onClick={salvarPrazoRevisao}
+            disabled={salvandoPrazo}
+            className="h-9 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            {salvandoPrazo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Salvar prazo"}
+          </button>
+        </div>
+      </div>
 
       <div className="bg-muted/30 rounded-lg p-3 border border-border/30">
         <p className="text-[11px] text-muted-foreground">

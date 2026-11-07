@@ -152,18 +152,14 @@ function erroHttp(res, err, tag) {
   return res.status(500).json({ error: 'Erro interno' });
 }
 
-export function registerLegal(app, { pool, verifyUser, verifyAdmin, verifySuperAdmin }) {
+export function registerLegal(app, { pool, verifyUser, verifyAdmin, verifySuperAdmin, papelAtual }) {
   app.get('/api/legal/pendencias', async (req, res) => {
     try {
       const { user } = await verifyUser(req);
       if (!user.tenant_id) return res.json({ pendentes: [], avisos: [], precisa_aceitar: false });
       const { pendentes, avisos } = await pendenciasDaClinica(pool, user.tenant_id);
-      // Quem aceita pela clínica é o admin; os demais só veem o aviso.
-      let ehAdmin = user.role === 'admin' && !user.is_super_admin;
-      if (!ehAdmin && !user.is_super_admin) {
-        const { rows } = await pool.query('SELECT 1 FROM user_roles WHERE user_id = $1 AND role = $2', [user.id, 'admin']);
-        ehAdmin = rows.length > 0;
-      }
+      // Quem aceita pela clínica é o admin (papel do banco nesta clínica, matriz #86); os demais só veem o aviso.
+      const ehAdmin = !user.is_super_admin && (await papelAtual(user)) === 'admin';
       res.json({ pendentes, avisos, precisa_aceitar: ehAdmin && pendentes.length > 0, pode_aceitar: ehAdmin });
     } catch (err) { erroHttp(res, err, 'pendencias'); }
   });

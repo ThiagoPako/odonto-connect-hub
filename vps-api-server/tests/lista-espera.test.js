@@ -3,6 +3,7 @@
 // resposta do paciente no webhook. pool.query e fetch mockados: nada sai para a Evolution.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -31,7 +32,7 @@ const ofertaA = 'eeeeeeee-0000-4000-8000-0000000000e1';
 const telEspera = '5511977776666';
 const instanceOwner = { [instA]: tenantA, [instB]: tenantB };
 const auth = (tenant = tenantA) => ({
-  Authorization: `Bearer ${jwt.sign({ sub: '44444444-4444-4444-4444-444444444444', email: 'a@a.com', role: 'admin', tenant_id: tenant, is_super_admin: false }, JWT_SECRET)}`,
+  Authorization: `Bearer ${assinarComPapel({ sub: '44444444-4444-4444-4444-444444444444', email: 'a@a.com', role: 'admin', tenant_id: tenant, is_super_admin: false }, JWT_SECRET)}`,
 });
 const dentroDaJanela = () => jest.useFakeTimers({
   now: new Date('2026-11-04T13:00:00Z'), // quarta, 10h em São Paulo

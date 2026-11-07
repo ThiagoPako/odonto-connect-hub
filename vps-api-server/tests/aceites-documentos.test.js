@@ -2,6 +2,7 @@
 // pool.query e pool.connect são mockados; nenhuma query chega ao Postgres.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -17,7 +18,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const tenantA = '11111111-1111-1111-1111-111111111111';
 const tenantB = '22222222-2222-2222-2222-222222222222';
 const adminA = '44444444-4444-4444-4444-444444444444';
-const token = (extra = {}) => jwt.sign({ sub: adminA, email: 'admin@a.test', role: 'admin', tenant_id: tenantA, is_super_admin: false, ...extra }, JWT_SECRET);
+const token = (extra = {}) => assinarComPapel({ sub: adminA, email: 'admin@a.test', role: 'admin', tenant_id: tenantA, is_super_admin: false, ...extra }, JWT_SECRET);
 
 const dias = (n) => new Date(Date.now() + n * 86400000).toISOString();
 let sqlLog, versoes, aceites, spyQ, spyC;

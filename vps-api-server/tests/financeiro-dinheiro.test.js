@@ -3,6 +3,7 @@
 // desligado. pool.query e pool.connect mockados (nenhuma query chega ao Postgres).
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -26,7 +27,7 @@ const orcAprovado = '77777777-7777-7777-7777-777777777777';
 const orcPendente = '88888888-8888-8888-8888-888888888888';
 
 const auth = (role = 'admin', tenant_id = tenantA) => ({
-  Authorization: `Bearer ${jwt.sign({ sub: '44444444-4444-4444-4444-444444444444', email: 'u@clinica.com', role, tenant_id, is_super_admin: false }, JWT_SECRET)}`,
+  Authorization: `Bearer ${assinarComPapel({ sub: '44444444-4444-4444-4444-444444444444', email: 'u@clinica.com', role, tenant_id, is_super_admin: false }, JWT_SECRET)}`,
 });
 
 let sqlLog, querySpy, connectSpy, movimentos, saldo, orcamentos;

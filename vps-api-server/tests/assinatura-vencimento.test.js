@@ -3,6 +3,7 @@
 // pool.query mockado: nenhuma query chega ao Postgres.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -141,7 +142,7 @@ describe('rotas por etapa (API)', () => {
   };
   const em = (dias) => ({ status: 'active', trial_ends_at: null, current_period_end: new Date(Date.now() - dias * DIA).toISOString() });
   const tenants = { [T.ok]: em(-10), [T.carencia]: em(2), [T.leitura]: em(10), [T.bloq]: em(35), [T.cancel]: em(70) };
-  const tok = (tenant, extra = {}) => jwt.sign({ sub: ADMIN, email: 'a@x.com', role: 'admin', tenant_id: tenant, is_super_admin: false, ...extra }, JWT_SECRET);
+  const tok = (tenant, extra = {}) => assinarComPapel({ sub: ADMIN, email: 'a@x.com', role: 'admin', tenant_id: tenant, is_super_admin: false, ...extra }, JWT_SECRET);
   let spy, sqlLog;
   beforeAll(() => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -221,7 +222,7 @@ describe('exportação (liberada em todas as etapas; só admin da própria clín
     [T.cancel]: { status: 'canceled', trial_ends_at: null, current_period_end: null },
   };
   const OUTRA = 'abababab-abab-abab-abab-abababababab';
-  const tok = (tenant, role = 'admin', extra = {}) => jwt.sign({ sub: ADMIN, email: 'a@x.com', role, tenant_id: tenant, is_super_admin: false, ...extra }, JWT_SECRET);
+  const tok = (tenant, role = 'admin', extra = {}) => assinarComPapel({ sub: ADMIN, email: 'a@x.com', role, tenant_id: tenant, is_super_admin: false, ...extra }, JWT_SECRET);
   let spy, spyConnect, sqlLog;
   beforeEach(() => {
     sqlLog = [];

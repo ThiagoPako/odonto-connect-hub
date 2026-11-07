@@ -28,6 +28,7 @@ import { Route as OrcamentosRouteImport } from './routes/orcamentos'
 import { Route as MinhaAssinaturaRouteImport } from './routes/minha-assinatura'
 import { Route as MetricasRouteImport } from './routes/metricas'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as LgpdExpurgoRouteImport } from './routes/lgpd-expurgo'
 import { Route as IntegracoesRouteImport } from './routes/integracoes'
 import { Route as FinanceiroRouteImport } from './routes/financeiro'
 import { Route as ExportarDadosRouteImport } from './routes/exportar-dados'
@@ -144,6 +145,11 @@ const MetricasRoute = MetricasRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LgpdExpurgoRoute = LgpdExpurgoRouteImport.update({
+  id: '/lgpd-expurgo',
+  path: '/lgpd-expurgo',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IntegracoesRoute = IntegracoesRouteImport.update({
@@ -279,6 +285,7 @@ export interface FileRoutesByFullPath {
   '/exportar-dados': typeof ExportarDadosRoute
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
+  '/lgpd-expurgo': typeof LgpdExpurgoRoute
   '/login': typeof LoginRoute
   '/metricas': typeof MetricasRoute
   '/minha-assinatura': typeof MinhaAssinaturaRoute
@@ -322,6 +329,7 @@ export interface FileRoutesByTo {
   '/exportar-dados': typeof ExportarDadosRoute
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
+  '/lgpd-expurgo': typeof LgpdExpurgoRoute
   '/login': typeof LoginRoute
   '/metricas': typeof MetricasRoute
   '/minha-assinatura': typeof MinhaAssinaturaRoute
@@ -366,6 +374,7 @@ export interface FileRoutesById {
   '/exportar-dados': typeof ExportarDadosRoute
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
+  '/lgpd-expurgo': typeof LgpdExpurgoRoute
   '/login': typeof LoginRoute
   '/metricas': typeof MetricasRoute
   '/minha-assinatura': typeof MinhaAssinaturaRoute
@@ -411,6 +420,7 @@ export interface FileRouteTypes {
     | '/exportar-dados'
     | '/financeiro'
     | '/integracoes'
+    | '/lgpd-expurgo'
     | '/login'
     | '/metricas'
     | '/minha-assinatura'
@@ -454,6 +464,7 @@ export interface FileRouteTypes {
     | '/exportar-dados'
     | '/financeiro'
     | '/integracoes'
+    | '/lgpd-expurgo'
     | '/login'
     | '/metricas'
     | '/minha-assinatura'
@@ -497,6 +508,7 @@ export interface FileRouteTypes {
     | '/exportar-dados'
     | '/financeiro'
     | '/integracoes'
+    | '/lgpd-expurgo'
     | '/login'
     | '/metricas'
     | '/minha-assinatura'
@@ -541,6 +553,7 @@ export interface RootRouteChildren {
   ExportarDadosRoute: typeof ExportarDadosRoute
   FinanceiroRoute: typeof FinanceiroRoute
   IntegracoesRoute: typeof IntegracoesRoute
+  LgpdExpurgoRoute: typeof LgpdExpurgoRoute
   LoginRoute: typeof LoginRoute
   MetricasRoute: typeof MetricasRoute
   MinhaAssinaturaRoute: typeof MinhaAssinaturaRoute
@@ -695,6 +708,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/lgpd-expurgo': {
+      id: '/lgpd-expurgo'
+      path: '/lgpd-expurgo'
+      fullPath: '/lgpd-expurgo'
+      preLoaderRoute: typeof LgpdExpurgoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/integracoes': {
@@ -888,6 +908,7 @@ const rootRouteChildren: RootRouteChildren = {
   ExportarDadosRoute: ExportarDadosRoute,
   FinanceiroRoute: FinanceiroRoute,
   IntegracoesRoute: IntegracoesRoute,
+  LgpdExpurgoRoute: LgpdExpurgoRoute,
   LoginRoute: LoginRoute,
   MetricasRoute: MetricasRoute,
   MinhaAssinaturaRoute: MinhaAssinaturaRoute,

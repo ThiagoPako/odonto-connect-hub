@@ -15,9 +15,14 @@ const lines = readFileSync(file, 'utf8').split('\n');
 // Tabelas globais (sem tenant por natureza) — não exigem filtro.
 const GLOBAL = new Set(['plans', 'system_settings', 'tenants', 'information_schema', 'pg_catalog', 'user_roles', 'password_reset_requests']);
 const routeRe = /^app\.(get|post|put|patch|delete)\(\s*['"`]([^'"`]+)['"`]/;
+// Tabelas com dado de saúde ou financeiro: a rota precisa checar o PAPEL (docs/seguranca/matriz-papeis.md),
+// não só o login. Checagem aceita: so(...)/exigePapel(...) na declaração, verifyAdmin ou papelAtual no handler.
+const SENSIVEIS = new Set(['prontuarios', 'prontuario_versoes', 'consultations', 'clinical_reports', 'odontogramas',
+  'procedimento_execucoes', 'fin_employees', 'fin_payrolls', 'fin_bills', 'fin_movements', 'fin_overdue',
+  'fin_bank_accounts', 'financeiro', 'comissoes', 'procedimentos_catalogo']);
 
 const routes = [];
-lines.forEach((l, i) => { const m = l.match(routeRe); if (m) routes.push({ line: i + 1, method: m[1].toUpperCase(), path: m[2] }); });
+lines.forEach((l, i) => { const m = l.match(routeRe); if (m) routes.push({ line: i + 1, method: m[1].toUpperCase(), path: m[2], decl: l }); });
 routes.forEach((r, k) => {
   const end = k + 1 < routes.length ? routes[k + 1].line - 1 : Math.min(lines.length, r.line + 400);
   r.body = lines.slice(r.line - 1, end).join('\n');
@@ -47,6 +52,8 @@ for (const r of routes) {
   }
   const usaTenant = /tenant_id|assertCanManageUser\(/.test(b);
   if (tables.size && !usaTenant) flags.push('SQL-SEM-tenant_id');
+  const papelChecado = /\b(so|exigePapel)\(/.test(r.decl) || /verifyAdmin\(|verifySuperAdmin\(|papelAtual\(/.test(b);
+  if ([...tables].some(t => SENSIVEIS.has(t)) && !papelChecado) flags.push('SEM-PAPEL');
 
   // Recurso por id na URL sem filtro de tenant na mesma query.
   if (/:([a-zA-Z]*[iI]d|instance[a-zA-Z]*)\b/.test(r.path) && tables.size && !usaTenant) flags.push('ID-NA-URL-SEM-DONO');
@@ -60,7 +67,7 @@ for (const r of routes) {
 
 const pad = (s, n) => String(s).padEnd(n);
 console.log(`# Auditoria heurística de rotas — ${file} (${routes.length} rotas, ${out.length} listadas)`);
-console.log('Legenda: SEM-AUTH · SQL-SEM-tenant_id · ID-NA-URL-SEM-DONO · INSTANCIA-SEM-userOwnsInstance · getDefaultInstance(global) · TENANT-DO-CLIENTE');
+console.log('Legenda: SEM-AUTH · SQL-SEM-tenant_id · ID-NA-URL-SEM-DONO · SEM-PAPEL · INSTANCIA-SEM-userOwnsInstance · getDefaultInstance(global) · TENANT-DO-CLIENTE');
 if (guardaWhatsapp) console.log('Nota: rotas /api/whatsapp/* passam pelo guarda global app.use(\'/api/whatsapp\') com userOwnsInstance — não são acusadas de INSTANCIA-SEM-userOwnsInstance.');
 console.log('Cada alerta é suspeita: confirme lendo o handler (a query pode usar helper que já filtra).\n');
 for (const r of out) {

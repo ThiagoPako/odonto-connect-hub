@@ -9,6 +9,7 @@
 //   cria o Pool (como nos outros testes desta pasta).
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { limparCachePapel, _definirPapelParaTestes } from '../papeis.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -49,21 +50,36 @@ describe('Isolamento entre clínicas — rotas /api/pacientes/:id', () => {
 
   beforeEach(() => {
     sqlLog = [];
+    // Papel lido do banco (papeis.mjs): fixa no cache para o pool mockado.
+    limparCachePapel();
+    _definirPapelParaTestes('44444444-4444-4444-4444-444444444444', 'admin');
     querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
       const text = String(sql);
       sqlLog.push({ text, params });
       // pacientes e agendamentos só "existem" para a clínica B
-      if (/FROM pacientes WHERE id\s*=\s*\$1 AND tenant_id\s*=\s*\$2/.test(text)) {
+      if (/FROM pacientes WHERE id(::text)?\s*=\s*\$1 AND tenant_id\s*=\s*\$2/.test(text)) {
         const ok = params[0] === pacienteDaB && params[1] === tenantB;
         return Promise.resolve({ rows: ok ? [{ '?column?': 1 }] : [], rowCount: ok ? 1 : 0 });
       }
-      if (/FROM agendamentos WHERE id = \$1 AND tenant_id = \$2/.test(text)) {
+      if (/FROM agendamentos WHERE id(::text)? = \$1 AND tenant_id = \$2/.test(text)) {
         const ok = params[0] === agendamentoDaB && params[1] === tenantB;
         return Promise.resolve({ rows: ok ? [{ '?column?': 1 }] : [], rowCount: ok ? 1 : 0 });
       }
       if (/^\s*(UPDATE|DELETE FROM) pacientes/.test(text)) {
         const ok = params.includes(pacienteDaB) && params.includes(tenantB);
         return Promise.resolve({ rows: [], rowCount: ok ? 1 : 0 });
+      }
+      // consentimento v2.0: a clínica B tem encarregado de dados cadastrado
+      // termo completo exige CNPJ e endereço da clínica (LGPD art. 9º III)
+      if (/SELECT nome, cnpj FROM tenants/.test(text)) {
+        return Promise.resolve({ rows: [{ nome: 'Clínica B', cnpj: '00.000.000/0001-00' }], rowCount: 1 });
+      }
+      if (/FROM tenant_settings/.test(text) && params[1] === 'clinic_location') {
+        return Promise.resolve({ rows: [{ value: { address: 'Rua B, 1' } }], rowCount: 1 });
+      }
+      if (/FROM tenant_settings/.test(text) && params[1] === 'lgpd_encarregado') {
+        const ok = params[0] === tenantB;
+        return Promise.resolve({ rows: ok ? [{ value: { nome: 'DPO B', contato: 'dpo@b' } }] : [], rowCount: ok ? 1 : 0 });
       }
       if (/INSERT INTO consentimentos_pacientes/.test(text)) {
         return Promise.resolve({ rows: [{ id: 'c1', tipo: params[2], versao: params[3] }], rowCount: 1 });
@@ -118,7 +134,7 @@ describe('Isolamento entre clínicas — rotas /api/pacientes/:id', () => {
     test('POST /consentimentos retorna 404 sem INSERT (paciente ou agendamento da B)', async () => {
       for (const id of [pacienteDaB, agendamentoDaB]) {
         const res = await chamar('post', `/api/pacientes/${id}/consentimentos`, tokenA(),
-          { tipo: 'gravacao_transcricao_ia', versao: '1.0', texto: 'ok' });
+          { tipo: 'gravacao_transcricao_ia', decisao: 'autorizo', assinante_tipo: 'paciente', assinante_nome: 'Paciente', idade_informada: 30, assinatura: { base64: 'data:image/png;base64,iVBORw0KGgo=' } });
         expect(res.status).toBe(404);
       }
       expect(sqlLog.some(q => /INSERT INTO consentimentos_pacientes/.test(q.text))).toBe(false);
@@ -156,7 +172,7 @@ describe('Isolamento entre clínicas — rotas /api/pacientes/:id', () => {
 
     test('POST /consentimentos com id de agendamento da própria clínica grava', async () => {
       const res = await chamar('post', `/api/pacientes/${agendamentoDaB}/consentimentos`, tokenB(),
-        { tipo: 'gravacao_transcricao_ia', versao: '1.0', texto: 'ok' });
+        { tipo: 'gravacao_transcricao_ia', decisao: 'autorizo', assinante_tipo: 'paciente', assinante_nome: 'Paciente', idade_informada: 30, assinatura: { base64: 'data:image/png;base64,iVBORw0KGgo=' } });
       expect(res.status).toBe(200);
       expect(res.body.consent).toMatchObject({ id: 'c1' });
       const ins = sqlLog.find(q => /INSERT INTO consentimentos_pacientes/.test(q.text));
