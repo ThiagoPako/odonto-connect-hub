@@ -533,7 +533,9 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned, moveTargets = 
         // Marca lead como convertido nas campanhas
         const affected = markLeadConverted(lead.id, lead.value);
         if (affected.length > 0) {
-          toast.success(`Conversão atribuída a ${affected.length} campanha(s) — receita R$ ${(lead.value || 0).toLocaleString("pt-BR")}`);
+          toast.info(`Conversão marcada em ${affected.length} campanha(s) neste navegador`, {
+            description: `R$ ${(lead.value || 0).toLocaleString("pt-BR")}. Ainda não fica salva no servidor nem aparece em outros computadores.`,
+          });
         }
         toast.success(`${lead.name} cadastrado como paciente!`, {
           action: { label: "Ver paciente", onClick: () => navigate({ to: "/pacientes", search: { pacienteId: data?.paciente_id } }) },
@@ -893,12 +895,12 @@ function PatientTableView() {
               <>
                 <SyncAvatarsButton />
                 <button onClick={() => setShowNewLead(true)} className="h-10 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5">
-                  <UserPlus className="h-4 w-4" /> Novo paciente
+                  <UserPlus className="h-4 w-4" /> Novo lead
                 </button>
               </>
             }
           />
-          <CreateLeadDialog open={showNewLead} onOpenChange={setShowNewLead} onCreated={() => { toast.success("Paciente cadastrado!"); loadPatients(); }} />
+          <CreateLeadDialog open={showNewLead} onOpenChange={setShowNewLead} onCreated={() => { toast.success("Lead cadastrado!"); loadPatients(); }} />
         </div>
 
         <div className="px-4 py-2 text-xs text-muted-foreground flex items-center justify-between">

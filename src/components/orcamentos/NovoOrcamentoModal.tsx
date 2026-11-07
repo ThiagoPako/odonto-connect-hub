@@ -33,7 +33,7 @@ import {
 import { OdontogramaInterativo, type FaceSelection, type Face } from "./OdontogramaInterativo";
 import { DEFAULT_PRINT_CONFIG, type OrcamentoItemEstruturado, type PrintConfig } from "./types";
 import { OrcamentoPrintPreview } from "./OrcamentoPrintPreview";
-import { centavos } from "@/lib/formatos";
+import { centavos, textoParcelas } from "@/lib/formatos";
 
 interface OrcamentoEdit {
   id: string;
@@ -294,7 +294,7 @@ export function NovoOrcamentoModal({
     );
 
   const subtotal = centavos(itens.reduce((acc, it) => acc + (Number(it.valor_total) || 0), 0));
-  const total = Math.max(0, subtotal - desconto);
+  const total = Math.max(0, centavos(subtotal - desconto));
 
   const pacienteSelecionado = pacientes.find((p) => p.id === pacienteId);
   const dentistaSelecionado = dentistas.find((d) => d.id === dentistaId);
@@ -514,7 +514,7 @@ export function NovoOrcamentoModal({
                   </Select>
                   <Label className="text-xs">Parcelas</Label>
                   <Input type="number" min={1} max={24} value={parcelas}
-                    onChange={(e) => setParcelas(Math.max(1, Number(e.target.value)))}
+                    onChange={(e) => setParcelas(Math.min(24, Math.max(1, Math.floor(Number(e.target.value) || 1))))}
                     className="h-9 text-xs" />
                 </div>
 
@@ -534,7 +534,7 @@ export function NovoOrcamentoModal({
                   </div>
                   {parcelas > 1 && total > 0 && (
                     <p className="text-[10px] text-muted-foreground text-right">
-                      {parcelas}x de {fmt(total / parcelas)}
+                      {textoParcelas(total, parcelas)}
                     </p>
                   )}
                 </div>

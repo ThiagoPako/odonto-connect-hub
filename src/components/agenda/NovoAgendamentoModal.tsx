@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { agendaApi, pacientesApi, dentistasApi, type AgendamentoVPS, type MarcadorAgenda } from "@/lib/vpsApi";
 import { AnalogTimePicker } from "./AnalogTimePicker";
 import { MarcadoresSelector } from "./MarcadoresSelector";
-import { cn, localDateISO } from "@/lib/utils";
+import { cn, localDateISO, semAcento } from "@/lib/utils";
 
 interface Props {
   open: boolean;
@@ -151,8 +151,8 @@ export function NovoAgendamentoModal({
 
   const filteredPacientes = useMemo(() => {
     if (!search || search.length < 2) return [];
-    const q = search.toLowerCase();
-    return pacientes.filter((p) => p.nome?.toLowerCase().includes(q)).slice(0, 6);
+    const q = semAcento(search.trim());
+    return pacientes.filter((p) => semAcento(p.nome).includes(q)).slice(0, 6);
   }, [search, pacientes]);
 
   const handleSelectPaciente = (p: Paciente) => {
@@ -299,6 +299,11 @@ export function NovoAgendamentoModal({
       return;
     }
     if (!eventoTitulo.trim()) { toast.error("Informe um título."); return; }
+    // Antes, "até" menor que o início virava 15 minutos sem aviso
+    if (!diaInteiro && (!/^([01]\d|2[0-3]):[0-5]\d$/.test(horaFim) || horaFim <= hora)) {
+      toast.error("O horário de término precisa ser depois do início.");
+      return;
+    }
 
     setSaving(true);
     try {
