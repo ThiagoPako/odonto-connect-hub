@@ -9,6 +9,22 @@
 
 const DEFAULT_BASE_URL = 'https://api.clinicorp.com/rest/v1';
 
+// Só falamos com a Clinicorp: base_url livre permitia o servidor buscar endereços internos (SSRF).
+// CLINICORP_ALLOWED_HOSTS (vírgula) amplia a lista, se um dia houver outro host oficial.
+const CLINICORP_HOSTS_PERMITIDOS = (process.env.CLINICORP_ALLOWED_HOSTS || 'api.clinicorp.com')
+  .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+export function clinicorpBaseUrlPermitida(base) {
+  try {
+    const u = new URL(String(base));
+    return u.protocol === 'https:' && !u.username && !u.password && !u.port
+      && CLINICORP_HOSTS_PERMITIDOS.includes(u.hostname.toLowerCase());
+  } catch { return false; }
+}
+// base_url salvo antes da trava e fora da lista: usa o padrão em vez de falhar o sync.
+export function clinicorpBaseUrlSegura(base) {
+  return base && clinicorpBaseUrlPermitida(base) ? String(base) : DEFAULT_BASE_URL;
+}
+
 function normalizeApiToken(token) {
   return String(token || '').trim().replace(/^Bearer\s+/i, '');
 }
@@ -152,7 +168,7 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
   if (!settings?.api_token || !settings?.subscriber_id) {
     throw new Error('Clinicorp: Usuário API (subscriber_id) e Token API são obrigatórios');
   }
-  const base = (settings.base_url || DEFAULT_BASE_URL).replace(/\/$/, '');
+  const base = clinicorpBaseUrlSegura(settings.base_url).replace(/\/$/, '');
   const url = new URL(base + pathName);
 
   // subscriber_id vai em todas as chamadas (a spec exige na maioria). Valores
