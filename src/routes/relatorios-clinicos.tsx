@@ -329,13 +329,13 @@ function RelatoriosClinicosPage() {
     });
   };
 
-  const exportarCsv = () => {
+  const exportarCsv = async () => {
     if (oficiais.length === 0) {
       toast.error("Nenhum relatório aprovado para exportar");
       return;
     }
-    const url = aiApi.exportReportsCsvUrl(buildFilters());
-    window.open(url, '_blank');
+    const { error } = await aiApi.downloadReportsCsv(buildFilters());
+    if (error) toast.error("Não foi possível exportar o CSV: " + error);
   };
 
   return (

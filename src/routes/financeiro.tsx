@@ -207,7 +207,9 @@ function FinanceiroPage() {
       value: bill.value, date: now, bank_account_id: bankAccountId,
       bank_name: bank?.bank ?? '—', bill_id: bill.id,
     });
-    if (mov.error) toast.error("Conta marcada como paga, mas a saída não foi lançada nas movimentações: " + mov.error);
+    // 409 = a saída desta conta já foi lançada (outro clique/aba): não é erro, não debita de novo
+    if (mov.error && /já foi paga/.test(mov.error)) toast.info("Esta conta já tinha sido paga e lançada.");
+    else if (mov.error) toast.error("Conta marcada como paga, mas a saída não foi lançada nas movimentações: " + mov.error);
     else toast.success("Conta paga e lançada nas movimentações");
     await loadAll();
     return true;
@@ -228,7 +230,8 @@ function FinanceiroPage() {
       category: 'salario', value: pr.netSalary, date: now,
       bank_account_id: bankAccountId, bank_name: bank?.bank ?? '—', payroll_id: pr.id,
     });
-    if (mov.error) toast.error("Folha marcada como paga, mas a saída não foi lançada nas movimentações: " + mov.error);
+    if (mov.error && /já foi paga/.test(mov.error)) toast.info("Esta folha já tinha sido paga e lançada.");
+    else if (mov.error) toast.error("Folha marcada como paga, mas a saída não foi lançada nas movimentações: " + mov.error);
     else toast.success("Folha paga e lançada nas movimentações");
     await loadAll();
     return true;
@@ -1248,6 +1251,8 @@ function dreTotals(movs: FinanceMovement[]) {
     receitaTotal,
     receitaConsultas: sum(entradas, ["consulta"]),
     receitaProcedimentos: sum(entradas, ["procedimento", "implante", "ortodontia", "protese"]),
+    // Sem estas linhas as subcategorias não fechavam com o total (outros_* e categorias antigas)
+    receitaOutras: receitaTotal - sum(entradas, ["consulta", "procedimento", "implante", "ortodontia", "protese"]),
     despTotal,
     despPessoal: sum(saidas, ["salario", "comissao"]),
     despMarketing: sum(saidas, ["marketing"]),
@@ -1255,6 +1260,7 @@ function dreTotals(movs: FinanceMovement[]) {
     despMaterial: sum(saidas, ["material", "laboratorio"]),
     // "impostos" fica só aqui (não há linha de deduções separada, para não contar duas vezes)
     despAdmin: sum(saidas, ["software", "manutencao", "impostos"]),
+    despOutras: despTotal - sum(saidas, ["salario", "comissao", "marketing", "aluguel", "energia", "agua", "internet", "material", "laboratorio", "software", "manutencao", "impostos"]),
     lucro: receitaTotal - despTotal,
     margem: receitaTotal > 0 ? Math.round(((receitaTotal - despTotal) / receitaTotal) * 100) : null,
   };
@@ -1279,6 +1285,7 @@ function TabDRE({ movements }: { movements: FinanceMovement[] }) {
     { label: "RECEITA OPERACIONAL BRUTA", currentMonth: atual.receitaTotal, previousMonth: prev(anterior.receitaTotal), isBold: true, isTotal: true },
     { label: "Consultas e Avaliações", currentMonth: atual.receitaConsultas, previousMonth: prev(anterior.receitaConsultas), indent: 1 },
     { label: "Procedimentos e Tratamentos", currentMonth: atual.receitaProcedimentos, previousMonth: prev(anterior.receitaProcedimentos), indent: 1 },
+    { label: "Outras receitas", currentMonth: atual.receitaOutras, previousMonth: prev(anterior.receitaOutras), indent: 1 },
     { label: "", currentMonth: 0, previousMonth: 0 },
     { label: "DESPESAS OPERACIONAIS", currentMonth: atual.despTotal, previousMonth: prev(anterior.despTotal), isBold: true, isTotal: true, isExpense: true },
     { label: "Pessoal (Salários + Comissões)", currentMonth: atual.despPessoal, previousMonth: prev(anterior.despPessoal), indent: 1, isExpense: true },
@@ -1286,6 +1293,7 @@ function TabDRE({ movements }: { movements: FinanceMovement[] }) {
     { label: "Ocupação (Aluguel, Energia, Internet)", currentMonth: atual.despOcupacao, previousMonth: prev(anterior.despOcupacao), indent: 1, isExpense: true },
     { label: "Materiais e Laboratório", currentMonth: atual.despMaterial, previousMonth: prev(anterior.despMaterial), indent: 1, isExpense: true },
     { label: "Administrativas (Software, Manutenção, Impostos)", currentMonth: atual.despAdmin, previousMonth: prev(anterior.despAdmin), indent: 1, isExpense: true },
+    { label: "Outras despesas", currentMonth: atual.despOutras, previousMonth: prev(anterior.despOutras), indent: 1, isExpense: true },
     { label: "", currentMonth: 0, previousMonth: 0 },
     { label: "RESULTADO OPERACIONAL", currentMonth: atual.lucro, previousMonth: prev(anterior.lucro), isBold: true, isTotal: true },
     { label: "Margem Operacional", currentMonth: atual.margem ?? 0, previousMonth: anterior.hasData ? anterior.margem : null, isBold: true, isPercent: true },

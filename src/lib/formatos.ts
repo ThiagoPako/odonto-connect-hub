@@ -15,6 +15,19 @@ export function centavos(n: number): number {
 }
 
 /**
+ * Texto das parcelas com centavos que fecham o total: R$ 1.000,00 em 3x vira
+ * "3x de R$ 333,33 (1ª de R$ 333,34)" — 3 × 333,33 daria R$ 999,99.
+ */
+export function textoParcelas(total: number, parcelas: number): string {
+  const n = Math.max(1, Math.floor(Number(parcelas) || 1));
+  const totalCent = Math.round((Number(total) || 0) * 100);
+  const base = Math.floor(totalCent / n);
+  const primeira = totalCent - base * (n - 1);
+  const txt = `${n}x de ${formatBRL(base / 100)}`;
+  return primeira === base ? txt : `${txt} (1ª de ${formatBRL(primeira / 100)})`;
+}
+
+/**
  * Lê um valor digitado em reais: "1.234,56", "1234,56", "R$ 50", "12.50".
  * Recusa (null) o formato americano com vírgula de milhar ("1,234.56", "1,234")
  * e mais de 2 casas decimais, para não gravar mil vezes o valor sem avisar.
