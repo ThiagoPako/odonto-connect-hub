@@ -6,7 +6,7 @@ import { jest } from '@jest/globals';
 import { createHmac } from 'crypto';
 import { validateProviderShape, WA_CAPABILITY_KEYS } from '../whatsapp/provider.mjs';
 import { validateInternalEvent } from '../whatsapp/events.mjs';
-import { createOpenWaAdapter, parseOpenWaWebhook, verifyOpenWaSignature, openWaSessionState, openWaChatId } from '../whatsapp/adapters/openwa.mjs';
+import { createOpenWaAdapter, OPENWA_MEDIA_MAX_BYTES, parseOpenWaWebhook, verifyOpenWaSignature, openWaSessionState, openWaChatId } from '../whatsapp/adapters/openwa.mjs';
 import { startFakeOpenWa } from './helpers/fake-openwa.mjs';
 
 let fake, adapter, channel;
@@ -230,6 +230,32 @@ describe('OpenWA — mídia, lido e presença (F1)', () => {
     }
     await adapter.sendTyping(channel, '5511988887777', { state: 'composing' });
     expect(fake.chatActions.at(-1).body.state).toBe('typing');
+  });
+
+  test('downloadMedia: teto padrão de 64 MB (revisão F1.1, N3)', () => {
+    expect(OPENWA_MEDIA_MAX_BYTES).toBe(64 * 1024 * 1024);
+  });
+
+  test('downloadMedia recusa mídia acima do teto pelo content-length, sem ler o corpo (N3)', async () => {
+    const small = createOpenWaAdapter({ baseUrl: fake.baseUrl, adminKey: fake.adminKey, env: { OPENWA_MEDIA_MAX_BYTES: '50000' } });
+    fake.bigMedia({ size: 5 * 1024 * 1024 });
+    const m = await small.downloadMedia(channel, { ref: 'false_1@c.us_BIG', chatId: '5511988887777@c.us' });
+    expect(m).toEqual({ ok: false, status: 413 });
+  });
+
+  test('downloadMedia corta mídia sem content-length (chunked) ao passar do teto (N3)', async () => {
+    const small = createOpenWaAdapter({ baseUrl: fake.baseUrl, adminKey: fake.adminKey, env: { OPENWA_MEDIA_MAX_BYTES: '50000' } });
+    fake.bigMedia({ size: 2 * 1024 * 1024, chunked: true });
+    const m = await small.downloadMedia(channel, { ref: 'false_1@c.us_BIG2', chatId: '5511988887777@c.us' });
+    expect(m).toEqual({ ok: false, status: 413 });
+  });
+
+  test('downloadMedia aceita mídia no limite do teto (N3)', async () => {
+    const small = createOpenWaAdapter({ baseUrl: fake.baseUrl, adminKey: fake.adminKey, env: { OPENWA_MEDIA_MAX_BYTES: '50000' } });
+    fake.bigMedia({ size: 50000, chunked: true });
+    const m = await small.downloadMedia(channel, { ref: 'false_1@c.us_OK', chatId: '5511988887777@c.us' });
+    expect(m.ok).toBe(true);
+    expect(Buffer.from(m.base64, 'base64')).toHaveLength(50000);
   });
 
   test('downloadMedia devolve o mimetype do OpenWA quando o webhook não trouxe', async () => {
