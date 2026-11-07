@@ -74,8 +74,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
     document.addEventListener("visibilitychange", refreshOnVisibility);
     // A API respondeu 402 (assinatura bloqueada no meio da sessão): recarrega para mostrar a tela de bloqueio.
+    // Várias chamadas recebem 402 ao mesmo tempo: só um /auth/me por vez.
+    let recarregando: Promise<void> | null = null;
     const onAssinaturaBloqueada = () => {
-      fetchCurrentUser().then((u) => { if (mounted && u) setUser(u); }).catch(() => undefined);
+      if (recarregando) return;
+      recarregando = fetchCurrentUser()
+        .then((u) => { if (mounted && u) setUser(u); })
+        .catch(() => undefined)
+        .finally(() => { recarregando = null; });
     };
     window.addEventListener(ASSINATURA_BLOQUEADA_EVENT, onAssinaturaBloqueada);
     return () => {

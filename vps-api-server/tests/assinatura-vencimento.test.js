@@ -118,3 +118,22 @@ describe('rotas com clínica vencida', () => {
     expect(r.status).toBe(402);
   });
 });
+
+describe('mensagem do 402 por motivo', () => {
+  const ADMIN = '44444444-4444-4444-4444-444444444444';
+  const SUSP = '55555555-5555-5555-5555-555555555555';
+  let spy;
+  beforeEach(() => {
+    spy = jest.spyOn(pool, 'query').mockImplementation(async (sql) => (
+      /SELECT status, trial_ends_at, current_period_end FROM tenants/.test(String(sql))
+        ? { rows: [{ status: 'suspended', trial_ends_at: null, current_period_end: null }] } : { rows: [], rowCount: 0 }));
+  });
+  afterEach(() => spy.mockRestore());
+  test('clínica suspensa não recebe o texto de "venceu há mais de 5 dias"', async () => {
+    const tk = jwt.sign({ sub: ADMIN, email: 'a@x.com', role: 'admin', tenant_id: SUSP, is_super_admin: false }, JWT_SECRET);
+    const r = await request(app).get('/api/pacientes').set('Authorization', `Bearer ${tk}`);
+    expect(r.status).toBe(402);
+    expect(r.body.error).toMatch(/foi suspenso/);
+    expect(r.body.error).not.toMatch(/venceu/);
+  });
+});

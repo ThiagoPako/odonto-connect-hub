@@ -213,8 +213,11 @@ async function situacaoDoTenant(tenantId) {
   return sit;
 }
 function respostaAssinaturaBloqueada(res, sit) {
+  const motivo = sit?.motivo === 'suspensa' ? 'o acesso da clínica foi suspenso'
+    : sit?.motivo === 'cancelada' ? 'a assinatura da clínica foi cancelada'
+    : `${sit?.motivo === 'teste_vencido' ? 'o período de teste' : 'a assinatura'} venceu há mais de ${CARENCIA_VENCIMENTO_DIAS} dias`;
   return res.status(402).json({
-    error: 'O acesso da clínica está suspenso: a assinatura venceu há mais de ' + CARENCIA_VENCIMENTO_DIAS + ' dias. Seus dados estão guardados. Regularize para voltar a usar.',
+    error: `Acesso bloqueado: ${motivo}. Nenhum dado foi apagado. Regularize para voltar a usar.`,
     code: ERRO_ASSINATURA_BLOQUEADA,
     assinatura: sit,
   });
@@ -993,6 +996,8 @@ async function sendPushToAll(payload, tenantId) {
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
   // Sem tenant não envia: antes a prévia da mensagem ia para todas as clínicas.
   if (!tenantId) return;
+  // Clínica bloqueada por assinatura vencida não recebe push (a prévia mostraria a conversa)
+  if ((await situacaoDoTenant(tenantId))?.situacao === 'bloqueado') return;
   try {
     const { rows: subs } = await pool.query('SELECT * FROM push_subscriptions WHERE tenant_id = $1', [tenantId]);
     const pushPayload = JSON.stringify(payload);
@@ -9797,7 +9802,14 @@ app.get('/api/events', async (req, res) => {
   console.log(`📡 SSE client connected (tenant: ${tenantId || 'anonymous'}, total: ${sseClients.size})`);
 
   // Keepalive ping every 25s to prevent proxy/browser timeouts
-  const keepalive = setInterval(() => {
+  const keepalive = setInterval(async () => {
+    // Clínica bloqueada depois de a conexão abrir: encerra (consulta em cache de 60 s)
+    if (!authenticatedIsSuperAdmin && (await situacaoDoTenant(tenantId))?.situacao === 'bloqueado') {
+      clearInterval(keepalive);
+      sseClients.delete(res);
+      res.end();
+      return;
+    }
     res.write(`event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
   }, 25000);
 
@@ -12573,6 +12585,8 @@ async function enqueueWhatsAppJob({
   if (!isValidTenantId(tenantId)) throw new Error('enqueueWhatsAppJob: tenantId obrigatório');
   const cleanPhone = normalizeWhatsappNumber(phone || '');
   if (!cleanPhone || !message) return null;
+  // Clínica bloqueada por assinatura vencida: não enfileira marketing (campanha, reativação, follow-up)
+  if (category === 'marketing' && (await situacaoDoTenant(tenantId))?.situacao === 'bloqueado') return null;
   // Mídia (imagem, documento, vídeo, áudio de voz): arquivo já salvo em /uploads/media; o
   // `message` vira a legenda (e o texto auditado/deduplicado). Assinada pelo servidor.
   if (media) {

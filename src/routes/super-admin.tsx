@@ -93,6 +93,10 @@ function SuperAdminPage() {
   // Pagamento confirmado (sem gateway, manual): ativa e estende o vencimento em 30 dias a partir
   // do vencimento atual, ou de hoje se já passou.
   const renovar30 = async (t: Tenant) => {
+    if ((t.status === "suspended" || t.status === "canceled") &&
+        !window.confirm(`${t.nome} está ${t.status === "suspended" ? "suspensa" : "cancelada"}. Reativar e estender por 30 dias?`)) return;
+    if (t.status === "active" && !t.current_period_end &&
+        !window.confirm(`${t.nome} está ativa sem data de vencimento. Criar vencimento daqui a 30 dias?`)) return;
     const atual = t.status === "trial" ? t.trial_ends_at : t.current_period_end;
     const base = Math.max(Date.now(), atual ? new Date(atual).getTime() : 0);
     const novo = new Date(base + 30 * 86400000).toISOString();

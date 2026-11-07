@@ -154,9 +154,9 @@ function AuthGate() {
       return (
         <main id="conteudo" className="min-h-dvh bg-background">
           <div className="mx-auto max-w-5xl px-4 pt-4">
-            <button onClick={() => window.history.back()} className="text-sm underline underline-offset-2 text-muted-foreground hover:text-foreground">
+            <Link to="/dashboard" className="text-sm underline underline-offset-2 text-muted-foreground hover:text-foreground">
               Voltar
-            </button>
+            </Link>
           </div>
           <Outlet />
         </main>
