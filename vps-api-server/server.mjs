@@ -7185,6 +7185,8 @@ app.post('/api/tratamentos/:id/etapas', async (req, res) => {
     const { descricao, dente, valor, status, dentista_id, observacoes, ordem } = req.body;
     const { rows: trat } = await pool.query('SELECT 1 FROM tratamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     if (trat.length === 0) return res.status(404).json({ error: 'Tratamento não encontrado' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO tratamento_etapas (id, tratamento_id, descricao, dente, valor, status, dentista_id, observacoes, ordem, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
@@ -7201,6 +7203,8 @@ app.put('/api/tratamentos/etapas/:id', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { descricao, dente, valor, status, dentista_id, observacoes, ordem, data_realizada } = req.body;
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const sets = []; const params = [];
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
     if (dente !== undefined) { params.push(dente); sets.push(`dente=$${params.length}`); }
@@ -7340,6 +7344,8 @@ app.post('/api/prontuarios', async (req, res) => {
       const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id=$1 AND tenant_id=$2', [paciente_id, user.tenant_id]);
       if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     }
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO prontuarios (id, paciente_id, dentista_id, descricao, tipo, titulo, odontograma, anexos, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
@@ -16263,13 +16269,11 @@ app.get('/api/ai/reports', async (req, res) => {
 });
 
 // ─── Export clinical reports as CSV ─────────────────────────
-// GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=&token=<JWT>
+// GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=
+// Só com Authorization: Bearer (a tela baixa por fetch). O JWT na URL (?token=) não vale mais:
+// ficava no histórico do navegador e no log de acesso do nginx por 7 dias.
 app.get('/api/ai/reports/export.csv', async (req, res) => {
   try {
-    // Allow token via query string for direct browser download links
-    if (req.query.token && !req.headers.authorization) {
-      req.headers.authorization = `Bearer ${req.query.token}`;
-    }
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { from, to, status, patientId, attendantId, q } = req.query;
@@ -16351,6 +16355,30 @@ app.post('/api/consultations', async (req, res) => {
 
     if (!patient_id) return res.status(400).json({ error: 'patient_id é obrigatório' });
 
+    // Tudo precisa ser desta clínica. A tela manda o id do agendamento quando ele não tem
+    // paciente vinculado; se o agendamento tiver paciente, grava no paciente real (antes a
+    // consulta ficava fora do histórico dele).
+    let pacienteId = String(patient_id);
+    let agendamentoId = appointment_id ? String(appointment_id) : null;
+    if (await validarReferenciasDoTenant(user.tenant_id, { pacienteId })) {
+      const ag = PACIENTE_UUID_RE.test(pacienteId)
+        ? (await pool.query('SELECT paciente_id FROM agendamentos WHERE id = $1 AND tenant_id = $2 LIMIT 1', [pacienteId, user.tenant_id])).rows[0]
+        : null;
+      if (!ag) return res.status(404).json({ error: 'Paciente não encontrado' });
+      agendamentoId = agendamentoId || pacienteId;
+      if (ag.paciente_id) pacienteId = String(ag.paciente_id);
+    }
+    if (agendamentoId && agendamentoId !== String(patient_id)) {
+      const okAg = PACIENTE_UUID_RE.test(agendamentoId)
+        && (await pool.query('SELECT paciente_id FROM agendamentos WHERE id = $1 AND tenant_id = $2 LIMIT 1', [agendamentoId, user.tenant_id])).rows.length > 0;
+      if (!okAg) return res.status(400).json({ error: 'Agendamento não encontrado' });
+    }
+    if (clinical_report_id) {
+      const okRel = PACIENTE_UUID_RE.test(String(clinical_report_id))
+        && (await pool.query('SELECT 1 FROM clinical_reports WHERE id = $1 AND tenant_id = $2 LIMIT 1', [clinical_report_id, user.tenant_id])).rows.length > 0;
+      if (!okRel) return res.status(400).json({ error: 'Relatório clínico não encontrado' });
+    }
+
     const { rows } = await pool.query(
       `INSERT INTO consultations
         (patient_id, patient_name, appointment_id, dentist_id, dentist_name,
@@ -16360,7 +16388,7 @@ app.post('/api/consultations', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),$15)
        RETURNING id, finished_at`,
       [
-        patient_id, patient_name || null, appointment_id || null,
+        pacienteId, patient_name || null, agendamentoId,
         user.id, user.name,
         queixa_principal || null, procedimento || null, dente_regiao || null, observacoes || null,
         JSON.stringify(prescricoes || []), duration_seconds || 0, gravacoes_count || 0,
