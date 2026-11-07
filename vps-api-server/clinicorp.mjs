@@ -9,6 +9,22 @@
 
 const DEFAULT_BASE_URL = 'https://api.clinicorp.com/rest/v1';
 
+// Só falamos com a Clinicorp: base_url livre permitia o servidor buscar endereços internos (SSRF).
+// CLINICORP_ALLOWED_HOSTS (vírgula) amplia a lista, se um dia houver outro host oficial.
+const CLINICORP_HOSTS_PERMITIDOS = (process.env.CLINICORP_ALLOWED_HOSTS || 'api.clinicorp.com')
+  .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+export function clinicorpBaseUrlPermitida(base) {
+  try {
+    const u = new URL(String(base));
+    return u.protocol === 'https:' && !u.username && !u.password && !u.port
+      && CLINICORP_HOSTS_PERMITIDOS.includes(u.hostname.toLowerCase());
+  } catch { return false; }
+}
+// base_url salvo antes da trava e fora da lista: usa o padrão em vez de falhar o sync.
+export function clinicorpBaseUrlSegura(base) {
+  return base && clinicorpBaseUrlPermitida(base) ? String(base) : DEFAULT_BASE_URL;
+}
+
 function normalizeApiToken(token) {
   return String(token || '').trim().replace(/^Bearer\s+/i, '');
 }
@@ -152,7 +168,7 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
   if (!settings?.api_token || !settings?.subscriber_id) {
     throw new Error('Clinicorp: Usuário API (subscriber_id) e Token API são obrigatórios');
   }
-  const base = (settings.base_url || DEFAULT_BASE_URL).replace(/\/$/, '');
+  const base = clinicorpBaseUrlSegura(settings.base_url).replace(/\/$/, '');
   const url = new URL(base + pathName);
 
   // subscriber_id vai em todas as chamadas (a spec exige na maioria). Valores
@@ -653,15 +669,25 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   const email = src.email || fallback.email || null;
   const nascimento = src.birth_date || null;
   const sexo = src.sex || null;
-  const cpf = src.document_id || null;
+  // CPF só com dígitos (mesma regra do cadastro manual; o índice único é por clínica).
+  const cpf = onlyDigits(src.document_id);
   if (found.rows[0]) {
-    await pool.query(
+    const atualizar = (comCpf) => pool.query(
       `UPDATE pacientes SET nome=COALESCE(NULLIF($2,''),nome), telefone=COALESCE($3,telefone),
          email=COALESCE($4,email), data_nascimento=COALESCE($5,data_nascimento),
-         sexo=COALESCE($6,sexo), cpf=COALESCE(NULLIF(cpf,''),$7), updated_at=NOW()
-       WHERE id=$1 AND tenant_id=$8`,
-      [found.rows[0].id, nome, telefone, email, nascimento, sexo, cpf, tId]
+         sexo=COALESCE($6,sexo)${comCpf ? ", cpf=COALESCE(NULLIF(cpf,''),$7)" : ''}, updated_at=NOW()
+       WHERE id=$1 AND tenant_id=$${comCpf ? 8 : 7}`,
+      comCpf ? [found.rows[0].id, nome, telefone, email, nascimento, sexo, cpf, tId]
+             : [found.rows[0].id, nome, telefone, email, nascimento, sexo, tId]
     );
+    try {
+      await atualizar(true);
+    } catch (e) {
+      if (e.code !== '23505') throw e;
+      // CPF já é de outro paciente desta clínica: atualiza o resto e não toca no CPF.
+      console.warn(`[clinicorp] paciente Clinicorp ${cpId}: CPF já usado por outro cadastro da clínica, CPF não atualizado`);
+      await atualizar(false);
+    }
     return found.rows[0].id;
   }
   let matchId = null;
@@ -674,7 +700,7 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   }
   if (!matchId && cpf) {
     const r = await pool.query(
-      `SELECT id FROM pacientes WHERE cpf=$1 AND tenant_id=$2 AND (clinicorp_patient_id IS NULL OR clinicorp_patient_id='') LIMIT 1`,
+      `SELECT id FROM pacientes WHERE regexp_replace(COALESCE(cpf,''), '\\D', '', 'g')=$1 AND tenant_id=$2 AND (clinicorp_patient_id IS NULL OR clinicorp_patient_id='') LIMIT 1`,
       [cpf, tId]
     );
     matchId = r.rows[0]?.id || null;
@@ -701,8 +727,9 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
         [cpId, tId]
       );
       if (r.rows[0]) return r.rows[0].id;
-      // O id pertence a outro tenant (índice único global legado): não mexe.
-      console.warn(`[clinicorp] paciente Clinicorp ${cpId} já vinculado a outro tenant — ignorado para ${tId}`);
+      // CPF já cadastrado nesta clínica com outro vínculo Clinicorp, ou chave global antiga
+      // (antes de migration-unicos-por-clinica.sql): não cria duplicado nem diz de onde vem.
+      console.warn(`[clinicorp] paciente Clinicorp ${cpId}: conflito de chave única (${e.constraint || 'sem nome'}), ignorado para ${tId}`);
       return null;
     }
     throw e;
@@ -2679,3 +2706,6 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
 
   console.log('🦷 Clinicorp routes registered');
 }
+
+// Só para testes (tests/unicos-por-clinica.test.js).
+export const __paraTestes = { ensureLocalPatient };

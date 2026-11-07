@@ -25,6 +25,7 @@ interface Props {
 const STATUS_OPTIONS = [
   { value: "agendado", label: "Agendado" },
   { value: "confirmado", label: "Confirmado" },
+  { value: "remarcar", label: "Pediu remarcação" },
   { value: "em_atendimento", label: "Em atendimento" },
   { value: "finalizado", label: "Finalizado" },
   { value: "faltou", label: "Faltou" },
@@ -33,6 +34,10 @@ const STATUS_OPTIONS = [
 
 // Status que NÃO ocupam horário (não geram conflito)
 const FREE_STATUSES = new Set(["cancelado", "faltou"]);
+
+// Coluna "Sem profissional" da agenda usa um id fictício; ele nunca vai para a API.
+const SEM_DENTISTA = "__sem_dentista__";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function timeToMin(t: string): number {
   if (!t) return 0;
@@ -77,9 +82,10 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
   }, [open]);
 
   useEffect(() => {
-    if (!appointment) return;
-    setData(appointment.data || "");
-    setHora(appointment.hora || "");
+    if (!appointment || !open) return;
+    // A API manda a data como "2026-11-12T03:00:00.000Z": o <input type="date"> só aceita AAAA-MM-DD
+    setData(String(appointment.data || "").slice(0, 10));
+    setHora(String(appointment.hora || "").slice(0, 5));
     setDuracao(appointment.duracao || 30);
     setProcedimento(appointment.procedimento || "");
     setCategoria(appointment.categoria || "");
@@ -87,8 +93,11 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
     setStatus(appointment.status || "agendado");
     setSala(appointment.sala || "");
     setObservacoes(appointment.observacoes || "");
-    setDentistaId(appointment.dentista_id || "");
-  }, [appointment]);
+    setDentistaId(appointment.dentista_id && appointment.dentista_id !== SEM_DENTISTA ? appointment.dentista_id : "");
+    // Preenche ao abrir ou ao trocar de agendamento; uma recarga da agenda em tempo real
+    // (outro usuário mexeu) não apaga o que a recepção está digitando.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, appointment?.id]);
 
   // Agrupa catálogo por categoria para o combobox
   const catalogoPorCategoria = useMemo(() => {
@@ -112,7 +121,7 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
 
   // Carrega agendamentos do dia/profissional para checar conflitos
   useEffect(() => {
-    if (!open || !data || !dentistaId) {
+    if (!open || !data || !UUID_RE.test(dentistaId)) {
       setDayAppts([]);
       return;
     }
@@ -155,9 +164,13 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
     }
     setSaving(true);
     const dent = profs.find((p) => p.id === dentistaId);
+    // Só manda data/hora se mudaram: o servidor avisa o paciente quando elas mudam,
+    // e "12:00" x "12:00:00" contaria como mudança.
+    const dataMudou = data !== String(appointment.data || "").slice(0, 10);
+    const horaMudou = hora !== String(appointment.hora || "").slice(0, 5);
     const { error } = await agendaApi.update(appointment.id, {
-      data,
-      hora,
+      ...(dataMudou && data ? { data } : {}),
+      ...(horaMudou && hora ? { hora } : {}),
       duracao,
       procedimento,
       categoria,
@@ -165,8 +178,8 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
       status,
       sala,
       observacoes,
-      dentista_id: dentistaId,
-      dentista_nome: dent?.nome,
+      // Sem profissional (evento da clínica, consulta sem dentista): não manda o campo
+      ...(UUID_RE.test(dentistaId) ? { dentista_id: dentistaId, dentista_nome: dent?.nome } : {}),
     });
     setSaving(false);
     if (error) {
@@ -188,8 +201,9 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
         <div className="space-y-3">
           <div className="text-sm font-medium text-foreground">{appointment.paciente_nome}</div>
 
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {/* Em 375 px a data ficava cortada ("07/11/202") com três colunas */}
+            <div className="space-y-1.5 col-span-2 sm:col-span-1">
               <Label className="text-xs">Data</Label>
               <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
             </div>

@@ -18,7 +18,7 @@ function IntegracoesPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Integrações" />
-      <main className="flex-1 p-6 space-y-6 overflow-auto">
+      <div className="flex-1 p-6 space-y-6 overflow-auto">
         <Tabs defaultValue="trafego" className="space-y-6">
           <TabsList>
             <TabsTrigger value="trafego">Tráfego Pago</TabsTrigger>
@@ -42,7 +42,7 @@ function IntegracoesPage() {
             <ClinicorpPanel />
           </TabsContent>
         </Tabs>
-      </main>
+      </div>
     </div>
   );
 }

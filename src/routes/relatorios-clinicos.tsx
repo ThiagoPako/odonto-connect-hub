@@ -151,19 +151,19 @@ function RelatoriosClinicosPage() {
     });
   };
 
-  const exportarCsv = () => {
+  const exportarCsv = async () => {
     if (reports.length === 0) {
       toast.error("Nenhum relatório para exportar");
       return;
     }
-    const url = aiApi.exportReportsCsvUrl(buildFilters());
-    window.open(url, '_blank');
+    const { error } = await aiApi.downloadReportsCsv(buildFilters());
+    if (error) toast.error("Não foi possível exportar o CSV: " + error);
   };
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Relatórios Clínicos IA" />
-      <main className="flex-1 p-4 sm:p-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 overflow-auto">
         <div className="max-w-[1400px] mx-auto">
           {/* Hero */}
           <div className="relative overflow-hidden rounded-2xl gradient-primary p-6 shadow-glow-primary mb-6">
@@ -319,7 +319,7 @@ function RelatoriosClinicosPage() {
                           sel ? "bg-primary/10 text-primary font-semibold" : "text-foreground hover:bg-muted"
                         )}
                       >
-                        <span className="truncate">{p.nome}</span>
+                        <span className="break-words min-w-0">{p.nome}</span>
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground shrink-0">{p.count}</span>
                       </button>
                     );
@@ -510,7 +510,7 @@ function RelatoriosClinicosPage() {
             </div>
           </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

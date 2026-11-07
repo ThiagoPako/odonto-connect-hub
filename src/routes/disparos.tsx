@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Send, Play, Pause, Plus, Eye, Clock,
-  CalendarDays, Users, CheckCircle2, AlertCircle, Trash2,
+  CalendarDays, Users, AlertCircle, Trash2,
   MessageSquare, RefreshCcw, Copy, Pencil, BarChart3, Loader2,
-  Rocket, X,
+  Rocket, X, AlertTriangle,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { publicoOptions, type DisparoProgramado } from "@/data/disparosMockData";
@@ -86,6 +86,23 @@ function DisparosPage() {
     const { data, error } = await campaignsApi.execute(disparo.id);
     setExecutingId(null);
     if (error) { toast.error("Erro ao executar: " + error); return; }
+    if (data?.agendada) {
+      const [y, m, d] = String(data.inicio || "").split("-");
+      toast.success(`Campanha ativada. Os envios começam em ${d && m ? `${d}/${m}/${y}` : "a data de início"}.`);
+      loadCampaigns();
+      return;
+    }
+    if (data && data.porDia) {
+      // Disparo único: previsão pelo limite diário do número.
+      const br = (ymd?: string) => { const [y, m, d] = String(ymd || "").split("-"); return d && m ? `${d}/${m}` : ""; };
+      const partes = [`${data.enqueued} na fila`];
+      if (data.inicio) partes.push(`os envios começam em ${br(data.inicio)}`);
+      partes.push(`o número envia até ${data.cotaDiaUtil ?? data.porDia} por dia útil para campanhas (menos no sábado, nada no domingo), previsão de término em ${br(data.previsaoTermino)}`);
+      if (data.naoCabem) partes.push(`${data.naoCabem} não couberam em 7 dias e ficaram de fora`);
+      toast.success(partes.join("; ") + ".");
+      loadCampaigns();
+      return;
+    }
     if (data) {
       toast.success(`${data.enqueued} mensagens na fila (${data.skipped} ignoradas: já receberam ou pediram para sair). O envio é gradual, em horário comercial.`);
       loadCampaigns();
@@ -97,35 +114,36 @@ function DisparosPage() {
     setWizardOpen(true);
   };
 
-  const totalEnviadas = disparos.reduce((a, d) => a + d.stats.enviadas, 0);
-  const totalEntregues = disparos.reduce((a, d) => a + d.stats.entregues, 0);
-  const totalRespondidas = disparos.reduce((a, d) => a + d.stats.respondidas, 0);
-  const taxaEntrega = totalEnviadas > 0 ? ((totalEntregues / totalEnviadas) * 100).toFixed(1) : "0";
+  // Só o que o servidor mede de verdade (enviadas e falhas, contadas no envio).
+  // Entrega, leitura e resposta não são medidas: antes apareciam sempre como 0%.
+  const totalEnviadas = disparos.reduce((a, d) => a + (d.stats?.enviadas || 0), 0);
+  const totalErros = disparos.reduce((a, d) => a + (d.stats?.erros || 0), 0);
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Disparos Programados" />
-      <main className="flex-1 p-6 space-y-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto">
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <MiniKpi icon={Send} label="Total Enviadas" value={totalEnviadas.toString()} />
-          <MiniKpi icon={CheckCircle2} label="Taxa de Entrega" value={`${taxaEntrega}%`} />
-          <MiniKpi icon={MessageSquare} label="Respondidas" value={totalRespondidas.toString()} />
+          <MiniKpi icon={AlertTriangle} label="Falhas no envio" value={totalErros.toString()} />
+          <MiniKpi icon={MessageSquare} label="Disparos criados" value={disparos.length.toString()} />
           <MiniKpi icon={RefreshCcw} label="Disparos Ativos" value={disparos.filter((d) => d.ativo).length.toString()} />
         </div>
 
         {/* Header + controls */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">Disparos Programados</h2>
+        <div className="flex flex-wrap items-start sm:items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-semibold text-foreground">Disparos programados</h2>
             <p className="text-sm text-muted-foreground">Configure mensagens automáticas em massa via WhatsApp</p>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="inline-flex h-8 items-center rounded-lg bg-muted p-0.5 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <div role="group" aria-label="Filtrar disparos por situação" className="inline-flex h-auto min-h-8 flex-wrap items-center rounded-lg bg-muted p-0.5 text-sm">
               {(["all", "ativos", "inativos"] as const).map((f) => (
                 <button
                   key={f}
                   onClick={() => setFilterStatus(f)}
+                  aria-pressed={filterStatus === f}
                   className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
                     filterStatus === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                   }`}
@@ -136,7 +154,7 @@ function DisparosPage() {
             </div>
             <button
               onClick={openNewWizard}
-              className="flex items-center gap-2 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+              className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
             >
               <Plus className="h-3.5 w-3.5" /> Novo disparo
             </button>
@@ -184,7 +202,7 @@ function DisparosPage() {
             ))}
           </div>
         )}
-      </main>
+      </div>
 
       <NovoDisparoWizard
         open={wizardOpen}
@@ -237,7 +255,8 @@ function DisparoCard({
   onViewJobs: () => void;
 }) {
   const publicoLabel = publicoOptions.find((p) => p.id === disparo.publico)?.label || disparo.publico;
-  const taxaLeitura = disparo.stats.enviadas > 0 ? ((disparo.stats.lidas / disparo.stats.enviadas) * 100).toFixed(0) : "0";
+  const enviadas = disparo.stats?.enviadas || 0;
+  const erros = disparo.stats?.erros || 0;
 
   return (
     <div className="bg-card rounded-xl border border-border p-5 transition-all hover:shadow-sm">
@@ -251,11 +270,15 @@ function DisparoCard({
             }`}>
               {disparo.tipo === "recorrente" ? "Recorrente" : "Único"}
             </span>
+            {disparo.tipo === "recorrente" && !disparo.ativo && !disparo.campanhaPerpetua && !!dataFimIso(disparo.dataFim)
+              && dataFimIso(disparo.dataFim)! < new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }) && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground">Encerrada</span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground mb-3">
             <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {publicoLabel}</span>
-            <span className="flex items-center gap-1"><Eye className="h-3 w-3" /> {disparo.contatosAlcancaveis} contatos</span>
+            <span className="flex items-center gap-1"><Eye className="h-3 w-3" /> {disparo.contatosAlcancaveis > 0 ? `${disparo.contatosAlcancaveis} contatos no último envio` : "Contatos calculados no envio"}</span>
             {disparo.tipo === "recorrente" && disparo.diasSemana && (
               <span className="flex items-center gap-1"><CalendarDays className="h-3 w-3" /> {disparo.diasSemana.join(", ")}</span>
             )}
@@ -265,15 +288,9 @@ function DisparoCard({
           </div>
 
           <div className="flex items-center gap-4 text-[11px]">
-            <StatPill label="Enviadas" value={disparo.stats.enviadas} />
-            <StatPill label="Entregues" value={disparo.stats.entregues} />
-            <StatPill label="Lidas" value={disparo.stats.lidas} />
-            <StatPill label="Respondidas" value={disparo.stats.respondidas} />
-            {disparo.stats.erros > 0 && (
-              <span className="text-destructive font-medium">{disparo.stats.erros} erros</span>
-            )}
-            {disparo.stats.enviadas > 0 && (
-              <span className="text-muted-foreground ml-auto">Taxa de leitura: <span className="font-bold text-foreground">{taxaLeitura}%</span></span>
+            <StatPill label="Enviadas" value={enviadas} />
+            {erros > 0 && (
+              <span className="text-destructive font-medium">{erros} {erros === 1 ? "falha" : "falhas"}</span>
             )}
           </div>
         </div>
@@ -445,4 +462,13 @@ function CampaignJobsPanel({ campaignId, campaignName, onClose }: { campaignId: 
       </div>
     </div>
   );
+}
+
+// dataFim chega como YYYY-MM-DD (input date) ou dd/mm/aaaa (dados antigos).
+function dataFimIso(v?: string): string | null {
+  const t = String(v || "").trim();
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }

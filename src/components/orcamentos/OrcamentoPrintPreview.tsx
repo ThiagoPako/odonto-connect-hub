@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
 import { OdontogramaInterativo, type FaceSelection } from "./OdontogramaInterativo";
 import type { OrcamentoItemEstruturado, PrintConfig } from "./types";
+import { textoParcelas } from "@/lib/formatos";
 
 interface Props {
   open: boolean;
@@ -154,7 +155,7 @@ export function OrcamentoPrintPreview({
               {formaPagamento && (
                 <p className="text-[11px] text-gray-600 pt-1">
                   Pagamento: <span className="font-semibold">{formaPagamento}</span>
-                  {parcelas > 1 && ` em ${parcelas}x de ${fmt(total / parcelas)}`}
+                  {parcelas > 1 && ` em ${textoParcelas(total, parcelas)}`}
                 </p>
               )}
             </div>
