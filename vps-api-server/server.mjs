@@ -5640,6 +5640,7 @@ app.get('/api/pacientes/:id/anamnese', so(PERMISSOES.EQUIPE), async (req, res) =
     const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     const { rows } = await pool.query('SELECT * FROM anamneses WHERE paciente_id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    registrarAcessoProntuario(pool, user, req.params.id, 'anamnese');
     res.json(rows[0] || null);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -5708,6 +5709,7 @@ app.get('/api/pacientes/:id/odontograma', so(PERMISSOES.EQUIPE), async (req, res
     const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     const { rows } = await pool.query('SELECT * FROM odontogramas WHERE paciente_id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    registrarAcessoProntuario(pool, user, req.params.id, 'odontograma');
     res.json(rows[0] || null);
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -7705,6 +7707,7 @@ app.get('/api/prontuarios', so(PERMISSOES.CLINICO), async (req, res) => {
     if (paciente_id) { params.push(paciente_id); query += ` AND pr.paciente_id=$${params.length}`; }
     query += ' ORDER BY pr.created_at DESC';
     const { rows } = await pool.query(query, params);
+    registrarAcessoProntuario(pool, user, rows.map(r => r.paciente_id), 'prontuario');
     res.json(rows);
   } catch (error) {
     console.error('[prontuario] GET:', error.message);
@@ -8894,6 +8897,8 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       };
     });
 
+    // Prontuários e alergias do painel do dentista: entram no registro de acesso.
+    registrarAcessoProntuario(pool, user, prontuariosRows.rows.map(r => r.paciente_id), 'prontuario');
     const prontuarios = prontuariosRows.rows.map(r => {
       const nome = r.p_nome || r.paciente_nome || 'Paciente';
       const parts = String(nome).trim().split(/\s+/);
@@ -17285,6 +17290,7 @@ app.get('/api/ai/reports/:patientId', so(PERMISSOES.CLINICO), async (req, res, n
       'SELECT id, patient_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, created_at FROM clinical_reports WHERE patient_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT 50',
       [patientId, user.tenant_id]
     );
+    if (rows.length) registrarAcessoProntuario(pool, user, patientId, 'relatorio_clinico');
     res.json(rows);
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -17349,6 +17355,7 @@ app.get('/api/ai/reports', so(PERMISSOES.CLINICO), async (req, res) => {
     const comPrescricao = rows.filter(r => prescricoesComoLista(r.prescricoes).length > 0).length;
     const totalDuration = rows.reduce((s, r) => s + (r.duration_seconds || 0), 0);
     const pacientesUnicos = new Set(rows.map(r => r.patient_id)).size;
+    registrarAcessoProntuario(pool, user, rows.map(r => r.patient_id), 'relatorio_clinico');
 
     res.json({
       reports: rows,
@@ -17397,13 +17404,14 @@ app.get('/api/ai/reports/export.csv', so(PERMISSOES.CLINICO), async (req, res) =
     }
 
     const sql = `
-      SELECT created_at, patient_name, attendant_name, queixa_principal, procedimento,
+      SELECT created_at, patient_id, patient_name, attendant_name, queixa_principal, procedimento,
              dente_regiao, duration_seconds, prescricoes
       FROM clinical_reports
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY created_at DESC LIMIT 5000
     `;
     const { rows } = await pool.query(sql, params);
+    registrarAcessoProntuario(pool, user, rows.map(r => r.patient_id), 'relatorio_clinico', 'exportar');
 
     const esc = (v) => {
       if (v === null || v === undefined) return '';
@@ -18033,9 +18041,12 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 // CLINICORP INTEGRATION
 import { registerClinicorp, reconciliationTick, hashWebhookSecret, generateWebhookSecret, WEBHOOK_SECRET_GRACE_HOURS, clinicorpBaseUrlPermitida, clinicorpBaseUrlSegura } from './clinicorp.mjs';
 import { registerLegal, registrarAceitesNoSignup, validarVersoesNoCadastro, ipDe } from './legal.mjs';
+import { registerLgpd, registrarAcessoProntuario } from './lgpd.mjs';
 registerClinicorp(app, pool, { verifyUser });
 // Aceite de Termos/Política com prova (aceites_documentos) e pendências de versão nova.
 registerLegal(app, { pool, verifyUser, verifyAdmin, verifySuperAdmin });
+// Direitos do titular (LGPD art. 18): exportar, excluir, anonimizar; log de acesso ao prontuário.
+registerLgpd(app, { pool, verifyAdmin, optOutKey: waPhoneKey });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
 // Each authenticated user has their own row in clinicorp_user_settings.
@@ -18588,6 +18599,7 @@ app.get('/api/exames', so(PERMISSOES.EQUIPE), async (req, res) => {
         LIMIT 500`,
       params
     );
+    registrarAcessoProntuario(pool, user, rows.map(r => r.paciente_id), 'exame');
     res.json(rows);
   } catch (err) {
     responderErroExame(res, err, 'exames:list');
