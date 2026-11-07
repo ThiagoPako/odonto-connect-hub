@@ -303,8 +303,25 @@ function renderLateralStatusOverlay(status: StatusDente, color: string, upper: b
   }
 }
 
+/** "1M Sup Dir" → "primeiro molar superior direito" (para leitor de tela e para o cartão do dente). */
+const TIPOS: Record<string, string> = {
+  "3M": "terceiro molar", "2M": "segundo molar", "1M": "primeiro molar",
+  "2PM": "segundo pré-molar", "1PM": "primeiro pré-molar", C: "canino",
+  IL: "incisivo lateral", IC: "incisivo central",
+};
+export function nomeDenteCompleto(numero: number): string {
+  const abrev = nomesDentes[numero];
+  if (!abrev) return `dente ${numero}`;
+  const [tipo, arc, lado] = abrev.split(" ");
+  return `${TIPOS[tipo] ?? tipo} ${arc === "Sup" ? "superior" : "inferior"} ${lado === "Dir" ? "direito" : "esquerdo"}`;
+}
+
+// Cada arcada em duas metades (quadrantes). No celular as metades ficam uma sobre a
+// outra: 16 dentes lado a lado não cabem em 375 px com área de toque utilizável.
+const quadrantesSuperiores = [arcadaSuperior.slice(0, 8), arcadaSuperior.slice(8)];
+const quadrantesInferiores = [arcadaInferior.slice(0, 8), arcadaInferior.slice(8)];
+
 export function OdontogramaChart({ dentes, onDenteClick, editable = false }: OdontogramaChartProps) {
-  const [hoveredDente, setHoveredDente] = useState<number | null>(null);
   const [selectedDente, setSelectedDente] = useState<number | null>(null);
 
   const denteMap = new Map(dentes.map((d) => [d.numero, d]));
@@ -312,6 +329,8 @@ export function OdontogramaChart({ dentes, onDenteClick, editable = false }: Odo
   const handleClick = (numero: number) => {
     if (editable && onDenteClick) {
       onDenteClick(numero);
+      setSelectedDente(numero);
+      return;
     }
     setSelectedDente(selectedDente === numero ? null : numero);
   };
@@ -323,124 +342,95 @@ export function OdontogramaChart({ dentes, onDenteClick, editable = false }: Odo
     return { status, config, fillColor: status === "saudavel" ? "hsl(45, 30%, 92%)" : `${config.color}20` };
   };
 
-  const renderToothColumn = (numero: number) => {
+  const renderTooth = (numero: number) => {
     const { status, config, fillColor } = getToothProps(numero);
-    const isHovered = hoveredDente === numero;
     const isSelected = selectedDente === numero;
     const upper = isUpper(numero);
-
-    return (
-      <div
-        key={numero}
-        className={`flex flex-col items-center cursor-pointer transition-all duration-150 ${
-          isSelected ? "scale-110 z-10" : isHovered ? "scale-105" : ""
-        }`}
-        style={{ width: "clamp(22px, 4vw, 34px)" }}
-        onMouseEnter={() => setHoveredDente(numero)}
-        onMouseLeave={() => setHoveredDente(null)}
-        onClick={() => handleClick(numero)}
-      >
-        {upper ? (
-          <>
-            {/* Lateral view (roots up) */}
-            <div className="w-full" style={{ height: "clamp(28px, 5vw, 42px)" }}>
-              <LateralToothSVG numero={numero} status={status} color={config.color} fillColor={fillColor} />
-            </div>
-            {/* Occlusal view */}
-            <div className="w-full" style={{ height: "clamp(16px, 3vw, 24px)" }}>
-              <OcclusalToothSVG numero={numero} status={status} color={config.color} fillColor={fillColor} />
-            </div>
-          </>
-        ) : (
-          <>
-            {/* Occlusal view */}
-            <div className="w-full" style={{ height: "clamp(16px, 3vw, 24px)" }}>
-              <OcclusalToothSVG numero={numero} status={status} color={config.color} fillColor={fillColor} />
-            </div>
-            {/* Lateral view (roots down) */}
-            <div className="w-full" style={{ height: "clamp(28px, 5vw, 42px)" }}>
-              <LateralToothSVG numero={numero} status={status} color={config.color} fillColor={fillColor} />
-            </div>
-          </>
-        )}
-        {isHovered && (
-          <span className="text-[7px] text-muted-foreground font-medium whitespace-nowrap absolute -bottom-3">
-            {config.label}
-          </span>
-        )}
+    const lateral = (
+      <div className="w-full h-9 sm:h-[42px]" aria-hidden="true">
+        <LateralToothSVG numero={numero} status={status} color={config.color} fillColor={fillColor} />
       </div>
+    );
+    const occlusal = (
+      <div className="w-full h-5 sm:h-6" aria-hidden="true">
+        <OcclusalToothSVG numero={numero} status={status} color={config.color} fillColor={fillColor} />
+      </div>
+    );
+    const numeroEl = (
+      <span aria-hidden="true" className={`block w-full text-center text-[10px] font-bold leading-4 border border-border/50 bg-muted/30 ${isSelected ? "text-primary" : "text-muted-foreground"}`}>
+        {numero}
+      </span>
+    );
+    return (
+      <button
+        type="button"
+        key={numero}
+        onClick={() => handleClick(numero)}
+        aria-label={`Dente ${numero}, ${nomeDenteCompleto(numero)}: ${config.label}${editable ? ". Toque para aplicar o status escolhido" : ""}`}
+        aria-pressed={isSelected}
+        title={`${numero} — ${config.label}`}
+        className={`flex w-[34px] sm:w-[clamp(26px,3.2vw,34px)] flex-col items-center rounded-sm transition-transform duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${isSelected ? "scale-110 z-10" : "hover:scale-105"}`}
+      >
+        {upper ? <>{lateral}{occlusal}{numeroEl}</> : <>{numeroEl}{occlusal}{lateral}</>}
+      </button>
     );
   };
 
   const selectedInfo = selectedDente ? denteMap.get(selectedDente) : null;
   const selectedConfig = selectedInfo ? statusDenteConfig[selectedInfo.status] : null;
 
-  return (
-    <div className="space-y-3">
-      {/* Legend */}
-      <div className="flex flex-wrap justify-center gap-3">
-        {Object.entries(statusDenteConfig).map(([key, cfg]) => (
-          <div key={key} className="flex items-center gap-1.5">
-            <div className="w-3 h-3 rounded-full border" style={{ backgroundColor: `${cfg.color}33`, borderColor: cfg.color }} />
-            <span className="text-[10px] text-muted-foreground font-medium">{cfg.label}</span>
+  const arcada = (quadrantes: number[][], titulo: string, tituloEmCima: boolean) => (
+    <div role="group" aria-label={titulo}>
+      {tituloEmCima && <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1 text-center">{titulo}</p>}
+      <div className={`flex flex-col sm:flex-row justify-center gap-2 sm:gap-px ${tituloEmCima ? "items-center sm:items-end" : "items-center sm:items-start"}`}>
+        {quadrantes.map((q, i) => (
+          <div key={i} className={`flex gap-px ${i === 0 ? "sm:border-r sm:border-dashed sm:border-border sm:pr-px" : ""}`}>
+            {q.map(renderTooth)}
           </div>
         ))}
       </div>
+      {!tituloEmCima && <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mt-1 text-center">{titulo}</p>}
+    </div>
+  );
 
-      {/* Upper Arch */}
-      <div>
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1 text-center">
-          Arcada Superior
-        </p>
-        <div className="flex justify-center items-end gap-px">
-          {arcadaSuperior.map(renderToothColumn)}
-        </div>
-        {/* Numbers */}
-        <div className="flex justify-center gap-px mt-0.5">
-          {arcadaSuperior.map((n) => (
-            <div key={n} className="text-center border border-border/50 bg-muted/30" style={{ width: "clamp(22px, 4vw, 34px)" }}>
-              <span className={`text-[8px] font-bold ${selectedDente === n ? "text-primary" : "text-muted-foreground"}`}>{n}</span>
+  return (
+    <div className="space-y-3">
+      {/* Legenda: cor + nome (não depende só da cor) */}
+      <ul className="flex flex-wrap justify-center gap-x-3 gap-y-1" aria-label="Legenda do odontograma">
+        {Object.entries(statusDenteConfig).map(([key, cfg]) => (
+          <li key={key} className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded-full border" style={{ backgroundColor: `${cfg.color}33`, borderColor: cfg.color }} aria-hidden="true" />
+            <span className="text-[11px] text-muted-foreground font-medium">{cfg.label}</span>
+          </li>
+        ))}
+      </ul>
+
+      <p className="text-center text-[10px] text-muted-foreground">Visão do profissional: o lado direito do paciente fica à esquerda.</p>
+
+      {arcada(quadrantesSuperiores, "Arcada superior", true)}
+      {arcada(quadrantesInferiores, "Arcada inferior", false)}
+
+      {/* Dente selecionado */}
+      <div aria-live="polite">
+        {selectedDente && selectedInfo && selectedConfig && (
+          <div className="bg-card rounded-xl border border-border/60 p-4 flex items-center gap-4 animate-fade-in shadow-sm">
+            <div className="w-12 h-16 flex items-center justify-center" style={{ backgroundColor: `${selectedConfig.color}10` }}>
+              <LateralToothSVG numero={selectedDente} status={selectedInfo.status} color={selectedConfig.color} fillColor={`${selectedConfig.color}25`} />
             </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Lower numbers + arch */}
-      <div>
-        <div className="flex justify-center gap-px mb-0.5">
-          {arcadaInferior.map((n) => (
-            <div key={n} className="text-center border border-border/50 bg-muted/30" style={{ width: "clamp(22px, 4vw, 34px)" }}>
-              <span className={`text-[8px] font-bold ${selectedDente === n ? "text-primary" : "text-muted-foreground"}`}>{n}</span>
+            <div>
+              <p className="text-sm font-semibold text-foreground">
+                Dente {selectedDente} — {nomeDenteCompleto(selectedDente)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Status: <span style={{ color: selectedConfig.color }} className="font-bold">{selectedConfig.label}</span>
+              </p>
+              {selectedInfo.observacao && (
+                <p className="text-xs text-muted-foreground mt-1">{selectedInfo.observacao}</p>
+              )}
             </div>
-          ))}
-        </div>
-        <div className="flex justify-center items-start gap-px">
-          {arcadaInferior.map(renderToothColumn)}
-        </div>
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mt-1 text-center">
-          Arcada Inferior
-        </p>
+          </div>
+        )}
       </div>
-
-      {/* Selected tooth info */}
-      {selectedDente && selectedInfo && selectedConfig && (
-        <div className="bg-card rounded-xl border border-border/60 p-4 flex items-center gap-4 animate-fade-in shadow-sm">
-          <div className="w-12 h-16 flex items-center justify-center" style={{ backgroundColor: `${selectedConfig.color}10` }}>
-            <LateralToothSVG numero={selectedDente} status={selectedInfo.status} color={selectedConfig.color} fillColor={`${selectedConfig.color}25`} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-foreground">
-              Dente {selectedDente} — {nomesDentes[selectedDente]}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Status: <span style={{ color: selectedConfig.color }} className="font-bold">{selectedConfig.label}</span>
-            </p>
-            {selectedInfo.observacao && (
-              <p className="text-xs text-muted-foreground mt-1">{selectedInfo.observacao}</p>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -463,16 +453,18 @@ export function OdontogramaEditor({ dentes, onChange }: OdontogramaEditorProps) 
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-xs font-medium text-muted-foreground mb-2">
-          Selecione o status e clique no dente:
+        <p id="odonto-status-rotulo" className="text-xs font-medium text-muted-foreground mb-2">
+          1. Escolha o status · 2. Toque nos dentes. Para desfazer, escolha &ldquo;Saudável&rdquo; e toque de novo.
         </p>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2" role="group" aria-labelledby="odonto-status-rotulo">
           {Object.entries(statusDenteConfig).map(([key, cfg]) => (
             <button
+              type="button"
               key={key}
               onClick={() => setSelectedStatus(key as StatusDente)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all border ${
-                selectedStatus === key ? "ring-2 ring-offset-1 shadow-sm" : "opacity-60 hover:opacity-100"
+              aria-pressed={selectedStatus === key}
+              className={`flex min-h-9 items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                selectedStatus === key ? "ring-2 ring-offset-1 shadow-sm" : "opacity-70 hover:opacity-100"
               }`}
               style={{
                 borderColor: cfg.color,
@@ -480,7 +472,7 @@ export function OdontogramaEditor({ dentes, onChange }: OdontogramaEditorProps) 
                 color: cfg.color,
               }}
             >
-              <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cfg.color }} />
+              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cfg.color }} aria-hidden="true" />
               {cfg.label}
             </button>
           ))}
