@@ -44,8 +44,7 @@ const ROLES = [
   { value: "admin", label: "Administrador" },
   { value: "dentista", label: "Dentista" },
   { value: "recepcionista", label: "Recepcionista" },
-  { value: "comercial", label: "Comercial" },
-  { value: "user", label: "Usuário" },
+  { value: "user", label: "Usuário (sem acesso a pacientes)" },
 ];
 
 const roleLabel = (r: string) => ROLES.find((x) => x.value === r)?.label ?? r;
@@ -65,14 +64,14 @@ function UsuariosPage() {
   const [cName, setCName] = useState("");
   const [cEmail, setCEmail] = useState("");
   const [cPassword, setCPassword] = useState("");
-  const [cRole, setCRole] = useState("user");
+  const [cRole, setCRole] = useState("recepcionista");
   const [creating, setCreating] = useState(false);
 
   // edit dialog
   const [editing, setEditing] = useState<TenantUser | null>(null);
   const [eName, setEName] = useState("");
   const [eEmail, setEEmail] = useState("");
-  const [eRole, setERole] = useState("user");
+  const [eRole, setERole] = useState("recepcionista");
   const [saving, setSaving] = useState(false);
 
   // password dialog
@@ -111,7 +110,7 @@ function UsuariosPage() {
     if (error) { toast.error(error); return; }
     toast.success("Usuário criado");
     setCreateOpen(false);
-    setCName(""); setCEmail(""); setCPassword(""); setCRole("user");
+    setCName(""); setCEmail(""); setCPassword(""); setCRole("recepcionista");
     fetchUsers();
   };
 

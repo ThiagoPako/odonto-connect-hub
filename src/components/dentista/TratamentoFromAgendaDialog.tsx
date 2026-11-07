@@ -143,7 +143,8 @@ export function TratamentoFromAgendaDialog({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Status</Label>
-              <Select value={status} onValueChange={setStatus}>
+              {/* O Select do Radix pode disparar onValueChange("") (ex.: ao fechar o diálogo); não deixa o status vazio. */}
+              <Select value={status} onValueChange={(v) => { if (v) setStatus(v); }}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {STATUS_OPTIONS.map((s) => (

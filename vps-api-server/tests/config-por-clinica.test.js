@@ -6,6 +6,7 @@
 // mockado: nenhuma query chega ao Postgres.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { limparCachePapel, _definirPapelParaTestes } from '../papeis.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -49,6 +50,9 @@ describe('Configurações por clínica (L4)', () => {
     sqlLog = [];
     settings = new Map();
     missingTable = false;
+    // Papel lido do banco (papeis.mjs): fixa no cache para o pool mockado.
+    limparCachePapel();
+    _definirPapelParaTestes('44444444-4444-4444-4444-444444444444', 'admin');
     querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
       const text = String(sql);
       sqlLog.push({ text, params });
@@ -278,6 +282,7 @@ describe('Configurações por clínica (L4)', () => {
 
   describe('horário dos gatilhos (/api/automations/solution-hours)', () => {
     test('só admin altera', async () => {
+      _definirPapelParaTestes('44444444-4444-4444-4444-444444444444', 'recepcionista');
       const res = await request(app).put('/api/automations/solution-hours')
         .set(auth({ role: 'recepcao' })).send({ inicio: '07:00', fim: '19:00' });
       expect(res.status).toBe(403);

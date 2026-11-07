@@ -19,6 +19,8 @@ const {
   app, pool, clearTenantSettingsCacheForTests, processAppointmentReminders, parseAppointmentReminderReply,
   processAutomationJobs, resetWhatsAppQueueStateForTests,
 } = await import('../server.mjs');
+// Papel lido do banco (papeis.mjs, #86): fixa no cache para o pool mockado.
+const { limparCachePapel, _definirPapelParaTestes } = await import('../papeis.mjs');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const tenantA = '11111111-1111-1111-1111-111111111111';
@@ -48,6 +50,8 @@ describe('Confirmação de consulta pelo WhatsApp', () => {
   });
 
   beforeEach(() => {
+    limparCachePapel();
+    _definirPapelParaTestes('44444444-4444-4444-4444-444444444444', 'admin');
     clearTenantSettingsCacheForTests();
     resetWhatsAppQueueStateForTests();
     sqlLog = []; fetchLog = []; optedOut = false; existingLead = null; queues = []; reminderSetting = undefined; settingsFail = false;

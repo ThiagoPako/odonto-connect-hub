@@ -6,6 +6,7 @@
 // pool.query é mockado: nenhuma query chega ao Postgres.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -42,7 +43,7 @@ const agendas = {
 
 let sqlLog;
 let querySpy;
-const token = (extra = {}) => jwt.sign({
+const token = (extra = {}) => assinarComPapel({
   sub: '44444444-4444-4444-4444-444444444444', email: 'dentista@clinica-a.com',
   role: 'admin', tenant_id: tenantA, is_super_admin: false, ...extra,
 }, JWT_SECRET);

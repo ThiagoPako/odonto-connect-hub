@@ -9,6 +9,7 @@
 // - pool.query é mockado: nenhuma query chega ao Postgres.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { limparCachePapel, _definirPapelParaTestes } from '../papeis.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -60,6 +61,9 @@ describe('Isolamento entre clínicas — rotas administrativas legadas', () => {
 
   beforeEach(() => {
     sqlLog = [];
+    // Papel lido do banco (papeis.mjs): fixa no cache para o pool mockado.
+    limparCachePapel();
+    _definirPapelParaTestes(adminA, 'admin');
     querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
       const text = String(sql);
       sqlLog.push({ text, params });
@@ -183,23 +187,29 @@ describe('Isolamento entre clínicas — rotas administrativas legadas', () => {
   });
 
   describe('super-admin', () => {
-    test('GET /api/auth/users mantém visão global', async () => {
+    // Decisão do dono (padrão restritivo, LGPD art. 37): verifyAdmin não dá mais passe livre ao
+    // super-admin fora da própria clínica. O painel do super-admin usa /api/super-admin/* (verifySuperAdmin).
+    test('GET /api/auth/users fora da própria clínica → 403', async () => {
       const res = await chamar('get', '/api/auth/users', tokenSuper());
-      expect(res.status).toBe(200);
-      const q = sqlLog.find(x => /FROM profiles p/.test(x.text) && /LEFT JOIN user_roles/.test(x.text));
-      expect(q.text).not.toMatch(/WHERE p\.tenant_id/);
+      expect(res.status).toBe(403);
     });
 
-    test('pode resetar a senha de usuário de qualquer clínica', async () => {
+    test('não reseta senha de usuário de outra clínica pelas rotas de admin', async () => {
       const res = await chamar('post', '/api/auth/admin-reset-password', tokenSuper(), { userId: usuarioB, newPassword: 'nova-senha-123' });
-      expect(res.status).toBe(200);
-      expect(gravouSenha()).toBe(true);
+      expect(res.status).toBe(403);
+      expect(gravouSenha()).toBe(false);
     });
 
-    test('POST /api/auth/create-user sem clínica escolhida retorna 400', async () => {
+    test('POST /api/auth/create-user como super-admin sem clínica → 403, sem gravar', async () => {
       const res = await chamar('post', '/api/auth/create-user', tokenSuper(), { name: 'X', email: 'x@a.com', password: 'senha-123' });
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(403);
       expect(sqlLog.some(x => /INSERT INTO profiles/.test(x.text))).toBe(false);
+    });
+
+    test('super-admin com perfil admin na própria clínica continua admin nela', async () => {
+      _definirPapelParaTestes(superAdmin, 'admin', tenantA);
+      const res = await chamar('get', '/api/auth/users', token({ sub: superAdmin, is_super_admin: true }));
+      expect(res.status).toBe(200);
     });
 
     test('GET /api/debug/config retorna 200', async () => {

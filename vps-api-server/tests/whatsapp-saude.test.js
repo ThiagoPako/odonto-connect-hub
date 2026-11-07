@@ -15,6 +15,8 @@ process.env.EVOLUTION_API_KEY = 'chave-de-teste';
 process.env.EVOLUTION_API_URL = 'http://evolution.teste.invalid';
 
 const { app, pool, checkWhatsAppHealth, processAutomationJobsForHealthTests: processAutomationJobs } = await import('../server.mjs');
+// Papel lido do banco (papeis.mjs, #86): fixa no cache para o pool mockado.
+const { limparCachePapel, _definirPapelParaTestes } = await import('../papeis.mjs');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const tenantA = '11111111-1111-1111-1111-111111111111';
@@ -35,6 +37,8 @@ describe('Saúde do WhatsApp', () => {
   });
 
   beforeEach(() => {
+    limparCachePapel();
+    _definirPapelParaTestes('44444444-4444-4444-4444-444444444444', 'admin');
     sqlLog = []; fetchLog = []; evolutionOk = true; queueJob = null;
     stored = [
       { instance_name: instA, tenant_id: tenantA, connection_state: 'open', state_since: new Date(Date.now() - 86_400_000), last_alert_at: null },

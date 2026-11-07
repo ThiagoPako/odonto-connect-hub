@@ -512,8 +512,21 @@ export const prontuariosApi = {
   list: (params?: Record<string, string>) => vpsApiFetch('/prontuarios', { params }),
   create: (body: unknown) => vpsApiFetch('/prontuarios', { method: 'POST', body }),
   update: (id: string, body: unknown) => vpsApiFetch(`/prontuarios/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/prontuarios/${id}`, { method: 'DELETE' }),
+  // Não apaga: inativa o registro (motivo obrigatório; só autor ou admin).
+  delete: (id: string, motivo: string) => vpsApiFetch(`/prontuarios/${id}`, { method: 'DELETE', body: { motivo } }),
+  versoes: (id: string) => vpsApiFetch<ProntuarioVersao[]>(`/prontuarios/${id}/versoes`),
 };
+
+export interface ProntuarioVersao {
+  versao: number;
+  titulo: string | null;
+  descricao: string | null;
+  tipo: string | null;
+  autor_nome: string | null;
+  registrado_em: string | null;
+  substituida_por_nome: string | null;
+  substituida_em: string;
+}
 
 export interface ComercialKpis {
   atendimentosHoje: number;

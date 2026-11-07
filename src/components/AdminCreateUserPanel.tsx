@@ -14,7 +14,7 @@ export function AdminCreateUserPanel() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("user");
+  const [role, setRole] = useState("recepcionista");
   const [especialidade, setEspecialidade] = useState("Clínica Geral");
   const [comissao, setComissao] = useState<string>("35");
   const [comissaoError, setComissaoError] = useState<string | null>(null);
@@ -176,7 +176,7 @@ export function AdminCreateUserPanel() {
     setName("");
     setEmail("");
     setPassword("");
-    setRole("user");
+    setRole("recepcionista");
     setEspecialidade("Clínica Geral");
     setComissao("35");
     setComissaoError(null);
@@ -238,8 +238,7 @@ export function AdminCreateUserPanel() {
                   <SelectItem value="admin">Administrador</SelectItem>
                   <SelectItem value="dentista">Dentista</SelectItem>
                   <SelectItem value="recepcionista">Recepcionista</SelectItem>
-                  <SelectItem value="comercial">Comercial</SelectItem>
-                  <SelectItem value="user">Usuário</SelectItem>
+                  <SelectItem value="user">Usuário (sem acesso a pacientes)</SelectItem>
                 </SelectContent>
               </Select>
             </div>

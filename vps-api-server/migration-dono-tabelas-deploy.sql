@@ -21,7 +21,7 @@ DECLARE
   t TEXT;
   seq TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['lista_espera', 'lista_espera_ofertas', 'whatsapp_instance_health_log', 'whatsapp_opt_outs', 'whatsapp_opt_out_reversals', 'whatsapp_channels', 'whatsapp_webhook_events'] LOOP
+  FOREACH t IN ARRAY ARRAY['lista_espera', 'lista_espera_ofertas', 'whatsapp_instance_health_log', 'whatsapp_opt_outs', 'whatsapp_opt_out_reversals', 'whatsapp_channels', 'whatsapp_webhook_events', 'prontuario_versoes'] LOOP
     CONTINUE WHEN to_regclass('public.' || t) IS NULL;
     IF dono IS NOT NULL AND dono <> 'postgres'
        AND (SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = t) = 'postgres' THEN

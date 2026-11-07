@@ -225,8 +225,7 @@ export function AdminUserListPanel() {
                   <SelectItem value="admin">Administrador</SelectItem>
                   <SelectItem value="dentista">Dentista</SelectItem>
                   <SelectItem value="recepcionista">Recepcionista</SelectItem>
-                  <SelectItem value="comercial">Comercial</SelectItem>
-                  <SelectItem value="user">Usuário</SelectItem>
+                  <SelectItem value="user">Usuário (sem acesso a pacientes)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
