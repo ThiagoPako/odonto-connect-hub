@@ -131,7 +131,7 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
 
         <div className="flex flex-wrap items-center gap-2">
           <Select value={selectedProfId} onValueChange={setSelectedProfId}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-auto min-w-[11.25rem] h-auto min-h-9 whitespace-normal">
               <SelectValue placeholder="Profissional" />
             </SelectTrigger>
             <SelectContent>
@@ -143,7 +143,7 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
           </Select>
 
           <Select value={selectedChairId} onValueChange={setSelectedChairId}>
-            <SelectTrigger className="w-[160px]">
+            <SelectTrigger className="w-auto min-w-[10rem] h-auto min-h-9 whitespace-normal">
               <SelectValue placeholder="Cadeira/Sala" />
             </SelectTrigger>
             <SelectContent>
@@ -155,7 +155,7 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
           </Select>
 
           <Select value={selectedStatus} onValueChange={setSelectedStatus}>
-            <SelectTrigger className="w-[140px]">
+            <SelectTrigger className="w-auto min-w-[8.75rem] h-auto min-h-9 whitespace-normal">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>

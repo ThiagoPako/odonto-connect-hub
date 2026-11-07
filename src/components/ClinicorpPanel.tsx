@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 import {
   clinicorpApi,
   type ClinicorpSettings,
@@ -23,6 +24,13 @@ import { ClinicorpAuditLog } from "@/components/clinicorp/ClinicorpAuditLog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function ClinicorpPanel() {
+  const [confirmAcao, confirmDialog] = useConfirm();
+  // "Enviar dados" grava/atualiza Pacientes e Agenda da clínica com o espelho do Clinicorp.
+  const confirmarEnvio = (pacientes?: number, agendamentos?: number) => confirmAcao({
+    title: "Enviar os dados do Clinicorp para Pacientes e Agenda?",
+    description: `${typeof pacientes === "number" ? `Cerca de ${pacientes} paciente(s) e ${agendamentos ?? 0} agendamento(s) serão criados ou atualizados. ` : ""}Cadastros que já existem no Odonto Connect podem ser atualizados com os dados do Clinicorp.`,
+    confirmLabel: "Enviar dados",
+  });
   const [settings, setSettings] = useState<ClinicorpSettings | null>(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -224,6 +232,7 @@ export function ClinicorpPanel() {
 
   return (
     <div className="space-y-6">
+      {confirmDialog}
       <Tabs defaultValue="integracao" className="w-full">
         <TabsList className="mb-4">
           <TabsTrigger value="integracao" className="gap-2">
@@ -294,6 +303,7 @@ export function ClinicorpPanel() {
             variant="default"
             className="bg-primary hover:bg-primary/90 text-white font-bold shadow-md"
             onClick={async () => {
+              if (!(await confirmarEnvio())) return;
               const loadingToast = toast.loading("Enviando dados para Pacientes e Agendas...");
               try {
                 const r = await clinicorpApi.reproject();
@@ -369,6 +379,7 @@ export function ClinicorpPanel() {
                   <Button
                     className="w-full bg-primary hover:bg-primary/90 text-white font-bold h-12 shadow-lg group"
                     onClick={async () => {
+                      if (!(await confirmarEnvio(syncStatus?.summary.patients || 0, syncStatus?.summary.appointments || 0))) return;
                       const loadingToast = toast.loading("Enviando registros para o sistema principal...");
                       try {
                         const r = await clinicorpApi.reproject();
@@ -570,7 +581,7 @@ export function ClinicorpPanel() {
                             </Button>
                             <Button size="sm" variant="ghost"
                               onClick={async () => {
-                                if (!confirm("Remover esta exceção?")) return;
+                                if (!(await confirmAcao({ title: "Remover esta exceção?", description: "A regra deixa de valer na sincronização com o Clinicorp.", confirmLabel: "Remover", destructive: true }))) return;
                                 try { await clinicorpApi.deleteOverride(o.id); toast.success("Removido"); await load(); }
                                 catch (e) { toast.error((e as Error).message); }
                               }}>
@@ -722,7 +733,7 @@ export function ClinicorpPanel() {
                     o.id !== editingOvId
                   );
                   if (dup) {
-                    if (!confirm("Já existe uma regra para este escopo. Deseja sobrescrevê-la?")) return;
+                    if (!(await confirmAcao({ title: "Já existe uma regra para este escopo", description: "Deseja substituir a regra existente pela nova?", confirmLabel: "Substituir" }))) return;
                   }
 
                   try {
