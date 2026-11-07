@@ -26,6 +26,7 @@ import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
 import { sqlFoneIgual, foneIndexado, candidatosFone } from './telefone-sql.mjs';
 import { createLimiter, rateLimitMiddleware, sendTooMany, clientIp, ipKey, sleep } from './rate-limit.mjs';
+import { validarPaciente, CAMPOS_PACIENTE, quantidadeEstoque, TIPOS_MOVIMENTO_ESTOQUE } from './cadastros-validacao.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
 // crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
@@ -999,6 +1000,29 @@ function looksLikeSupabaseAccessToken(decoded) {
     || !!decoded.user_metadata;
 }
 
+// Cache curto de "usuário desativado" (profiles.active = false) para não consultar o banco a cada
+// requisição. Falha aberta: erro de consulta não derruba o login (registra e segue como antes).
+const USUARIO_ATIVO_TTL_MS = 30_000;
+const cacheUsuarioAtivo = new Map();
+function esquecerUsuarioAtivo(userId) { if (userId) cacheUsuarioAtivo.delete(String(userId)); }
+async function usuarioDesativado(userId) {
+  if (!userId) return false;
+  const chave = String(userId);
+  const c = cacheUsuarioAtivo.get(chave);
+  if (c && c.ate > Date.now()) return c.inativo;
+  let inativo = false;
+  try {
+    const { rows } = await pool.query('SELECT COALESCE(active, true) AS active FROM profiles WHERE id = $1 LIMIT 1', [chave]);
+    inativo = rows?.[0]?.active === false;
+  } catch (err) {
+    if (err?.code !== '42703' && err?.code !== '22P02') console.warn('[auth] checagem de usuário ativo falhou:', err?.code || err?.message);
+    return false;
+  }
+  if (cacheUsuarioAtivo.size > 5000) cacheUsuarioAtivo.clear();
+  cacheUsuarioAtivo.set(chave, { inativo, ate: Date.now() + USUARIO_ATIVO_TTL_MS });
+  return inativo;
+}
+
 async function verifyUser(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
@@ -1064,6 +1088,9 @@ async function verifyUser(req) {
     isSuperAdmin: user.is_super_admin,
     payload: decoded,
   });
+
+  // Usuário desativado perde o acesso em até 30 s (antes seguia usando o token por até 7 dias).
+  if (await usuarioDesativado(user.id)) throw new Error('Unauthorized');
 
   return { user };
 }
@@ -1150,6 +1177,56 @@ async function assertCanManageUser(actor, targetUserId) {
     const e = new Error('Usuário não encontrado'); e.status = 404; throw e;
   }
   return target;
+}
+
+// Limite de usuários ativos do plano. Vale para as duas telas de criação (/api/my-tenant/users e
+// /api/auth/create-user, que antes não checava) e para reativar usuário. Devolve a mensagem ou null.
+async function limiteDeUsuariosAtingido(tenantId) {
+  const { rows: planRows } = await pool.query(
+    'SELECT pl.max_usuarios FROM tenants t LEFT JOIN plans pl ON pl.id = t.plan_id WHERE t.id = $1',
+    [tenantId]
+  );
+  const maxUsers = planRows[0]?.max_usuarios;
+  if (maxUsers == null) return null;
+  const { rows: countRows } = await pool.query(
+    'SELECT COUNT(*)::int AS c FROM profiles WHERE tenant_id = $1 AND COALESCE(active, true) = true',
+    [tenantId]
+  );
+  return Number(countRows[0]?.c) >= Number(maxUsers) ? `Limite de ${maxUsers} usuários do plano atingido` : null;
+}
+
+// true se `userId` é o único admin ativo da clínica: rebaixar ou desativar deixaria a clínica sem
+// ninguém para gerir usuários (só o suporte destravaria).
+async function eUltimoAdminAtivo(tenantId, userId) {
+  const { rows } = await pool.query(
+    `SELECT p.id FROM profiles p
+       LEFT JOIN user_roles ur ON ur.user_id = p.id
+      WHERE p.tenant_id = $1 AND COALESCE(p.active, true) = true AND COALESCE(p.is_super_admin, false) = false
+        AND COALESCE(ur.role::text, p.role::text) = 'admin'`,
+    [tenantId]
+  );
+  const ids = new Set(rows.map(r => String(r.id)));
+  return ids.has(String(userId)) && ids.size === 1;
+}
+
+// Regras comuns de PUT /api/auth/users/:id e PATCH /api/my-tenant/users/:id. Devolve { status, error } ou null.
+async function checarMudancaDeUsuario(actor, target, { role, active }) {
+  const tenantId = target.tenant_id;
+  if (String(target.id) === String(actor.id) && active === false) {
+    return { status: 400, error: 'Você não pode desativar o próprio usuário' };
+  }
+  const rebaixa = role !== undefined && role !== 'admin';
+  if ((rebaixa || active === false) && tenantId && await eUltimoAdminAtivo(tenantId, target.id)) {
+    return { status: 409, error: 'A clínica precisa de pelo menos um administrador ativo. Promova outro usuário antes.' };
+  }
+  if (active === true && tenantId) {
+    const { rows } = await pool.query('SELECT COALESCE(active, true) AS active FROM profiles WHERE id = $1', [target.id]);
+    if (rows[0] && rows[0].active === false) {
+      const limite = await limiteDeUsuariosAtingido(tenantId);
+      if (limite) return { status: 403, error: limite };
+    }
+  }
+  return null;
 }
 
 function httpStatusOf(error, fallback = 500) {
@@ -1493,9 +1570,9 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
       );
       if (taken.length) return res.status(409).json({ error: 'Email já em uso por outro usuário' });
     }
-    if (id === user.id && active === false) {
-      return res.status(400).json({ error: 'Você não pode desativar o próprio usuário' });
-    }
+    if (role !== undefined && !TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
+    const bloqueio = await checarMudancaDeUsuario(user, target, { role, active: active === undefined ? undefined : !!active });
+    if (bloqueio) return res.status(bloqueio.status).json({ error: bloqueio.error });
 
     const updates = [];
     const values = [];
@@ -1507,6 +1584,7 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
       updates.push(`updated_at = NOW()`);
       values.push(id);
       await pool.query(`UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`, values);
+      esquecerUsuarioAtivo(id);
     }
     if (role !== undefined) {
       if (!TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
@@ -2251,6 +2329,8 @@ app.post('/api/auth/create-user', async (req, res) => {
 
     const { rows: existing } = await pool.query('SELECT id FROM profiles WHERE email = $1', [email.toLowerCase().trim()]);
     if (existing.length > 0) return res.status(409).json({ error: 'Email já cadastrado' });
+    const limite = await limiteDeUsuariosAtingido(actor.tenant_id);
+    if (limite) return res.status(403).json({ error: limite });
 
     const id = crypto.randomUUID();
     const hash = await bcrypt.hash(password, 12);
@@ -2487,10 +2567,12 @@ app.put('/api/auth/users/:id', async (req, res) => {
     const { user: actor } = await verifyAdmin(req);
     const { id } = req.params;
     const { name, email, role, active } = req.body;
-    await assertCanManageUser(actor, id);
+    const target = await assertCanManageUser(actor, id);
     if (role !== undefined && !TENANT_ASSIGNABLE_ROLES.includes(role)) {
       return res.status(400).json({ error: 'Perfil inválido' });
     }
+    const bloqueio = await checarMudancaDeUsuario(actor, target, { role, active });
+    if (bloqueio) return res.status(bloqueio.status).json({ error: bloqueio.error });
     if (email !== undefined) {
       const { rows: taken } = await pool.query(
         'SELECT 1 FROM profiles WHERE email = $1 AND id <> $2 LIMIT 1', [String(email).toLowerCase().trim(), id]
@@ -2509,6 +2591,7 @@ app.put('/api/auth/users/:id', async (req, res) => {
 
     values.push(id);
     await pool.query(`UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`, values);
+    esquecerUsuarioAtivo(id);
 
     if (role !== undefined) {
       await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
@@ -5302,7 +5385,9 @@ app.get('/api/pacientes', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM pacientes WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[pacientes:list]', error.code || error.message);
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 
@@ -5363,8 +5448,9 @@ app.post('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
-    const cpf = normalizarCpf(req.body.cpf);
+    const validacao = validarPaciente(req.body);
+    if (validacao.erro) return res.status(400).json({ error: validacao.erro });
+    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = validacao.campos;
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO pacientes (id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
@@ -5382,11 +5468,21 @@ app.put('/api/pacientes/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
-    const cpf = normalizarCpf(req.body.cpf);
+    const { rows: atual } = await pool.query(
+      'SELECT cpf, telefone, email, data_nascimento FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (!atual.length) return res.status(404).json({ error: 'Paciente não encontrado' });
+    // Só grava os campos enviados (campo omitido não vira NULL); valida só o que mudou.
+    const validacao = validarPaciente(req.body, { original: atual[0], parcial: true });
+    if (validacao.erro) return res.status(400).json({ error: validacao.erro });
+    const sets = []; const params = [];
+    for (const k of CAMPOS_PACIENTE) {
+      if (k in validacao.campos) { params.push(validacao.campos[k]); sets.push(`${k}=$${params.length}`); }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id, user.tenant_id);
     const { rowCount } = await pool.query(
-      'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, sexo=$6, convenio=$7, endereco=$8, observacoes=$9, updated_at=NOW() WHERE id=$10 AND tenant_id=$11',
-      [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id, user.tenant_id]
+      `UPDATE pacientes SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`,
+      params
     );
     if (rowCount === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     res.json({ success: true });
@@ -5405,7 +5501,10 @@ app.delete('/api/pacientes/:id', async (req, res) => {
     if (rowCount === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    // Antes: 500 para quem não é admin (o 403 de verifyAdmin caía aqui).
+    const status = httpStatusOf(error);
+    if (status === 500) console.error('[pacientes:delete]', error.code || error.message);
+    res.status(status).json({ error: status === 500 ? 'Erro interno' : error.message });
   }
 });
 
@@ -6478,7 +6577,7 @@ app.delete('/api/dentistas/:id', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
+    if (error.message === 'Admin access required') return res.status(403).json({ error: 'Admin access required' });
     res.status(500).json({ error: error.message });
   }
 });
@@ -6624,7 +6723,7 @@ app.put('/api/dentistas/:id/horarios', async (req, res) => {
     res.json(rows[0]);
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
+    if (error.message === 'Admin access required') return res.status(403).json({ error: 'Admin access required' });
     res.status(500).json({ error: error.message });
   }
 });
@@ -6956,7 +7055,13 @@ app.post('/api/estoque', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote } = req.body;
+    const { nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote } = req.body || {};
+    if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'Informe o nome do item' });
+    for (const [campo, v] of [['quantidade', quantidade], ['quantidade_minima', quantidade_minima]]) {
+      if (v !== undefined && v !== null && v !== '' && quantidadeEstoque(v) === null) {
+        return res.status(400).json({ error: `${campo === 'quantidade' ? 'Quantidade' : 'Estoque mínimo'} deve ser um número inteiro maior ou igual a zero` });
+      }
+    }
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO estoque (id, nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
@@ -6976,6 +7081,11 @@ app.put('/api/estoque/:id', async (req, res) => {
     const sets = []; const params = [];
     if (nome !== undefined) { params.push(nome); sets.push(`nome=$${params.length}`); }
     if (categoria !== undefined) { params.push(categoria); sets.push(`categoria=$${params.length}`); }
+    for (const [campo, v] of [['quantidade', quantidade], ['quantidade_minima', quantidade_minima]]) {
+      if (v !== undefined && quantidadeEstoque(v) === null) {
+        return res.status(400).json({ error: `${campo === 'quantidade' ? 'Quantidade' : 'Estoque mínimo'} deve ser um número inteiro maior ou igual a zero` });
+      }
+    }
     if (quantidade !== undefined) { params.push(quantidade); sets.push(`quantidade=$${params.length}`); }
     if (quantidade_minima !== undefined) { params.push(quantidade_minima); sets.push(`quantidade_minima=$${params.length}`); }
     if (unidade !== undefined) { params.push(unidade); sets.push(`unidade=$${params.length}`); }
@@ -7039,21 +7149,42 @@ app.post('/api/estoque/:id/movimentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { tipo, quantidade, motivo, usuario_nome } = req.body;
-    const { rows: item } = await pool.query('SELECT 1 FROM estoque WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
-    if (item.length === 0) return res.status(404).json({ error: 'Item não encontrado' });
-    const id = crypto.randomUUID();
-    await pool.query(
-      'INSERT INTO estoque_movimentos (id, item_id, tipo, quantidade, motivo, usuario_nome, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [id, req.params.id, tipo, quantidade, motivo, usuario_nome, user.tenant_id]
-    );
-    // Update stock quantity
-    const delta = tipo === 'entrada' ? quantidade : -quantidade;
-    await pool.query('UPDATE estoque SET quantidade = GREATEST(0, quantidade + $1), updated_at=NOW() WHERE id=$2 AND tenant_id=$3', [delta, req.params.id, user.tenant_id]);
+    const { tipo, motivo, usuario_nome } = req.body || {};
+    // Antes: quantidade negativa invertia a saída, tipo desconhecido subtraía, e a saída maior que o
+    // saldo gravava o movimento inteiro mas zerava o saldo (GREATEST) — histórico ≠ saldo.
+    if (!TIPOS_MOVIMENTO_ESTOQUE.includes(tipo)) return res.status(400).json({ error: 'Tipo deve ser entrada ou saida' });
+    const quantidade = quantidadeEstoque(req.body?.quantidade, { positivo: true });
+    if (quantidade === null) return res.status(400).json({ error: 'Quantidade deve ser um número inteiro maior que zero' });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: item } = await client.query('SELECT quantidade FROM estoque WHERE id=$1 AND tenant_id=$2 FOR UPDATE', [req.params.id, user.tenant_id]);
+      if (item.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Item não encontrado' }); }
+      const saldo = Number(item[0].quantidade) || 0;
+      if (tipo === 'saida' && quantidade > saldo) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: `Saldo insuficiente: há ${saldo} em estoque` });
+      }
+      const id = crypto.randomUUID();
+      await client.query(
+        'INSERT INTO estoque_movimentos (id, item_id, tipo, quantidade, motivo, usuario_nome, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [id, req.params.id, tipo, quantidade, motivo, usuario_nome, user.tenant_id]
+      );
+      const delta = tipo === 'entrada' ? quantidade : -quantidade;
+      await client.query('UPDATE estoque SET quantidade = quantidade + $1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3', [delta, req.params.id, user.tenant_id]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
     const { rows } = await pool.query('SELECT * FROM estoque WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json({ success: true, item: rows[0] });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    const status = httpStatusOf(error);
+    if (status === 500) console.error('[estoque:movimento]', error.code || error.message);
+    res.status(status).json({ error: status === 500 ? 'Erro interno' : error.message });
   }
 });
 
