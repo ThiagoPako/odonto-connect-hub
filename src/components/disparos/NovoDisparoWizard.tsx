@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   X, ChevronRight, ChevronLeft, Users, FileText, CalendarDays, Eye,
-  Check, Upload, Clock, AlertTriangle, Send, Phone,
+  Check, Clock, AlertTriangle, Send, Phone, Loader2,
 } from "lucide-react";
 import {
   diasSemanaOptions, publicoOptions, templatesProntos,
@@ -13,9 +13,13 @@ import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 interface NovoDisparoWizardProps {
   open: boolean;
   onClose: () => void;
-  onSave: (disparo: Omit<DisparoProgramado, "id" | "stats" | "criadoEm">) => void;
+  /** Resolve true quando o servidor salvou; o assistente só fecha nesse caso. */
+  onSave: (disparo: Omit<DisparoProgramado, "id" | "stats" | "criadoEm">) => Promise<boolean>;
   editData?: DisparoProgramado | null;
 }
+
+/** Limite por envio usado pelo servidor (capacidade_diaria padrão; teto 500 em resolveCampaignAudience). */
+const CAPACIDADE_POR_ENVIO = 232;
 
 const steps = [
   { id: 1, label: "Público", icon: Users },
@@ -43,6 +47,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
   const [numeroEnvio, setNumeroEnvio] = useState(connectedInstances[0]?.instanceName || "");
 
   const isEditing = !!editData;
+  const [saving, setSaving] = useState(false);
 
   // Pre-fill form when editing
   useEffect(() => {
@@ -81,11 +86,38 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
     }
   }, [open, editData]);
 
-  // O público real é calculado pelo servidor na hora do envio (contatosAlcancaveis é
-  // atualizado lá). Antes eram números fixos (255/156/89/12) que, além de enganar,
-  // limitavam o envio: a capacidade diária virava o mínimo entre 232 e o número fixo.
+  // A contagem real de contatos só é conhecida no envio (o servidor grava em contatos_alcancaveis).
+  // Antes havia números fixos (255/156/89/12) que também limitavam o envio via capacidade diária.
   const contatosAlcancaveis = editData?.contatosAlcancaveis ?? 0;
-  const capacidadeDiaria = 232;
+  const capacidadeDiaria = CAPACIDADE_POR_ENVIO;
+
+  // Data local (toISOString é UTC: depois das 21h em Brasília já seria "amanhã").
+  const agora = new Date();
+  const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
+  // Editar uma campanha única já vencida (ex.: só o nome) continua possível se a data não mudou.
+  const dataPassadaInalterada = isEditing && !!editData?.dataInicio && dataInicio === editData.dataInicio;
+  const stepErrors: Record<number, string[]> = {
+    1: [
+      ...(!numeroEnvio ? ["Escolha o número de WhatsApp que vai enviar."] : []),
+      ...(!Number.isFinite(intervaloSpam) || intervaloSpam < 1 || intervaloSpam > 30 ? ["O intervalo entre campanhas deve ser de 1 a 30 dias."] : []),
+    ],
+    2: [
+      ...(!mensagem.trim() ? ["Escreva a mensagem do disparo."] : []),
+    ],
+    3: tipo === "recorrente"
+      ? [
+          ...(diasSemana.length === 0 ? ["Escolha pelo menos um dia da semana."] : []),
+          ...(!usarHorarioClinica && horarioFim <= horarioInicio ? ["O horário de término deve ser depois do início."] : []),
+          ...(!campanhaPerpetua && dataInicio && dataFim && dataFim < dataInicio ? ["A data de término deve ser depois da data de início."] : []),
+        ]
+      : [
+          ...(!dataInicio ? ["Escolha a data do envio."] : dataInicio < hoje && !dataPassadaInalterada ? ["A data do envio já passou."] : []),
+          ...(horarioFim <= horarioInicio ? ["O horário de término deve ser depois do início."] : []),
+        ],
+    4: [],
+  };
+  const firstInvalidStep = [1, 2, 3].find((n) => stepErrors[n].length > 0);
+  const currentErrors = step === 4 && firstInvalidStep ? stepErrors[firstInvalidStep] : stepErrors[step] ?? [];
 
   if (!open) return null;
 
@@ -105,7 +137,8 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
     setMensagem((prev) => prev + `{{${v}}}`);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving || firstInvalidStep) return;
     // O texto que vale é o que está no editor: antes, com um modelo pronto selecionado,
     // o servidor recebia o texto original do modelo e as edições da clínica se perdiam.
     const variaveis = (mensagem.match(/\{\{(\w+)\}\}/g) || []).map((m) => m.replace(/[{}]/g, ""));
@@ -113,7 +146,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
     const tpl = base
       ? { ...base, mensagem, variaveis }
       : { id: "custom", nome: nomeDisparo, mensagem, variaveis };
-    onSave({
+    const payload = ({
       nome: nomeDisparo || "Novo Disparo",
       template: tpl,
       tipo,
@@ -131,7 +164,10 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
       numeroEnvio,
       ativo: isEditing ? (editData?.ativo ?? false) : false,
     });
-    onClose();
+    setSaving(true);
+    const ok = await onSave(payload);
+    setSaving(false);
+    if (ok) onClose();
   };
 
   return (
@@ -142,13 +178,13 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
           <h2 className="text-base font-semibold text-foreground">
             {isEditing ? "Editar disparo" : "Novo disparo programado"}
           </h2>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+          <button onClick={onClose} aria-label="Fechar" className="p-1.5 rounded-lg hover:bg-muted transition-colors">
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
         {/* Stepper */}
-        <div className="flex items-center justify-center gap-1 px-6 py-3 border-b border-border">
+        <div className="flex items-center justify-center gap-1 px-3 sm:px-6 py-3 border-b border-border">
           {steps.map((s, i) => (
             <div key={s.id} className="flex items-center gap-1">
               <button
@@ -162,7 +198,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
                 }`}
               >
                 {step > s.id ? <Check className="h-3 w-3" /> : <s.icon className="h-3 w-3" />}
-                {s.label}
+                <span className={step === s.id ? "" : "sr-only sm:not-sr-only"}>{s.label}</span>
               </button>
               {i < steps.length - 1 && <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
             </div>
@@ -170,7 +206,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
           <div className="flex gap-6">
             <div className="flex-1 min-w-0">
               {step === 1 && <StepPublico publico={publico} setPublico={setPublico} contatosAlcancaveis={contatosAlcancaveis} intervaloSpam={intervaloSpam} setIntervaloSpam={setIntervaloSpam} numeroEnvio={numeroEnvio} setNumeroEnvio={setNumeroEnvio} />}
@@ -184,8 +220,14 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
           </div>
         </div>
 
+        {currentErrors.length > 0 && (
+          <div role="alert" className="mx-4 sm:mx-6 mb-0 mt-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive space-y-0.5">
+            {currentErrors.map((e) => <p key={e}>{e}</p>)}
+          </div>
+        )}
+
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-border">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-t border-border">
           <button
             onClick={() => (step > 1 ? setStep(step - 1) : onClose())}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
@@ -196,7 +238,8 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
           {step < 4 ? (
             <button
               onClick={() => setStep(step + 1)}
-              className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+              disabled={currentErrors.length > 0}
+              className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Próximo
               <ChevronRight className="h-4 w-4" />
@@ -204,10 +247,11 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
           ) : (
             <button
               onClick={handleSave}
-              className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+              disabled={saving || !!firstInvalidStep}
+              className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Send className="h-4 w-4" />
-              {isEditing ? "Salvar Alterações" : "Criar Disparo"}
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {saving ? "Salvando..." : isEditing ? "Salvar alterações" : "Criar disparo"}
             </button>
           )}
         </div>
@@ -416,19 +460,11 @@ function StepConteudo({
         />
       </div>
 
-      <div>
-        <label className="text-xs font-medium text-foreground mb-1 block">Selecione uma mídia para o disparo</label>
-        <div className="border-2 border-dashed border-border rounded-xl p-6 flex flex-col items-center justify-center text-center hover:border-primary/40 transition-colors cursor-pointer">
-          <Upload className="h-8 w-8 text-muted-foreground/40 mb-2" />
-          <p className="text-xs font-medium text-muted-foreground">Escolher arquivo de mídia</p>
-          <p className="text-[10px] text-muted-foreground/60 mt-1">
-            Arraste uma foto ou vídeo aqui ou clique para selecionar
-          </p>
-          <p className="text-[10px] text-muted-foreground/40 mt-1">
-            Tamanho máximo: 100 MB · JPG, JPEG, PNG, MP4, WEBP
-          </p>
-        </div>
-      </div>
+      {/* Antes havia aqui uma área de "escolher mídia" sem upload de verdade: o disparo saía só com texto. */}
+      <p className="text-[11px] text-muted-foreground">
+        <span className="mr-1 inline-block rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">Em breve</span>
+        Envio de foto ou vídeo junto com o disparo. Por enquanto o disparo envia só o texto.
+      </p>
     </div>
   );
 }
@@ -544,8 +580,8 @@ function StepAgendamento({
               <label className="text-xs font-medium text-foreground mb-2 block">Horários de envio</label>
               {diasSemana.length > 0 && (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground w-20">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-muted-foreground w-full sm:w-20">
                       {diasSemana.length === 7 ? "Todos os dias" : diasSemana.join(", ")}
                     </span>
                     <div className="flex items-center gap-1">
@@ -650,7 +686,7 @@ function StepRevisao({
         <ReviewRow label="Tipo" value={tipo === "recorrente" ? "Campanha Recorrente" : "Campanha Única"} />
         {tipo === "recorrente" && <ReviewRow label="Dias" value={diasSemana.join(", ") || "Nenhum"} />}
         <ReviewRow label="Horário" value={`${horarioInicio} — ${horarioFim}`} />
-        {tipo === "recorrente" && <ReviewRow label="Período" value={campanhaPerpetua ? "Perpétua" : `${dataInicio || "?"} a ${dataFim || "?"}`} />}
+        {tipo === "recorrente" && <ReviewRow label="Período" value={periodoRecorrente(campanhaPerpetua, dataInicio, dataFim)} />}
         {tipo === "unico" && dataInicio && <ReviewRow label="Data" value={dataInicio} />}
         <ReviewRow label="Intervalo anti-spam" value={`${intervaloSpam} dias`} />
         <ReviewRow label="Número de envio" value={numeroLabel || "Não selecionado"} />
@@ -669,11 +705,23 @@ function StepRevisao({
   );
 }
 
+const dataBR = (iso: string) => {
+  const [a, m, d] = iso.split("-");
+  return a && m && d ? `${d}/${m}/${a}` : iso;
+};
+
+/** Texto do período na revisão: antes aparecia "? a ?" quando as datas ficavam em branco. */
+function periodoRecorrente(perpetua: boolean, inicio: string, fim: string): string {
+  const comeco = inicio ? `De ${dataBR(inicio)}` : "Começa quando você ativar";
+  if (perpetua || !fim) return `${comeco}, sem data de término`;
+  return `${comeco} até ${dataBR(fim)}`;
+}
+
 function ReviewRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-xs font-medium text-foreground">{value}</span>
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-xs text-muted-foreground shrink-0">{label}</span>
+      <span className="text-xs font-medium text-foreground text-right break-words min-w-0">{value}</span>
     </div>
   );
 }
