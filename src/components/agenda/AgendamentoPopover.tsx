@@ -6,6 +6,7 @@ import { CheckCircle2, Clock, UserCheck, XCircle, Phone, FileText, Edit3, Trash2
 import { useState } from "react";
 import { toast } from "sonner";
 import { agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { usePodeAcessar } from "@/hooks/usePodeAcessar";
 import { EditarAgendamentoModal } from "./EditarAgendamentoModal";
 import { EncaixeListaEspera } from "./EncaixeListaEspera";
 
@@ -35,6 +36,7 @@ function dataBR(v?: string | null) {
 }
 
 export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged }: Props) {
+  const podeAcessar = usePodeAcessar();
   const [saving, setSaving] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   if (!appointment) return null;
@@ -150,7 +152,8 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
               )}
             </div>
           )}
-          {appointment.paciente_id && (
+          {/* Recepção e comercial não abrem o prontuário: o botão levava a "Acesso negado" */}
+          {appointment.paciente_id && podeAcessar("/prontuario") && (
             <Button asChild size="sm" variant="outline" className="w-full justify-start h-8">
               <a href={`/prontuario?id=${appointment.paciente_id}`}>
                 <FileText className="h-3 w-3 mr-2" /> Abrir prontuário

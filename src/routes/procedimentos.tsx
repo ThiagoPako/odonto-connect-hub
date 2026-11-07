@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { HistoricoVersoesModal } from "@/components/procedimentos/HistoricoVersoesModal";
+import { usePapel } from "@/hooks/usePodeAcessar";
 
 export const Route = createFileRoute("/procedimentos")({
   ssr: false,
@@ -26,6 +27,8 @@ const CATEGORIAS = ["Restauração","Endodontia","Periodontia","Cirurgia","Prót
 const CORES = ["#0d9488","#0891b2","#0284c7","#7c3aed","#db2777","#dc2626","#ea580c","#ca8a04","#16a34a","#475569"];
 
 function ProcedimentosCatalogoPage() {
+  // Preço e catálogo são decisão da gestão: os outros perfis consultam (o servidor ainda aceita; ver nota ao Igor)
+  const { admin } = usePapel();
   const [items, setItems] = useState<ProcedimentoCatalogo[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -125,12 +128,13 @@ function ProcedimentosCatalogoPage() {
           }] : []}
           onLimpar={() => { setSearch(""); setCategoria(""); }}
           resultado={`${filtered.length} procedimento${filtered.length !== 1 ? "s" : ""}`}
-          acoes={
+          acoes={admin ? (
             <Button onClick={novo} className="h-10 gap-1.5">
               <Plus className="h-4 w-4" /> Novo procedimento
             </Button>
-          }
+          ) : undefined}
         />
+        {!admin && <p className="text-xs text-muted-foreground">Somente consulta. Preços e procedimentos são alterados pelo administrador.</p>}
 
         {loading ? (
           <div className="flex items-center justify-center py-12">
@@ -162,8 +166,8 @@ function ProcedimentosCatalogoPage() {
                   </div>
                   <div className="flex gap-1">
                     <button onClick={() => { setHistoricoId(p.id); setHistoricoNome(p.nome); }} aria-label="Ver histórico de versões" className="h-9 w-9 inline-flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-primary"><History className="h-4 w-4" /></button>
-                    <button onClick={() => editar(p)} aria-label="Editar procedimento" className="h-9 w-9 inline-flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-4 w-4" /></button>
-                    <button onClick={() => excluir(p.id)} aria-label="Inativar procedimento" className="h-9 w-9 inline-flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Archive className="h-4 w-4" /></button>
+                    {admin && <button onClick={() => editar(p)} aria-label="Editar procedimento" className="h-9 w-9 inline-flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-4 w-4" /></button>}
+                    {admin && <button onClick={() => excluir(p.id)} aria-label="Inativar procedimento" className="h-9 w-9 inline-flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Archive className="h-4 w-4" /></button>}
                   </div>
                 </div>
               </li>
@@ -224,8 +228,8 @@ function ProcedimentosCatalogoPage() {
                         >
                           <History className="h-3.5 w-3.5" />
                         </button>
-                        <button onClick={() => editar(p)} title="Editar" aria-label="Editar procedimento" className="h-8 w-8 inline-flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => excluir(p.id)} title="Inativar (sai da lista)" aria-label="Inativar procedimento" className="h-8 w-8 inline-flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Archive className="h-3.5 w-3.5" /></button>
+                        {admin && <button onClick={() => editar(p)} title="Editar" aria-label="Editar procedimento" className="h-8 w-8 inline-flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>}
+                        {admin && <button onClick={() => excluir(p.id)} title="Inativar (sai da lista)" aria-label="Inativar procedimento" className="h-8 w-8 inline-flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Archive className="h-3.5 w-3.5" /></button>}
                       </div>
                     </td>
                   </tr>

@@ -15,6 +15,7 @@ import { NovoOrcamentoModal } from "@/components/orcamentos/NovoOrcamentoModal";
 import { ExecucaoModal } from "@/components/orcamentos/ExecucaoModal";
 import { OrcamentoPrintPreview } from "@/components/orcamentos/OrcamentoPrintPreview";
 import { DEFAULT_PRINT_CONFIG } from "@/components/orcamentos/types";
+import { usePapel } from "@/hooks/usePodeAcessar";
 import { formatBRL, textoParcelas } from "@/lib/formatos";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -447,6 +448,8 @@ interface BudgetDetailProps {
 function BudgetDetail({ budget: b, onStatusChange, onExecute, onPrint, onEdit, onDelete, onReject }: BudgetDetailProps) {
   const cfg = statusConfig[b.status] || statusConfig.pendente;
   const [updating, setUpdating] = useState(false);
+  // Executar procedimento (com assinatura do paciente) é ato clínico: só dentista e admin
+  const { clinico } = usePapel();
   const finalValue = b.valor_total - b.desconto;
   // Edição/exclusão só permitidas em estágios iniciais
   const podeEditar = b.status === "pendente";
@@ -601,7 +604,10 @@ function BudgetDetail({ budget: b, onStatusChange, onExecute, onPrint, onEdit, o
           </div>
         )}
 
-        {(b.status === "aprovado" || b.status === "em_tratamento") && (
+        {(b.status === "aprovado" || b.status === "em_tratamento") && !clinico && (
+          <p className="mt-4 text-xs text-muted-foreground">A execução do plano é registrada pelo dentista na consulta.</p>
+        )}
+        {(b.status === "aprovado" || b.status === "em_tratamento") && clinico && (
           <button onClick={onExecute}
             className="mt-4 flex items-center gap-1.5 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition">
             <PlayCircle className="h-4 w-4" /> Executar plano de tratamento
