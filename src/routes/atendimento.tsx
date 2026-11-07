@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { ClinicalAudioRecorder } from "@/components/ClinicalAudioRecorder";
-import { GravacaoConsentDialog, GRAVACAO_CONSENT_TEXT, GRAVACAO_CONSENT_VERSION } from "@/components/GravacaoConsentDialog";
+import { GravacaoConsentDialog } from "@/components/GravacaoConsentDialog";
 import { OdontogramaEditor } from "@/components/OdontogramaChart";
 import {
   getPacienteById, getPacienteIniciais, getPacienteIdade, getPacienteIdadeTexto,
@@ -117,17 +117,21 @@ function ConsultaPage() {
   // Consentimento de gravação/transcrição por IA — pedido uma vez por paciente (LGPD art. 11, I)
   const [consentGravacao, setConsentGravacao] = useState<ConsentimentoPaciente | null>(null);
   const [consentDialogOpen, setConsentDialogOpen] = useState(false);
-  const [consentSaving, setConsentSaving] = useState(false);
+  // Última recusa registrada (v2.0): a tela não pergunta de novo a cada consulta.
+  const [consentRecusaEm, setConsentRecusaEm] = useState<string | null>(null);
   const consentResolverRef = useRef<((ok: boolean) => void) | null>(null);
 
   useEffect(() => {
     // Áudio é de um único paciente: ao trocar de paciente, descarta o que estava em memória.
     setGravacoes([]);
     setConsentGravacao(null);
+    setConsentRecusaEm(null);
     if (!pacienteSelecionado) return;
     let cancelled = false;
     consentimentosApi.getAtivo(pacienteSelecionado.id, 'gravacao_transcricao_ia').then(({ data }) => {
-      if (!cancelled) setConsentGravacao(data?.consent ?? null);
+      if (cancelled) return;
+      setConsentGravacao(data?.consent ?? null);
+      setConsentRecusaEm(data?.recusa?.aceito_em ?? null);
     });
     return () => { cancelled = true; };
   }, [pacienteSelecionado?.id]);
@@ -138,6 +142,7 @@ function ConsultaPage() {
     // Revalida no servidor (pode ter sido registrado em outro dispositivo)
     const { data } = await consentimentosApi.getAtivo(pacienteSelecionado.id, 'gravacao_transcricao_ia');
     if (data?.consent) { setConsentGravacao(data.consent); return true; }
+    setConsentRecusaEm(data?.recusa?.aceito_em ?? null);
     return new Promise<boolean>((resolve) => {
       consentResolverRef.current = resolve;
       setConsentDialogOpen(true);
@@ -150,26 +155,20 @@ function ConsultaPage() {
     consentResolverRef.current = null;
   }, []);
 
-  const confirmarConsentGravacao = useCallback(async () => {
-    if (!pacienteSelecionado) return fecharConsentDialog(false);
-    setConsentSaving(true);
-    const { data, error } = await consentimentosApi.registrar(pacienteSelecionado.id, {
-      tipo: 'gravacao_transcricao_ia',
-      versao: GRAVACAO_CONSENT_VERSION,
-      texto: GRAVACAO_CONSENT_TEXT,
-    });
-    setConsentSaving(false);
-    if (error || !data?.consent) {
-      toast.error(error || 'Não foi possível registrar a autorização.');
-      return fecharConsentDialog(false);
+  // O diálogo (v2.0) registra a decisão no servidor e devolve o consentimento quando autorizou.
+  const concluirConsentGravacao = useCallback((consent: ConsentimentoPaciente | null, decisao: 'autorizo' | 'nao_autorizo' | null) => {
+    if (consent) {
+      setConsentGravacao(consent);
+      setConsentRecusaEm(null);
+    } else if (decisao === 'nao_autorizo') {
+      setConsentRecusaEm(new Date().toISOString());
     }
-    setConsentGravacao(data.consent);
-    fecharConsentDialog(true);
-  }, [pacienteSelecionado, fecharConsentDialog]);
+    fecharConsentDialog(!!consent);
+  }, [fecharConsentDialog]);
 
   const revogarConsentGravacao = useCallback(async () => {
     if (!consentGravacao) return;
-    const { error } = await consentimentosApi.revogar(consentGravacao.id);
+    const { error } = await consentimentosApi.revogar(consentGravacao.id, 'dentista');
     if (error) { toast.error(error); return; }
     setConsentGravacao(null);
     setGravacoes([]);
@@ -974,10 +973,10 @@ function ConsultaPage() {
                                 )}
                                 <GravacaoConsentDialog
                                   open={consentDialogOpen}
+                                  pacienteId={pacienteSelecionado?.id}
                                   pacienteNome={pacienteSelecionado?.nome}
-                                  saving={consentSaving}
-                                  onConfirm={confirmarConsentGravacao}
-                                  onCancel={() => fecharConsentDialog(false)}
+                                  recusaEm={consentRecusaEm}
+                                  onDone={concluirConsentGravacao}
                                 />
 
                                 {gravacoes.length > 0 && (
