@@ -52,12 +52,14 @@ export const diasSemanaOptions = [
   { id: "SAB", label: "SAB" },
 ];
 
+// Descrições iguais ao que o servidor faz (resolveCampaignAudience): a base é o CRM e
+// só entra quem já mandou mensagem para a clínica no WhatsApp.
 export const publicoOptions = [
-  { id: "todos" as const, label: "Todos os Contatos", desc: "Enviar para toda a base" },
-  { id: "ativos" as const, label: "Pacientes Ativos", desc: "Pacientes com consulta nos últimos 6 meses" },
-  { id: "inativos" as const, label: "Pacientes Inativos", desc: "Pacientes sem consulta há +90 dias" },
-  { id: "aniversariantes" as const, label: "Aniversariantes do Mês", desc: "Pacientes que fazem aniversário este mês" },
-  { id: "custom" as const, label: "Filtro Personalizado", desc: "Selecionar manualmente ou por critério" },
+  { id: "todos" as const, label: "Todos os contatos", desc: "Leads do CRM que já conversaram com a clínica" },
+  { id: "ativos" as const, label: "Conversaram nos últimos 6 meses", desc: "Leads do CRM com mensagem recebida nos últimos 180 dias" },
+  { id: "inativos" as const, label: "Sem conversa há 90+ dias", desc: "Leads que já conversaram, mas não falam com a clínica há 90 dias" },
+  { id: "aniversariantes" as const, label: "Aniversariantes do mês", desc: "Contatos com data de nascimento neste mês (agenda de contatos)" },
+  { id: "custom" as const, label: "Filtro personalizado (em breve)", desc: "Ainda não disponível" },
 ];
 
 export const templatesProntos: DisparoTemplate[] = [
