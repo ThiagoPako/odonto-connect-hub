@@ -263,7 +263,7 @@ export function ClinicorpAuditLog() {
                 />
               </div>
               <Select value={filter} onValueChange={(v: any) => setFilter(v)}>
-                <SelectTrigger className="w-[180px]">
+                <SelectTrigger className="w-auto min-w-[11.25rem] h-auto min-h-9 whitespace-normal">
                   <Filter className="h-4 w-4 mr-2" />
                   <SelectValue placeholder="Fonte" />
                 </SelectTrigger>

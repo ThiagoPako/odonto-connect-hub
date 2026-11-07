@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { Plus, Search, FileText, Loader2, Trash2, Filter, FileSignature, Paperclip } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Plus, FileText, Loader2, Trash2, FileSignature, Paperclip } from "lucide-react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import {
   examesApi, exameTiposApi, STATUS_LABELS, STATUS_COLORS,
   type Exame, type ExameStatus, type ExameStats, type ExameTipo, type ExamePrioridade,
@@ -29,7 +31,8 @@ function ExamesPage() {
   const [pacientes, setPacientes] = useState<Array<{ id: string; nome: string }>>([]);
   const [stats, setStats] = useState<ExameStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<ExameStatus | "">("");
+  const [statusUrl, setStatusFilter] = useFiltroUrl("status", STATUS_ORDER);
+  const statusFilter = statusUrl as ExameStatus | "";
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -47,17 +50,28 @@ function ExamesPage() {
     fornecedor_terc: "",
   });
 
-  async function load() {
+  // Cada busca/filtro dispara uma requisição; só a mais recente pode gravar na tela
+  // (uma resposta antiga que chega depois não sobrescreve a nova).
+  const reqRef = useRef(0);
+  async function load(opts: { stats?: boolean } = {}) {
+    const comStats = opts.stats ?? true;
+    const id = ++reqRef.current;
     setLoading(true);
     try {
       const [list, st] = await Promise.all([
         examesApi.list({ status: statusFilter || undefined, q: q || undefined }),
-        examesApi.stats(),
+        comStats ? examesApi.stats() : Promise.resolve(null),
       ]);
-      setExames(list); setStats(st);
-    } catch (e) { toast.error("Erro ao carregar exames"); }
-    finally { setLoading(false); }
+      if (id !== reqRef.current) return;
+      setExames(list);
+      if (st) setStats(st);
+    } catch {
+      if (id === reqRef.current) toast.error("Erro ao carregar exames");
+    } finally {
+      if (id === reqRef.current) setLoading(false);
+    }
   }
+  const recarregar = () => load({ stats: true });
 
   async function carregarTipos() {
     setTiposErro(null);
@@ -84,7 +98,14 @@ function ExamesPage() {
     })();
   }, []);
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter]);
+  // Os números do topo (stats) só mudam com o status ou com uma alteração; a busca recarrega só a lista.
+  const statusAnterior = useRef<string | null>(null);
+  useEffect(() => {
+    const statusMudou = statusAnterior.current !== statusFilter;
+    statusAnterior.current = statusFilter;
+    load({ stats: statusMudou });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, q]);
 
   async function handleCreate() {
     if (!form.tipo_nome.trim()) {
@@ -116,14 +137,14 @@ function ExamesPage() {
 
   async function remove(id: string) {
     if (!confirm("Excluir este exame?")) return;
-    try { await examesApi.remove(id); toast.success("Excluído"); load(); }
+    try { await examesApi.remove(id); toast.success("Excluído"); recarregar(); }
     catch { toast.error("Erro ao excluir"); }
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
+    <div className="p-4 sm:p-6 space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-heading font-bold text-foreground">Exames</h1>
           <p className="text-sm text-muted-foreground">Gestão de pedidos de exames de imagem odontológica</p>
         </div>
@@ -133,7 +154,7 @@ function ExamesPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3">
         <StatCard label="Total" value={stats?.total ?? 0} active={!statusFilter} onClick={() => setStatusFilter("")} />
         {STATUS_ORDER.map(s => (
           <StatCard
@@ -146,22 +167,19 @@ function ExamesPage() {
         ))}
       </div>
 
-      {/* Search */}
-      <div className="flex gap-2 items-center">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Buscar por código, tipo, paciente..."
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && load()}
-            className="pl-9"
-          />
-        </div>
-        <Button variant="outline" size="sm" onClick={load} className="gap-2">
-          <Filter className="h-4 w-4" /> Filtrar
-        </Button>
-      </div>
+      {/* Busca + filtro */}
+      <BarraFiltros
+        busca={{ valor: q, onChange: setQ, placeholder: "Código, tipo ou paciente", rotulo: "Buscar exame por código, tipo ou paciente", debounce: 350 }}
+        filtros={[{
+          id: "status",
+          rotulo: "Status",
+          valor: statusFilter,
+          onChange: setStatusFilter,
+          opcoes: STATUS_ORDER.map((st) => ({ valor: st, rotulo: STATUS_LABELS[st] })),
+        }]}
+        onLimpar={() => { setQ(""); setStatusFilter(""); }}
+        resultado={loading ? undefined : `${exames.length} exame${exames.length !== 1 ? "s" : ""}`}
+      />
 
       {/* List */}
       <Card className="overflow-hidden">
@@ -175,9 +193,9 @@ function ExamesPage() {
         ) : (
           <div className="divide-y divide-border">
             {exames.map((e) => (
-              <div key={e.id} className="p-4 flex items-center gap-4 hover:bg-muted/40 transition-colors">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+              <div key={e.id} className="p-4 flex flex-wrap items-center gap-3 sm:gap-4 hover:bg-muted/40 transition-colors">
+                <div className="flex-1 min-w-[min(100%,16rem)]">
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
                     <span className="font-mono text-xs text-muted-foreground">{e.codigo}</span>
                     <Badge variant="outline" className={STATUS_COLORS[e.status]}>{STATUS_LABELS[e.status]}</Badge>
                     {e.terceirizado && <Badge variant="outline" className="text-xs">Terceirizado</Badge>}
@@ -185,14 +203,15 @@ function ExamesPage() {
                     {e.laudo_texto && <Badge variant="outline" className="text-xs gap-1"><FileSignature className="h-3 w-3" />Laudo</Badge>}
                     {e.arquivo_url && <Badge variant="outline" className="text-xs gap-1"><Paperclip className="h-3 w-3" />Arquivo</Badge>}
                   </div>
-                  <div className="font-medium text-sm text-foreground">{e.tipo_nome}</div>
+                  <div className="font-medium text-sm text-foreground break-words">{e.tipo_nome}</div>
                   <div className="text-xs text-muted-foreground">
                     {e.paciente_nome || "Sem paciente"} · {new Date(e.data_solicitacao).toLocaleDateString("pt-BR")}
                     {e.valor > 0 && ` · R$ ${Number(e.valor).toFixed(2)}`}
                   </div>
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
                 <Select value={e.status} onValueChange={(v) => changeStatus(e.id, v as ExameStatus)}>
-                  <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-auto min-w-[11rem]" aria-label={`Status do exame ${e.codigo}`}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {STATUS_ORDER.map(s => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
                   </SelectContent>
@@ -203,6 +222,7 @@ function ExamesPage() {
                 <Button size="icon" variant="ghost" onClick={() => remove(e.id)} aria-label="Excluir exame">
                   <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -212,15 +232,15 @@ function ExamesPage() {
       <ExameLaudoDialog
         exame={laudoExame}
         onOpenChange={(o) => { if (!o) setLaudoExame(null); }}
-        onSaved={load}
+        onSaved={recarregar}
       />
 
       {/* New Exame Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Novo exame</DialogTitle></DialogHeader>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2">
               <Label htmlFor={tipos.length === 0 ? "novo-exame-tipo-livre" : undefined}>
                 {tipos.length === 0 ? "Nome do exame *" : "Tipo de exame *"}
               </Label>
@@ -262,7 +282,7 @@ function ExamesPage() {
               </Select>
               )}
             </div>
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <Label>Paciente</Label>
               <Select value={form.paciente_id} onValueChange={(v) => setForm(f => ({ ...f, paciente_id: v }))}>
                 <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
@@ -302,16 +322,16 @@ function ExamesPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <Label>Observações</Label>
               <Textarea rows={3} value={form.observacoes} onChange={(e) => setForm(f => ({ ...f, observacoes: e.target.value }))} />
             </div>
-            <label className="col-span-2 flex items-center gap-2 text-sm">
+            <label className="sm:col-span-2 flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.terceirizado} onChange={(e) => setForm(f => ({ ...f, terceirizado: e.target.checked }))} />
               Exame terceirizado
             </label>
             {form.terceirizado && (
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <Label>Fornecedor terceirizado</Label>
                 <Input value={form.fornecedor_terc} onChange={(e) => setForm(f => ({ ...f, fornecedor_terc: e.target.value }))} />
               </div>
@@ -332,11 +352,13 @@ function ExamesPage() {
 function StatCard({ label, value, active, onClick }: { label: string; value: number; active: boolean; onClick: () => void }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`p-3 rounded-lg border text-left transition-all ${active ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
+      aria-pressed={active}
+      className={`p-3 rounded-lg border text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${active ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
     >
       <div className="text-2xl font-bold text-foreground">{value}</div>
-      <div className="text-[11px] text-muted-foreground uppercase tracking-wide">{label}</div>
+      <div className="text-[11px] text-muted-foreground uppercase tracking-wide break-words">{label}</div>
     </button>
   );
 }

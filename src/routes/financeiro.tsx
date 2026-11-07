@@ -317,7 +317,7 @@ function FinanceiroPage() {
       <main className="flex-1 overflow-auto">
         {/* Tabs */}
         <div className="border-b border-border bg-card/80 sticky top-0 z-30 backdrop-blur-md">
-          <div role="tablist" aria-label="Seções do financeiro" className="flex gap-1 px-3 sm:px-6 overflow-x-auto">
+          <div role="tablist" aria-label="Seções do financeiro" className="flex flex-wrap gap-x-1 px-3 sm:px-6">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               return (
@@ -326,7 +326,7 @@ function FinanceiroPage() {
                   role="tab"
                   aria-selected={activeTab === tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
+                  className={`flex items-center gap-2 px-3 sm:px-4 py-3 text-xs font-medium border-b-2 transition-all ${
                     activeTab === tab.id
                       ? "border-primary text-primary"
                       : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
