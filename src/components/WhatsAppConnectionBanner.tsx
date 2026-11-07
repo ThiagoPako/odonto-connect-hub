@@ -14,10 +14,10 @@ export function WhatsAppConnectionBanner() {
   if (connected.length > 0) return null;
 
   return (
-    <div className="bg-destructive text-destructive-foreground px-4 py-2.5 flex items-center justify-between gap-3 text-sm animate-fade-in shrink-0">
-      <div className="flex items-center gap-2 min-w-0">
+    <div className="bg-destructive text-destructive-foreground px-4 py-2.5 flex items-start sm:items-center justify-between gap-3 text-sm animate-fade-in shrink-0">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
         <WifiOff className="h-4 w-4 shrink-0" />
-        <span className="font-medium truncate">
+        <span className="font-medium min-w-0 flex-1 basis-48 text-pretty">
           Nenhum WhatsApp conectado — o sistema não consegue enviar ou receber mensagens.
         </span>
         <Link
@@ -29,8 +29,8 @@ export function WhatsAppConnectionBanner() {
       </div>
       <button
         onClick={() => setDismissed(true)}
-        className="shrink-0 rounded p-0.5 hover:bg-destructive-foreground/20 transition-colors"
-        aria-label="Fechar"
+        className="shrink-0 rounded p-1 hover:bg-destructive-foreground/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive-foreground"
+        aria-label="Fechar aviso"
       >
         <X className="h-4 w-4" />
       </button>

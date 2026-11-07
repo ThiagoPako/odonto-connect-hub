@@ -4,7 +4,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { ActiveAttendanceCard } from "@/components/ActiveAttendanceCard";
-import { dashboardApi, sessionsApi } from "@/lib/vpsApi";
+import { dashboardApi, sessionsApi, whatsappApi } from "@/lib/vpsApi";
+import { canAccessRoute } from "@/lib/routeAccess";
 import { OrcamentoConversaoChart } from "@/components/charts/OrcamentoConversaoChart";
 import { OrigemLeadsChart } from "@/components/charts/OrigemLeadsChart";
 import { AgendaStatusChart } from "@/components/charts/AgendaStatusChart";
@@ -101,6 +102,9 @@ function DashboardPage() {
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Dashboard" />
       <main className="flex-1 p-8 space-y-8 overflow-auto">
+        <WhatsAppDesconectadoSelo
+          podeAbrirCanais={canAccessRoute("/canais", user?.role ?? "user", !!user?.is_super_admin, user?.tenant_features)}
+        />
 
         {loading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -261,4 +265,42 @@ function DashboardPage() {
       </main>
     </div>
   );
+}
+
+// Selo "WhatsApp desconectado": aparece só quando algum número da clínica está fora do ar.
+// Mesma carência do push (10 min) e só queda real ("ausente" = número apagado não conta).
+// Canais é só para admin: para os outros perfis o selo não tem link.
+function WhatsAppDesconectadoSelo({ podeAbrirCanais }: { podeAbrirCanais: boolean }) {
+  const [down, setDown] = useState<{ count: number; pending: number } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => whatsappApi.health().then(({ data }) => {
+      if (cancelled || !data) return;
+      const minimo = data.alertAfterMinutes ?? 10;
+      const caidos = data.instances.filter((i) => (i.state === "close" || i.state === "connecting") && i.downForMinutes >= minimo);
+      setDown(caidos.length ? {
+        count: caidos.length,
+        pending: caidos.reduce((n, i) => n + i.pendingJobs, 0) + (data.pendingJobsWithoutInstance ?? 0),
+      } : null);
+    });
+    void load();
+    const t = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+  if (!down) return null;
+  const resumo = (
+    <>
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      <span className="font-semibold">WhatsApp desconectado</span>
+      <span className="text-destructive/80">
+        {down.count > 1 ? `${down.count} números fora do ar` : "O número da clínica está fora do ar"}
+        {down.pending > 0 ? ` · ${down.pending} mensagem(ns) aguardando` : ""}
+        {podeAbrirCanais ? " · reconecte em Canais" : " · avise o administrador"}
+      </span>
+    </>
+  );
+  const classe = "flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive";
+  return podeAbrirCanais
+    ? <Link to="/canais" role="status" className={`${classe} hover:bg-destructive/10`}>{resumo}</Link>
+    : <div role="status" className={classe}>{resumo}</div>;
 }
