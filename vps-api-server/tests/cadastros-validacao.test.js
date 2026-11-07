@@ -72,6 +72,9 @@ describe('rotas', () => {
     const responder = (sql, params = []) => {
       const t = String(sql);
       sqlLog.push({ t, params });
+      if (/COALESCE\(p\.active, true\) AS active, COALESCE\(p\.is_super_admin, false\)/.test(t)) {
+        return { rows: [{ active: estado.ativos[params[0]] !== false, role: estado.papelNoBanco?.[params[0]] ?? null, is_super_admin: false }] };
+      }
       if (/SELECT COALESCE\(active, true\) AS active FROM profiles WHERE id = \$1 LIMIT 1/.test(t)) {
         return { rows: [{ active: estado.ativos[params[0]] !== false }] };
       }

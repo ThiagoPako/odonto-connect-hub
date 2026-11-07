@@ -1037,27 +1037,35 @@ function looksLikeSupabaseAccessToken(decoded) {
     || !!decoded.user_metadata;
 }
 
-// Cache curto de "usuário desativado" (profiles.active = false) para não consultar o banco a cada
-// requisição. Falha aberta: erro de consulta não derruba o login (registra e segue como antes).
+// Cache curto do estado do usuário no banco (ativo, papel, super-admin) para não consultar a cada
+// requisição. O token legado vale 7 dias: sem isso, quem foi desativado ou rebaixado seguia com o
+// acesso antigo. Falha aberta: erro de consulta não derruba o login (registra e segue como antes).
 const USUARIO_ATIVO_TTL_MS = 30_000;
 const cacheUsuarioAtivo = new Map();
 function esquecerUsuarioAtivo(userId) { if (userId) cacheUsuarioAtivo.delete(String(userId)); }
-async function usuarioDesativado(userId) {
-  if (!userId) return false;
+// { inativo, role, is_super_admin } ou null (sem perfil / falha na consulta)
+async function estadoDoUsuario(userId) {
+  if (!userId) return null;
   const chave = String(userId);
   const c = cacheUsuarioAtivo.get(chave);
-  if (c && c.ate > Date.now()) return c.inativo;
-  let inativo = false;
+  if (c && c.ate > Date.now()) return c.estado;
+  let estado = null;
   try {
-    const { rows } = await pool.query('SELECT COALESCE(active, true) AS active FROM profiles WHERE id = $1 LIMIT 1', [chave]);
-    inativo = rows?.[0]?.active === false;
+    const { rows } = await pool.query(
+      `SELECT COALESCE(p.active, true) AS active, COALESCE(p.is_super_admin, false) AS is_super_admin,
+              COALESCE((SELECT ur.role::text FROM user_roles ur WHERE ur.user_id = p.id LIMIT 1), p.role::text) AS role
+         FROM profiles p WHERE p.id = $1 LIMIT 1`, [chave]);
+    if (rows[0]) estado = { inativo: rows[0].active === false, role: rows[0].role || null, is_super_admin: !!rows[0].is_super_admin };
   } catch (err) {
     if (err?.code !== '42703' && err?.code !== '22P02') console.warn('[auth] checagem de usuário ativo falhou:', err?.code || err?.message);
-    return false;
+    return null;
   }
   if (cacheUsuarioAtivo.size > 5000) cacheUsuarioAtivo.clear();
-  cacheUsuarioAtivo.set(chave, { inativo, ate: Date.now() + USUARIO_ATIVO_TTL_MS });
-  return inativo;
+  cacheUsuarioAtivo.set(chave, { estado, ate: Date.now() + USUARIO_ATIVO_TTL_MS });
+  return estado;
+}
+async function usuarioDesativado(userId) {
+  return (await estadoDoUsuario(userId))?.inativo === true;
 }
 
 async function verifyUser(req) {
@@ -1117,7 +1125,7 @@ async function verifyUser(req) {
     const validatedTenant = await validateRequestedTenantForUser(user, requestedTenantId);
     if (validatedTenant) {
       // Super-admin entra em qualquer clínica pelo X-Tenant-Id: deixa rastro (sem query string).
-      if (user.is_super_admin && String(user.tenant_id || '') !== String(validatedTenant)) {
+      if (user.is_super_admin && String(user.tenant_id || '') !== String(validatedTenant) && auditoriaSuperAdminNova(user.id, validatedTenant)) {
         console.warn(`[AUDIT super-admin] user=${user.id} clinica=${validatedTenant} ${req.method} ${String(req.originalUrl || req.path || '').split('?')[0]}`);
       }
       user.tenant_id = validatedTenant;
@@ -1132,10 +1140,30 @@ async function verifyUser(req) {
     payload: decoded,
   });
 
-  // Usuário desativado perde o acesso em até 30 s (antes seguia usando o token por até 7 dias).
-  if (await usuarioDesativado(user.id)) throw new Error('Unauthorized');
+  // Estado atual do banco vale mais que o token (que dura 7 dias), com até 30 s de atraso:
+  // desativado perde o acesso; rebaixado perde o papel; super-admin revogado precisa entrar de novo.
+  const estado = await estadoDoUsuario(user.id);
+  if (estado) {
+    if (estado.inativo) throw new Error('Unauthorized');
+    if (estado.role) user.role = estado.role;
+    if (user.is_super_admin && !estado.is_super_admin) throw new Error('Unauthorized');
+  }
 
   return { user };
+}
+
+// Um registro por super-admin + clínica a cada 10 min: com polling/SSE, registrar toda requisição
+// afogava o log de auditoria.
+const AUDITORIA_SUPER_ADMIN_JANELA_MS = 10 * 60_000;
+const auditoriaSuperAdminVista = new Map();
+function auditoriaSuperAdminNova(userId, tenantId) {
+  const chave = `${userId}:${tenantId}`;
+  const agora = Date.now();
+  const ultima = auditoriaSuperAdminVista.get(chave);
+  if (ultima && agora - ultima < AUDITORIA_SUPER_ADMIN_JANELA_MS) return false;
+  if (auditoriaSuperAdminVista.size > 2000) auditoriaSuperAdminVista.clear();
+  auditoriaSuperAdminVista.set(chave, agora);
+  return true;
 }
 
 async function getProfileDisplayName(userId, fallback = 'Atendente') {
@@ -1605,6 +1633,8 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
     if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { id } = req.params;
     const { name, email, role, active } = req.body || {};
+    // Só booleano de verdade: "false"/0 escapariam das travas (último admin, limite do plano)
+    if (active !== undefined && typeof active !== 'boolean') return res.status(400).json({ error: 'Campo "active" precisa ser true ou false' });
 
     // Mesma clínica e nunca um super-admin (assertCanManageUser), mesmo quando o ator é super-admin
     let target;
@@ -1620,7 +1650,7 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
       if (taken.length) return res.status(409).json({ error: 'Email já em uso por outro usuário' });
     }
     if (role !== undefined && !TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
-    const bloqueio = await checarMudancaDeUsuario(user, target, { role, active: active === undefined ? undefined : !!active });
+    const bloqueio = await checarMudancaDeUsuario(user, target, { role, active });
     if (bloqueio) return res.status(bloqueio.status).json({ error: bloqueio.error });
 
     const updates = [];
@@ -1640,6 +1670,7 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
       await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
       await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
       await pool.query('UPDATE profiles SET role = $1, updated_at = NOW() WHERE id = $2', [role, id]);
+      esquecerUsuarioAtivo(id);
     }
     res.json({ success: true });
   } catch (e) {
@@ -2630,7 +2661,8 @@ app.put('/api/auth/users/:id', async (req, res) => {
   try {
     const { user: actor } = await verifyAdmin(req);
     const { id } = req.params;
-    const { name, email, role, active } = req.body;
+    const { name, email, role, active } = req.body || {};
+    if (active !== undefined && typeof active !== 'boolean') return res.status(400).json({ error: 'Campo "active" precisa ser true ou false' });
     const target = await assertCanManageUser(actor, id);
     if (role !== undefined && !TENANT_ASSIGNABLE_ROLES.includes(role)) {
       return res.status(400).json({ error: 'Perfil inválido' });
@@ -2661,6 +2693,7 @@ app.put('/api/auth/users/:id', async (req, res) => {
       await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
       await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
       await pool.query('UPDATE profiles SET role = $1 WHERE id = $2', [role, id]);
+      esquecerUsuarioAtivo(id);
     }
 
     res.json({ success: true });
@@ -7532,6 +7565,10 @@ app.post('/api/comissoes', async (req, res) => {
     if (status !== undefined && !['pendente', 'aprovado', 'pago'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
     const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
     if (refErro) return res.status(400).json({ error: refErro });
+    if (tratamento_id) {
+      const { rows: trat } = await pool.query('SELECT 1 FROM tratamentos WHERE id::text = $1 AND tenant_id = $2 LIMIT 1', [String(tratamento_id), user.tenant_id]);
+      if (!trat.length) return res.status(400).json({ error: 'Tratamento não encontrado nesta clínica.' });
+    }
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO comissoes (id, dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
@@ -7548,10 +7585,12 @@ app.put('/api/comissoes/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { valor, percentual, status, pago, descricao } = req.body;
+    const { valor, status, pago, descricao } = req.body || {};
+    // '' do campo vazio vira null (Number('') = 0 passava na validação e o '' cru dava 500 na coluna numérica)
+    const percentual = req.body?.percentual === '' ? null : req.body?.percentual;
     if (status !== undefined && !['pendente', 'aprovado', 'pago'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
     if (valor !== undefined && !(Number.isFinite(Number(valor)) && Number(valor) >= 0)) return res.status(400).json({ error: 'Valor da comissão inválido.' });
-    if (percentual !== undefined && percentual !== null && !(Number(percentual) >= 0 && Number(percentual) <= 100)) return res.status(400).json({ error: 'Percentual precisa estar entre 0 e 100.' });
+    if (percentual !== undefined && percentual !== null && !(Number.isFinite(Number(percentual)) && Number(percentual) >= 0 && Number(percentual) <= 100)) return res.status(400).json({ error: 'Percentual precisa estar entre 0 e 100.' });
     const sets = []; const params = [];
     if (valor !== undefined) { params.push(valor); sets.push(`valor=$${params.length}`); }
     if (percentual !== undefined) { params.push(percentual); sets.push(`percentual=$${params.length}`); }
@@ -9643,6 +9682,10 @@ app.get('/api/events', async (req, res) => {
   if (!authenticated || !isValidTenantId(tenantId)) {
     console.warn('📡 SSE connection rejected: authenticated tenant not resolved');
     return res.status(401).json({ error: 'Authenticated tenant not resolved' });
+  }
+  // Usuário desativado perde também o tempo real (o SSE não passa por verifyUser)
+  if (await usuarioDesativado(authenticatedUserId)) {
+    return res.status(401).json({ error: 'Usuário desativado' });
   }
 
   // Set headers for SSE
@@ -13544,9 +13587,10 @@ const CAMPAIGN_AUDIENCES = ['todos', 'ativos', 'inativos', 'aniversariantes'];
 async function resolveCampaignAudience(camp, tenantId) {
   const limit = Math.min(Number(camp.capacidade_diaria) || 232, 500);
   const publico = camp.publico || 'todos';
+  const spamDays = Math.max(1, Number(camp.intervalo_spam) || 7);
   const run = async (sql) => {
     try {
-      const { rows } = await pool.query(sql, [limit, tenantId]);
+      const { rows } = await pool.query(sql, [limit, tenantId, spamDays, String(camp.id || '')]);
       return rows;
     } catch (err) {
       console.error(`[campaign audience:${publico}]`, err.message);
@@ -13562,17 +13606,29 @@ async function resolveCampaignAudience(camp, tenantId) {
         WHERE cm.tenant_id = $2 AND cm.sender = 'lead'
           ${dias ? `AND cm.timestamp > NOW() - INTERVAL '${Number(dias)} days'` : ''}
           AND (${comLead ? `cm.lead_id = ${alias}.id::text OR ` : ''}${sqlFoneIgual('cm.phone', `${alias}.telefone`)}))`;
+  // Quem já recebeu marketing no intervalo sai ANTES do LIMIT: senão a campanha recorrente pega
+  // sempre os mesmos primeiros contatos, descarta todos no dedupe e o resto da base nunca recebe.
+  const semMarketingRecente = (alias) => `NOT EXISTS (
+       SELECT 1 FROM automation_jobs aj
+        WHERE aj.tenant_id = $2 AND aj.status IN ('sent', 'pending')
+          AND COALESCE(aj.sent_at, aj.created_at) > NOW() - INTERVAL '1 day' * $3
+          AND ((aj.trigger_event = 'campaign' AND aj.flow_id = $4) OR aj.category = 'marketing')
+          AND ${sqlFoneIgual('aj.patient_phone', `${alias}.telefone`)})`;
   if (publico === 'ativos') {
     return run(`SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
        WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != ''
          AND ${conversou('cl', { dias: 180 })}
+         AND ${semMarketingRecente('cl')}
        LIMIT $1`);
   }
   if (publico === 'inativos') {
+    // Já conversou alguma vez, mas não nos últimos 90 dias (mesmo casamento por lead/telefone do
+    // conversou(); o JOIN por telefone exato tratava como inativo quem falou ontem).
     return run(`SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
-       LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.tenant_id = cl.tenant_id AND cm.timestamp > NOW() - INTERVAL '90 days'
-       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL
+       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != ''
          AND ${conversou('cl')}
+         AND NOT ${conversou('cl', { dias: 90 })}
+         AND ${semMarketingRecente('cl')}
        LIMIT $1`);
   }
   if (publico === 'aniversariantes') {
@@ -13580,6 +13636,7 @@ async function resolveCampaignAudience(camp, tenantId) {
        WHERE c.tenant_id = $2 AND c.telefone IS NOT NULL AND c.telefone != ''
          AND EXTRACT(MONTH FROM c.data_nascimento) = EXTRACT(MONTH FROM NOW())
          AND ${conversou('c', { comLead: false })}
+         AND ${semMarketingRecente('c')}
        LIMIT $1`);
   }
   // 'custom' nunca teve filtro no servidor e caía em "todos": público desconhecido não envia.
@@ -13591,6 +13648,7 @@ async function resolveCampaignAudience(camp, tenantId) {
      FROM crm_leads cl LEFT JOIN contatos c ON c.telefone = cl.telefone AND c.tenant_id = cl.tenant_id
      WHERE cl.tenant_id = $2 AND COALESCE(c.telefone, cl.telefone) IS NOT NULL AND COALESCE(c.telefone, cl.telefone) != ''
        AND ${conversou('cl')}
+       AND ${semMarketingRecente('cl')}
      LIMIT $1`);
 }
 
@@ -17154,7 +17212,9 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
 
     const esc = (v) => {
       if (v === null || v === undefined) return '';
-      const s = String(v).replace(/"/g, '""').replace(/\r?\n/g, ' ');
+      let s = String(v).replace(/"/g, '""').replace(/\r?\n/g, ' ');
+      // Neutraliza fórmula no Excel/Sheets (nome do paciente pode vir do WhatsApp)
+      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
       return `"${s}"`;
     };
     const header = ['Data', 'Hora', 'Paciente', 'Dentista', 'Queixa', 'Procedimento', 'Dente/Região', 'Duração (min)', 'Nº Prescrições'].map(esc).join(',');
@@ -17935,7 +17995,8 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       const saved = rows[0] || {};
       api_token = api_token || saved.api_token;
       subscriber_id = subscriber_id || saved.subscriber_id;
-      base_url = base_url || saved.base_url;
+      // URL antiga salva fora da lista: usa o padrão, como o sync (só a URL enviada agora é recusada)
+      if (!base_url && saved.base_url) base_url = clinicorpBaseUrlSegura(saved.base_url);
     }
     base_url = base_url || CLINICORP_DEFAULT_BASE_URL;
     const emptyResult = { total_latency_ms: 0, base_url, subscriber_id: subscriber_id || '', results: [] };

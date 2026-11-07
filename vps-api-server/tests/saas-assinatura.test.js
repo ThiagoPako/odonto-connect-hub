@@ -46,6 +46,8 @@ function resposta(text, params) {
   }
   if (/SELECT pl\.max_usuarios FROM tenants t/.test(text)) return { rows: [{ max_usuarios: db.maxUsuarios }] };
   if (/SELECT COUNT\(\*\)::int AS c FROM profiles/.test(text)) return { rows: [{ c: db.ativos }] };
+  // Estado do usuário no banco (verifyUser): role null = mantém o papel do token
+  if (/COALESCE\(p\.active, true\) AS active, COALESCE\(p\.is_super_admin, false\)/.test(text)) return { rows: [{ active: params[0] !== inativoA, role: null, is_super_admin: params[0] === superAdmin }] };
   if (/SELECT COALESCE\(active, true\) AS active FROM profiles WHERE id = \$1/.test(text)) return { rows: [{ active: params[0] !== inativoA }] };
   if (/SELECT \* FROM plans WHERE slug = \$1 AND ativo = true/.test(text)) {
     const plano = db.planos[params[0]];

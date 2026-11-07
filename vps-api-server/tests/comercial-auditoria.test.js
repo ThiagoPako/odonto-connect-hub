@@ -148,6 +148,21 @@ describe('Comercial: permissões, público e métricas', () => {
       expect(dedupe[0].text).toMatch(/OR category = 'marketing'/);
       expect(dedupe[0].params).toEqual([7, 'camp-1', tenantA]);
     });
+
+    test('público tira quem recebeu marketing no intervalo ANTES do LIMIT (recorrente não trava nos mesmos)', async () => {
+      await request(app).post('/api/campaigns/camp-1/execute').set(auth());
+      const [aud] = q(/FROM crm_leads cl LEFT JOIN contatos c/);
+      expect(aud.text).toMatch(/NOT EXISTS \(\s*SELECT 1 FROM automation_jobs aj[\s\S]*OR aj\.category = 'marketing'[\s\S]*LIMIT \$1/);
+      expect(aud.params).toEqual([10, tenantA, 7, 'camp-1']);
+    });
+
+    test('"inativos" casa a conversa por lead/telefone normalizado, não por telefone exato', async () => {
+      campanhas = [camp({ publico: 'inativos' })];
+      await request(app).post('/api/campaigns/camp-1/execute').set(auth());
+      const [aud] = q(/FROM crm_leads cl\b/).filter(s => /LIMIT \$1/.test(s.text));
+      expect(aud.text).not.toMatch(/LEFT JOIN chat_messages/);
+      expect(aud.text).toMatch(/AND NOT EXISTS \(\s*SELECT 1 FROM chat_messages cm[\s\S]*INTERVAL '90 days'/);
+    });
   });
 
   describe('fila', () => {
