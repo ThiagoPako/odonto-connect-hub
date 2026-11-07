@@ -116,6 +116,19 @@ jobs:
             else
               echo "EVOLUTION_WEBHOOK_SECRET já existe (mantido)"
             fi
+            # Chave de cifra das credenciais dos canais de WhatsApp (AES-256-GCM; 32 bytes em hex).
+            # Gerada UMA vez e nunca regenerada: trocar o valor torna ilegível o que já foi cifrado
+            # (a rotação é feita com key_version, não aqui). O valor nunca é impresso.
+            if ! grep -qE '^WA_CREDENTIALS_KEY=[0-9a-f]{64}$' "$ENV_FILE"; then
+              sed -i '/^WA_CREDENTIALS_KEY=$/d' "$ENV_FILE"   # linha vazia (copiada do .env.example) não conta
+              if grep -q '^WA_CREDENTIALS_KEY=' "$ENV_FILE"; then
+                echo "::error::WA_CREDENTIALS_KEY existe mas não tem 64 hex; corrija à mão (não vou sobrescrever)"; exit 1
+              fi
+              printf '\nWA_CREDENTIALS_KEY=%s\n' "$(openssl rand -hex 32)" >> "$ENV_FILE"
+              echo "WA_CREDENTIALS_KEY gerado na VPS"
+            else
+              echo "WA_CREDENTIALS_KEY já existe (mantido)"
+            fi
             if grep -q '^TZ=' "$ENV_FILE"; then
               sed -i 's|^TZ=.*|TZ=America/Sao_Paulo|' "$ENV_FILE"
             else

@@ -147,6 +147,25 @@ export function evolutionJid(to) {
 
 const INTERACTIVE_ENDPOINTS = new Set(['sendButtons', 'sendList']);
 
+// Defesa contra "path traversal": um nome de instância como "abc/../outra" seria
+// normalizado pelo fetch para a instância de outra clínica. Vale para request e rawFetch.
+export function isSafeProviderPath(path) {
+  const pathOnly = String(path || '').split('?')[0];
+  if (!pathOnly.startsWith('/')) return false;
+  if (pathOnly.includes('\\')) return false;
+  let decoded;
+  try { decoded = decodeURIComponent(pathOnly); } catch { return false; }
+  return !decoded.split('/').some(seg => seg === '..' || seg === '.') && !decoded.includes('\\');
+}
+
+// Log sem identificador de paciente: JID (…@s.whatsapp.net, @lid, @c.us, @g.us) e sequências
+// longas de dígitos (telefone) viram só os 4 últimos dígitos (LGPD; revisão do Igor).
+export function maskWaIdentifiers(text) {
+  return String(text ?? '')
+    .replace(/[0-9]{6,}(?::[0-9]+)?@(?:s\.whatsapp\.net|lid|c\.us|g\.us|broadcast)/g, (m) => `***${m.replace(/@.*/, '').replace(/:.*/, '').slice(-4)}@${m.split('@')[1]}`)
+    .replace(/(?<![0-9A-Za-z])[0-9]{8,15}(?![0-9A-Za-z])/g, (m) => `***${m.slice(-4)}`);
+}
+
 function refOf(channel) {
   if (typeof channel === 'string') return channel;
   return String(channel?.externalId || channel?.external_id || channel?.instance_name || channel?.instance || '');
@@ -282,11 +301,8 @@ export function createEvolutionAdapter({ baseUrl, apiKey, redact = (d) => d, env
       };
     }
 
-    // Defesa contra "path traversal": um nome de instância como "abc/../outra"
-    // seria normalizado pelo fetch para a instância de outra clínica.
-    const pathOnly = String(path || '').split('?')[0];
-    if (pathOnly.includes('\\') || pathOnly.split('/').some(seg => seg === '..' || seg === '.')) {
-      console.warn(`[evolutionFetch] caminho recusado: ${pathOnly.slice(0, 120)}`);
+    if (!isSafeProviderPath(path)) {
+      console.warn(`[evolutionFetch] caminho recusado: ${maskWaIdentifiers(String(path || '').split('?')[0].slice(0, 120))}`);
       return { ok: false, status: 400, data: { error: 'Nome de instância inválido' } };
     }
     const url = `${BASE}${path}`;
@@ -306,11 +322,11 @@ export function createEvolutionAdapter({ baseUrl, apiKey, redact = (d) => d, env
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        console.warn(`⚠️ Evolution API ${res.status} for ${path}:`, JSON.stringify(redact(data)).slice(0, 500));
+        console.warn(`⚠️ Evolution API ${res.status} for ${maskWaIdentifiers(path)}:`, maskWaIdentifiers(JSON.stringify(redact(data))).slice(0, 500));
       }
       return { ok: res.ok, status: res.status, data };
     } catch (err) {
-      console.error(`❌ Evolution fetch error (${path}):`, err.message);
+      console.error(`❌ Evolution fetch error (${maskWaIdentifiers(path)}):`, maskWaIdentifiers(err.message));
       return { ok: false, status: err.name === 'AbortError' ? 504 : 500, data: { error: err.name === 'AbortError' ? 'Evolution API timeout' : err.message } };
     } finally {
       clearTimeout(timeout);
@@ -320,6 +336,7 @@ export function createEvolutionAdapter({ baseUrl, apiKey, redact = (d) => d, env
   // Response crua (lança como o fetch). Só injeta a apikey; o resto do init vai como veio.
   // withKey=false: sem apikey (checagem de saúde do serviço, que nunca mandou a chave).
   function rawFetch(path, init = {}, { withKey = true } = {}) {
+    if (!isSafeProviderPath(path)) return Promise.reject(new Error('Caminho recusado (nome de instância inválido)'));
     if (!withKey) return doFetch(`${BASE}${path}`, init);
     return doFetch(`${BASE}${path}`, { ...init, headers: { ...(init.headers || {}), apikey: KEY } });
   }
@@ -370,8 +387,21 @@ export function createEvolutionAdapter({ baseUrl, apiKey, redact = (d) => d, env
       return toSendResult(r);
     },
 
+    // Mídia em base64 (as rotas do chat Evolution ainda usam o próprio caminho com fallbacks;
+    // este método serve a interface comum).
+    async sendMedia(channel, to, { kind = 'document', base64, mimetype, filename, caption, timeoutMs = 60_000 } = {}) {
+      if (!base64) return sendResult({ ok: false, status: 400, error: 'Mídia vazia' });
+      const mediatype = kind === 'image' || kind === 'video' || kind === 'audio' ? kind : 'document';
+      const r = await request(`/message/sendMedia/${encodeURIComponent(refOf(channel))}`, {
+        method: 'POST',
+        body: JSON.stringify({ number: evolutionJid(to), mediatype, mimetype, media: base64, fileName: filename, caption }),
+        timeoutMs,
+      });
+      return toSendResult(r);
+    },
+
     async getState(channel) {
-      const r = await request(`/instance/connectionState/${refOf(channel)}`, { timeoutMs: 8000 });
+      const r = await request(`/instance/connectionState/${encodeURIComponent(refOf(channel))}`, { timeoutMs: 8000 });
       if (!r.ok) return { ok: false, state: null, status: r.status, raw: r };
       const raw = extractEvolutionConnectionState(r.data);
       const state = raw === 'open' ? 'open' : raw === 'connecting' ? 'connecting' : 'close';

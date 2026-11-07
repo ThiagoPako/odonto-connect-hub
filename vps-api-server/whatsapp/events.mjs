@@ -20,13 +20,15 @@ export const WA_DELIVERY_STATUSES = Object.freeze(['sent', 'delivered', 'read', 
 export const WA_CHANNEL_STATES = Object.freeze(['open', 'connecting', 'close', 'restricted']);
 
 function base(type, provider, channelRef, extra) {
+  // O tenant nunca vem do provedor: campos de clínica no payload são descartados aqui.
+  const { tenantId: _t, tenant_id: _t2, ...rest } = extra || {};
   return {
     type,
     provider: String(provider || ''),
     channelRef: channelRef ? String(channelRef) : '',
     receivedAt: new Date().toISOString(),
     eventId: null,
-    ...extra,
+    ...rest,
   };
 }
 

@@ -16,7 +16,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import webpush from 'web-push';
 import path from 'path';
-import { randomUUID, createHash, createHmac, timingSafeEqual } from 'crypto';
+import { randomUUID, randomBytes, createHash, createHmac, timingSafeEqual } from 'crypto';
 import { execFile } from 'child_process';
 import { mkdtemp, writeFile, readFile, rm, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
@@ -27,11 +27,14 @@ import { AsyncLocalStorage } from 'async_hooks';
 import { createLimiter, rateLimitMiddleware, sendTooMany, clientIp, ipKey, sleep } from './rate-limit.mjs';
 import { registerProvider, providerForChannel } from './whatsapp/provider.mjs';
 import { credentialCipherFromEnv } from './whatsapp/crypto.mjs';
+import { createChannelStore, splitSqlStatements } from './whatsapp/channels.mjs';
+import { inboundMessageFromEvent, validEvents, claimWebhookEvent, pruneWebhookEvents, detachedResponse } from './whatsapp/inbound.mjs';
 import {
   createEvolutionAdapter, extractEvolutionConnectionState, normalizeEvolutionConnectionState,
   extractEvolutionMessageId, extractEvolutionInstanceName, normalizeEvolutionEventName, isEvolutionEvent,
   extractEvolutionMessages, normalizeEvolutionAckStatus,
 } from './whatsapp/adapters/evolution.mjs';
+import { createOpenWaAdapter } from './whatsapp/adapters/openwa.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
 // crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
@@ -59,14 +62,15 @@ app.set('trust proxy', 'loopback');
 
 // ─── Middleware ──────────────────────────────────────────────
 app.use(cors());
-// Corpo bruto guardado só nas rotas de webhook (assinatura HMAC de provedores: Meta
-// X-Hub-Signature-256, OpenWA X-OpenWA-Signature). Nas demais rotas nada muda.
-app.use(express.json({
-  limit: '64mb',
-  verify: (req, _res, buf) => {
-    if (String(req.originalUrl || req.url || '').startsWith('/api/webhook/')) req.rawBody = Buffer.from(buf);
-  },
-}));
+// Rotas de webhook (/api/webhook/*, comparação em minúsculas): parser próprio com teto de
+// 2 MB e o corpo bruto guardado (referência ao buffer do parser, sem cópia) para conferir
+// assinatura HMAC (OpenWA X-OpenWA-Signature, Meta X-Hub-Signature-256). Demais rotas: igual.
+function isWebhookRequestPath(req) {
+  return String(req.originalUrl || req.url || '').toLowerCase().startsWith('/api/webhook/');
+}
+const webhookJsonParser = express.json({ limit: '2mb', verify: (req, _res, buf) => { req.rawBody = buf; } });
+const appJsonParser = express.json({ limit: '64mb' });
+app.use((req, res, next) => (isWebhookRequestPath(req) ? webhookJsonParser : appJsonParser)(req, res, next));
 
 // ─── Limites de taxa (rate-limit.mjs, memória do processo) ──
 // Login e reset contam por IP e por e-mail; signup por IP; busca, upload e envio
@@ -834,6 +838,13 @@ const waCredentialCipher = credentialCipherFromEnv();
 if (!waCredentialCipher && process.env.NODE_ENV !== 'test') {
   console.warn('⚠️ WA_CREDENTIALS_KEY ausente ou inválida (32 bytes em base64/hex): canais OpenWA/Cloud API não poderão guardar credenciais.');
 }
+// OpenWA (reserva por QR, docs/operacao/openwa-vps.md): só no host, chave ADMIN só no .env.
+const OPENWA_ADMIN_KEY = String(process.env.OPENWA_ADMIN_KEY || '').trim();
+const OPENWA_WEBHOOK_BASE = String(process.env.OPENWA_WEBHOOK_BASE || '').trim().replace(/\/$/, '');
+const openWaProvider = registerProvider(createOpenWaAdapter({ baseUrl: process.env.OPENWA_URL || '', adminKey: OPENWA_ADMIN_KEY }));
+const openWaReady = () => !!(openWaProvider.configured() && OPENWA_ADMIN_KEY && OPENWA_WEBHOOK_BASE && waCredentialCipher);
+// Canais por clínica (whatsapp_channels). pool é declarado antes (const pool = new Pool).
+const waChannels = createChannelStore({ pool, cipher: waCredentialCipher });
 if (!EVOLUTION_API_KEY) {
   console.error('❌ EVOLUTION_API_KEY não definida no .env do VPS — envios do WhatsApp retornarão erro até configurar a chave.');
 }
@@ -3680,7 +3691,8 @@ async function ensureWhatsAppChannelsSchema() {
   let sql;
   try { sql = readFileSync(path.join(__dirname, 'migration-whatsapp-canais.sql'), 'utf8'); }
   catch (e) { console.error('[wa-canais] migração não encontrada:', e.message); return; }
-  const statements = sql.split(/;\s*\n/).map(t => t.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);
+  // Divide respeitando $$ ... $$ (a migração tem a função do gatilho de sincronia).
+  const statements = splitSqlStatements(sql);
   for (const st of statements) {
     await pool.query(st).catch(e => console.error('[wa-canais-schema]', e.message, '→', st.split('\n')[0].slice(0, 90)));
   }
@@ -3714,11 +3726,14 @@ async function checkWhatsAppHealth() {
   waHealthRunning = true;
   try {
     const result = await evolutionFetch('/instance/fetchInstances', { timeoutMs: 15_000 });
-    // Evolution fora do ar ou sem resposta: não grava nada (evita marcar todas as
-    // clínicas como desconectadas por falha de leitura).
-    if (!result.ok) { console.warn(`[wa-health] Evolution sem resposta (HTTP ${result.status}); estado não atualizado`); return; }
+    // Provedor fora do ar ou sem resposta: não grava nada dos números dele (evita marcar
+    // todas as clínicas como desconectadas por falha de leitura).
+    const evoOk = result.ok;
+    const owa = await getOpenWaLiveStates().catch(() => ({ ok: false, names: new Set(), byInstance: new Map() }));
+    if (!evoOk) console.warn(`[wa-health] Evolution sem resposta (HTTP ${result.status}); estado não atualizado`);
+    if (!evoOk && !owa.names.size) return;
     const live = new Map();
-    for (const inst of extractEvolutionArray(result.data)) {
+    for (const inst of evoOk ? extractEvolutionArray(result.data) : []) {
       const name = inst.name || inst.instanceName || inst.instance?.instanceName;
       if (name) live.set(name, normalizeEvolutionConnectionState(inst));
     }
@@ -3729,8 +3744,11 @@ async function checkWhatsAppHealth() {
     const now = Date.now();
     for (const row of rows) {
       const tenantId = String(row.tenant_id);
-      // Nome que não existe mais na Evolution: 'ausente' (apagado ou nunca criado).
-      const state = live.get(row.instance_name) || 'ausente';
+      // Número de canal OpenWA: estado do OpenWA; sem resposta dele, não mexe.
+      if (owa.names.has(row.instance_name) && !owa.ok) continue;
+      if (!owa.names.has(row.instance_name) && !evoOk) continue;
+      // Nome que não existe mais no provedor: 'ausente' (apagado ou nunca criado).
+      const state = (owa.names.has(row.instance_name) ? owa.byInstance.get(row.instance_name) : live.get(row.instance_name)) || 'ausente';
       const changed = state !== row.connection_state;
       if (changed) {
         await pool.query(
@@ -4428,6 +4446,24 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       });
     }
 
+    // Canal não Evolution (OpenWA): envio pela interface do provedor, conferindo o dono.
+    const routed = await providerForInstance(instance);
+    let result;
+    if (routed.record && routed.record.provider !== 'evolution') {
+      if (!user.tenant_id || String(routed.record.tenant_id) !== String(user.tenant_id)) {
+        return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
+      }
+      if (!routed.provider) return res.status(503).json({ error: 'Canal de WhatsApp indisponível. Reconecte o número em Canais.' });
+      const sent = await routed.provider.sendText(routed.channel, cleanNumber, text, {
+        quotedId: quoted?.key?.id || quoted?.id || null, timeoutMs: 30_000,
+      });
+      if (!sent.ok) {
+        const httpStatus = sent.retryAfterMs ? 429 : (sent.status >= 400 && sent.status < 600 && sent.status !== 401 && sent.status !== 403 ? sent.status : 502);
+        console.error(`❌ send-text (${routed.record.provider}) falhou → ${maskPhone(cleanNumber)} (status=${sent.status})`);
+        return res.status(httpStatus).json({ error: sent.uncertain ? 'Envio não confirmado: confira a conversa antes de reenviar.' : 'Falha ao enviar pelo WhatsApp. Confira se o número está conectado em Canais.' });
+      }
+      result = { ok: true, status: 201, data: { key: { id: sent.providerMessageId }, messageId: sent.providerMessageId, sentNumber: cleanNumber } };
+    } else {
     const connectionCheck = await ensureEvolutionInstanceOpen(instance);
     if (!connectionCheck.ok) {
       return res.status(connectionCheck.status || 409).json(connectionCheck.data);
@@ -4441,10 +4477,11 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       return null;
     });
 
-    const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null, {
+    result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null, {
       leadId,
       tenantId: user?.tenant_id || null,
     });
+    }
     const sentNumber = result.data?.sentNumber || cleanNumber;
 
     if (!result.ok) {
@@ -4726,7 +4763,7 @@ app.post('/api/whatsapp/send-media-upload', limiteUpload, express.raw({ type: '*
         console.log(`📤 send-media-upload trying ${variant.label} jobId=${jobId}, ${attemptMeta}`);
 
         if (variant.kind === 'multipart') {
-          const res = await evolutionProvider.rawFetch(`/message/sendMedia/${instance}`, {
+          const res = await evolutionProvider.rawFetch(`/message/sendMedia/${encodeURIComponent(instance)}`, {
             method: 'POST',
             body: variant.body,
             signal: controller.signal,
@@ -9676,6 +9713,630 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
   }
 }
 
+// Mensagem da Evolution → mensagem recebida normalizada. Usa o evento interno do adaptador
+// (parseEvolutionWebhook) e corrige o que só o payload cru tem: JID real de @lid, mimetype e
+// nome do arquivo, pushName, timestamp original; mídia e foto pela própria Evolution.
+function evolutionInboundMessage({ message, remoteJid, instance }) {
+  const [evt] = evolutionProvider.parseWebhook({ event: 'messages.upsert', instance, data: message });
+  const mediaMsg = message?.message?.imageMessage || message?.message?.audioMessage ||
+    message?.message?.videoMessage || message?.message?.documentMessage || message?.message?.stickerMessage;
+  return inboundMessageFromEvent(evt || { kind: 'text', text: '', fromMe: !!message?.key?.fromMe }, {
+    remoteJid,
+    isFromMe: !!message?.key?.fromMe,
+    mediaMimeType: mediaMsg?.mimetype || mediaMsg?.mimeType || null,
+    mediaFileName: message?.message?.documentMessage?.fileName || null,
+    pushName: message?.pushName || null,
+    providerMsgId: message?.key?.id || null,
+    rawType: Object.keys(message?.message || {})[0] || null,
+    messageTimestamp: message?.messageTimestamp || message?.timestamp || null,
+    fetchMediaBase64: async () => {
+      const mediaResult = await evolutionFetch(`/chat/getBase64FromMediaMessage/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify({ message: { key: message.key, message: message.message } }),
+      });
+      return mediaResult.ok && mediaResult.data?.base64 ? mediaResult.data.base64 : null;
+    },
+    fetchAvatarUrl: async (phone) => {
+      const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify({ number: phone }),
+        timeoutMs: 5000,
+      });
+      return result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
+    },
+  });
+}
+
+// Processamento de uma mensagem recebida, comum a todos os provedores (Evolution, OpenWA).
+// `msg` vem de whatsapp/inbound.mjs (inboundMessageFromEvent). `res`: o do Express (Evolution
+// responde ao provedor no meio do caminho) ou detachedResponse() quando já foi respondido.
+// O tenant vem do canal/instância; allowTenantFallback só no legado da Evolution.
+async function handleInboundWhatsAppMessage({ res, tenantId, instance, body = {}, msg, allowTenantFallback = false }) {
+  const remoteJid = msg.remoteJid;
+  const isFromMe = msg.isFromMe;
+  const senderRole = isFromMe ? 'attendant' : 'lead';
+
+  // Resolve clean phone number from remoteJid (handles LID resolution)
+  const phone = normalizeWhatsappNumber(remoteJid);
+  const resolvedPhone = resolvePhoneFromLid(phone);
+  const phoneSuffix = resolvedPhone.slice(-11);
+  const phoneSuffixes = getWhatsappPhoneSuffixVariants(resolvedPhone);
+
+  if (!tenantId) {
+    // Fallback por instância/telefone só para a Evolution (legado). OpenWA/Cloud: a clínica
+    // vem sempre do canal; sem canal, nada é processado.
+    tenantId = allowTenantFallback ? await getFallbackTenantIdForIncomingMessage({ instanceName: instance, phoneSuffix }) : null;
+    if (tenantId) {
+      console.log(`🔐 Tenant resolved by fallback for ${instance || 'unknown-instance'} / ${maskPhone(phoneSuffix)}: ${tenantId}`);
+    } else {
+      console.warn(`⚠️ Webhook message without tenant_id: instance=${instance || 'unknown'} phone=${maskPhone(phoneSuffix)}. Message will be ignored to avoid cross-clinic leakage.`);
+      return res.status(202).json({ ignored: true, reason: 'tenant_not_resolved' });
+    }
+  }
+
+  // Webhooks do not carry a user token, but all chat tables are tenant/RLS
+  // protected. Set the resolved clinic context before looking up/creating the
+  // lead, saving chat_messages and creating attendance_sessions; otherwise a
+  // pooled connection can return an empty queue/chat or reject inserts.
+  await setDbTenantContext({ tenantId, isSuperAdmin: false });
+
+  // Extract message content
+  const msgContent = msg.msgContent || '';
+  const msgType = msg.msgType;
+
+  // Acknowledge Evolution immediately after the message is accepted for
+  // processing. Media download, avatar lookup, menu replies and automations can
+  // take seconds; if Evolution waits for all of that it can retry/stall the
+  // socket and the chat appears stuck in "digitando" with no message delivery.
+  if (!res.headersSent) {
+    res.json({ accepted: true, event: 'messages.upsert' });
+  }
+
+  // Extract media metadata
+  const mediaMimeType = msg.mediaMimeType || null;
+  const mediaFileName = msg.mediaFileName || null;
+
+  // Mídia pelo adaptador do provedor e gravada em disco (não guarda base64 no banco)
+  let mediaUrl = null;
+  if (['image', 'audio', 'video', 'document', 'sticker'].includes(msgType) && msg.providerMsgId) {
+    try {
+      const mediaBase64 = await msg.fetchMediaBase64();
+      if (mediaBase64) {
+        // Save to disk instead of storing base64 in DB
+        const diskUrl = await saveMediaToDisk(
+          mediaBase64,
+          mediaMimeType,
+          mediaFileName
+        );
+        mediaUrl = diskUrl || null;
+      }
+    } catch (mediaErr) {
+      console.error('Media fetch error:', mediaErr.message);
+    }
+  }
+
+  // Find lead by phone and tenant_id
+  const { rows: leads } = await pool.query(
+    `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, queue_name, awaiting_queue_selection FROM crm_leads 
+     WHERE tenant_id = $1
+       AND RIGHT(REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g'), 11) = ANY($2::text[])
+     LIMIT 1`,
+    [tenantId, phoneSuffixes.length ? phoneSuffixes : [phoneSuffix]]
+  );
+
+  let lead = leads[0] || null;
+  const pushName = msg.pushName || phone;
+  const resolvedContent = msgContent || `[${msgType}]`;
+  const msgId = msg.providerMsgId || `wh-${createHash('sha1')
+    .update(`${instance || 'unknown'}:${resolvedPhone}:${resolvedContent}:${msg.messageTimestamp || body?.date_time || ''}`)
+    .digest('hex')}`;
+  const rawType = msg.rawType || null;
+
+  // Mensagens geradas pelo próprio número conectado também chegam via
+  // MESSAGES_UPSERT. Elas servem para sincronizar histórico, mas não podem
+  // entrar no fluxo de "cliente respondeu": não criam fila, não reenviam menu,
+  // não disparam automações e não geram notificação de entrada.
+  if (isFromMe) {
+    if (!lead) {
+      console.log(`↪️ Outgoing webhook ignored without existing lead: ${maskPhone(resolvedPhone)} (${msgId})`);
+      return res.json({ processed: true, fromMe: true, ignored: 'lead_not_found' });
+    }
+
+    await persistIncomingMessage({
+      msgId,
+      leadId: lead.id,
+      content: resolvedContent,
+      msgType,
+      phone: resolvedPhone,
+      instance,
+      pushName,
+      remoteJid,
+      rawType,
+      mediaUrl,
+      fileName: mediaFileName,
+      mimeType: mediaMimeType,
+      tenantId,
+      sender: 'attendant',
+      messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+    });
+
+    broadcastIncomingMessage({
+      msgId,
+      phone: resolvedPhone,
+      pushName,
+      leadId: lead.id,
+      leadName: lead.name,
+      content: resolvedContent,
+      msgType,
+      instance,
+      queueId: lead.queue_id || null,
+      queueName: lead.queue_name || null,
+      queueColor: lead.queue_color || null,
+      mediaUrl,
+      fileName: mediaFileName,
+      mimeType: mediaMimeType,
+      tenantId,
+      sender: 'attendant',
+    });
+
+    console.log(`↪️ Outgoing webhook synced: ${maskPhone(resolvedPhone)} (${msgId})`);
+    return res.json({ processed: true, fromMe: true, leadId: lead.id });
+  }
+
+  // ─── Opt-out: paciente respondeu SAIR / PARAR / STOP ───
+  // Registra o descadastro da clínica, cancela o que estava na fila e
+  // confirma uma única vez. Não aciona menu, boas-vindas nem automações.
+  if (tenantId && msgType === 'text' && isWhatsAppOptOutText(msgContent)) {
+    const isNewOptOut = await recordWhatsAppOptOut(tenantId, resolvedPhone, { source: 'whatsapp', keyword: String(msgContent).trim().slice(0, 40) });
+    if (lead) {
+      await persistIncomingMessage({
+        msgId, leadId: lead.id, content: resolvedContent, msgType, phone: resolvedPhone, instance, pushName,
+        remoteJid, rawType, mediaUrl, fileName: mediaFileName, mimeType: mediaMimeType, tenantId,
+        messageTimestamp: msg.messageTimestamp || body?.date_time || null,
+      }).catch(e => console.error('[opt-out] persist failed:', e.message));
+      broadcastIncomingMessage({
+        msgId, phone: resolvedPhone, pushName, leadId: lead.id, leadName: lead.name, content: resolvedContent,
+        msgType, instance, queueId: lead.queue_id || null, queueName: lead.queue_name || null,
+        queueColor: lead.queue_color || null, mediaUrl, fileName: mediaFileName, mimeType: mediaMimeType, tenantId,
+      });
+    }
+    if (isNewOptOut) {
+      // Confirmação obrigatória do SAIR: pela fila, como resposta (service), e é a
+      // ÚNICA mensagem que passa pelo filtro de opt-out (isOptOutConfirmationJob).
+      await enqueueWhatsAppAutoReply({
+        tenantId, instance, phone: resolvedPhone, kind: WA_OPT_OUT_CONFIRMATION_KIND, category: 'service',
+        message: `Pronto! A ${await getTenantClinicName(tenantId)} não vai mais enviar mensagens automáticas para este número, inclusive lembretes de consulta. Se quiser voltar a receber, é só pedir para a nossa equipe. Para falar com a gente, mande uma mensagem por aqui.`,
+      }).catch(e => console.error('[opt-out] confirmação não enfileirada:', e.message));
+    }
+    console.log(`🚫 Opt-out registrado (tenant ${tenantId}, final ${String(resolvedPhone).slice(-4)})`);
+    return res.json({ processed: true, optOut: true, leadId: lead?.id || null });
+  }
+
+  // ─── Resposta ao pedido de confirmação de consulta (botão, 1/2 ou SIM) ───
+  // Antes do lead novo, do menu de filas e da avaliação: "1"/"2" aqui é a resposta
+  // ao lembrete, não escolha de setor nem nota.
+  // Resposta a oferta de encaixe (lista de espera) primeiro: palavras e botões próprios.
+  const waitlistReply = !isFromMe
+    ? await handleWaitlistOfferReply({ tenantId, phone: resolvedPhone, msgType, msgContent, instance })
+        .catch(e => { console.error('[lista-espera] erro:', e.message); return null; })
+    : null;
+  const reminderReply = !isFromMe && !waitlistReply?.handled
+    ? await handleAppointmentReminderReply({ tenantId, phone: resolvedPhone, msgType, msgContent, instance })
+        .catch(e => { console.error('[confirmação] erro:', e.message); return null; })
+    : null;
+  const isReminderReply = !!reminderReply?.handled || !!waitlistReply?.handled;
+
+  // ─── New contact: create lead + contato + check hours + send menu ───
+  if (!lead) {
+    // Boas-vindas e fora de horário da clínica dona do número (não de outra clínica).
+    const attendanceSettingsCache = await getTenantSetting(tenantId, 'attendance_settings');
+    const newId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
+       VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', $5, $4)`,
+      [newId, pushName, resolvedPhone, tenantId, !isReminderReply]
+    );
+    lead = { id: newId, name: pushName, phone: resolvedPhone, queue_id: null, queue_name: null, awaiting_queue_selection: !isReminderReply, avatar_url: null };
+    console.log(`🆕 New lead created: ${maskPhone(resolvedPhone)}`);
+
+    // 🤖 Trigger "Lead entrou no CRM" automation
+    triggerAutomationFlows('Lead entrou no CRM', { name: pushName, phone, tenantId }).catch(() => {});
+
+    // Auto-save to contatos table (skip if phone already exists)
+    try {
+      const existingContato = await pool.query('SELECT id FROM contatos WHERE telefone = $1 AND tenant_id = $2', [resolvedPhone, tenantId]);
+      if (existingContato.rows.length === 0) {
+        await pool.query(
+          'INSERT INTO contatos (id, nome, telefone, tipo, tenant_id) VALUES ($1, $2, $3, $4, $5)',
+          [crypto.randomUUID(), pushName, resolvedPhone, 'pessoal', tenantId]
+        );
+        console.log(`📇 Auto-saved contact: ${maskPhone(resolvedPhone)}`);
+      }
+    } catch (contatoErr) {
+      console.error('Failed to auto-save contato:', contatoErr.message);
+    }
+
+    // Check business hours
+    if (!isFromMe && !isReminderReply && !isWithinBusinessHours(attendanceSettingsCache)) {
+      const offMsg = attendanceSettingsCache?.offHoursMessage ||
+        `Olá! Aqui é da ${await getTenantClinicName(tenantId)}. Nosso atendimento está fechado agora. Deixe sua mensagem que respondemos assim que abrirmos. 😊`;
+      // Pela fila (categoria 'service': é resposta à mensagem do paciente e só existe
+      // fora do expediente, então a janela de envio não se aplica).
+      const offJob = await enqueueWhatsAppAutoReply({
+        tenantId, instance, phone: resolvedPhone, message: offMsg, kind: 'off_hours', category: 'service',
+      }).catch(e => { console.error('[auto-reply] fora do horário não enfileirada:', e.message); return null; });
+      if (offJob) console.log(`🕐 Off-hours reply queued (job ${offJob})`);
+      if (!isFromMe) {
+        await ensureWaitingSessionForIncomingLead({
+          lead,
+          phone: resolvedPhone,
+          queueId: lead.queue_id || null,
+          queueName: lead.queue_name || null,
+          tenantId,
+        });
+      }
+      await persistIncomingMessage({
+        msgId,
+        leadId: lead.id,
+        content: resolvedContent,
+        msgType,
+        phone: resolvedPhone,
+        instance,
+        pushName,
+        remoteJid,
+        rawType,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: senderRole,
+        messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+      });
+      broadcastIncomingMessage({
+        msgId,
+        phone: resolvedPhone,
+        pushName,
+        leadId: lead.id,
+        leadName: lead.name,
+        content: resolvedContent,
+        msgType,
+        instance,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: senderRole,
+        messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+      });
+      return res.json({ processed: true, offHours: true, leadId: lead.id });
+    }
+
+    // Boas-vindas pela fila; o menu de filas é enfileirado depois dela (hook do job)
+    // para manter a ordem. Sem boas-vindas enfileirada, o menu entra na fila já.
+    let welcomeJob = null;
+    if (!isFromMe && !isReminderReply && attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
+      welcomeJob = await enqueueWhatsAppAutoReply({
+        tenantId, instance, phone: resolvedPhone, message: attendanceSettingsCache.welcomeMessage,
+        kind: 'welcome', category: 'transactional', thenQueueMenu: true,
+      }).catch(e => { console.error('[auto-reply] boas-vindas não enfileirada:', e.message); return null; });
+    }
+
+    // Send queue menu
+    if (!isFromMe && !isReminderReply && !welcomeJob) {
+      enqueueQueueMenu({ tenantId, instance, phone: resolvedPhone })
+        .catch((err) => console.warn('Queue menu not queued:', err.message));
+    }
+  }
+
+  if (!isFromMe) {
+    await ensureWaitingSessionForIncomingLead({
+      lead,
+      phone: resolvedPhone,
+      queueId: lead.queue_id || null,
+      queueName: lead.queue_name || null,
+      tenantId,
+    });
+  }
+
+  // ─── Lead is awaiting queue selection ───
+  if (!isFromMe && !isReminderReply && lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
+    const selectedQueue = await matchQueue(msgContent, tenantId);
+
+    if (selectedQueue) {
+      // Assign queue to lead
+      await pool.query(
+        `UPDATE crm_leads SET queue_id = $1, queue_name = $2, awaiting_queue_selection = false, updated_at = NOW() WHERE id = $3 AND tenant_id = $4`,
+        [selectedQueue.id, selectedQueue.name, lead.id, tenantId]
+      );
+      lead.queue_id = selectedQueue.id;
+      lead.queue_name = selectedQueue.name;
+
+      if (!isFromMe) {
+        await ensureWaitingSessionForIncomingLead({
+          lead,
+          phone: resolvedPhone,
+          queueId: selectedQueue.id,
+          queueName: selectedQueue.name,
+          tenantId,
+        });
+      }
+
+      // Confirmação do setor escolhido: resposta ao paciente, pela fila.
+      await enqueueWhatsAppAutoReply({
+        tenantId, instance, phone: resolvedPhone, kind: 'queue_selected', category: 'service', dedupeMinutes: 10,
+        message: `✅ Você foi direcionado para o setor *${selectedQueue.icon} ${selectedQueue.name}*.\n\nUm de nossos atendentes irá te ajudar em breve! 😊`,
+      }).catch(e => console.error('[auto-reply] confirmação de setor não enfileirada:', e.message));
+
+      console.log(`📌 Lead ${lead.id} routed to queue: ${selectedQueue.name}`);
+
+      // Broadcast queue assignment to SSE
+      broadcastSSE('queue_assigned', {
+        leadId: lead.id,
+        leadName: lead.name,
+        phone: resolvedPhone,
+        queueId: selectedQueue.id,
+        queueName: selectedQueue.name,
+        queueColor: selectedQueue.color,
+        timestamp: new Date().toISOString(),
+      }, tenantId);
+
+      // Also persist and broadcast the queue-selection message itself so it
+      // appears when the attendant opens the chat from a global notification.
+      const queueSelectionContent = `[Selecionou: ${selectedQueue.name}]`;
+      await persistIncomingMessage({
+        msgId,
+        leadId: lead.id,
+        content: queueSelectionContent,
+        msgType: 'text',
+        phone: resolvedPhone,
+        instance,
+        pushName,
+        remoteJid,
+        rawType,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: senderRole,
+        messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+      });
+
+      broadcastIncomingMessage({
+        msgId,
+        phone: resolvedPhone,
+        pushName,
+        leadId: lead.id,
+        leadName: lead.name,
+        content: queueSelectionContent,
+        msgType: 'text',
+        instance,
+        queueId: selectedQueue.id,
+        queueName: selectedQueue.name,
+        queueColor: selectedQueue.color,
+        tenantId,
+        sender: senderRole,
+      });
+
+      return res.json({ processed: true, leadId: lead.id, queueId: selectedQueue.id });
+    } else {
+      await persistIncomingMessage({
+        msgId,
+        leadId: lead.id,
+        content: resolvedContent,
+        msgType,
+        phone: resolvedPhone,
+        instance,
+        pushName,
+        remoteJid,
+        rawType,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: senderRole,
+        messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+      });
+      broadcastIncomingMessage({
+        msgId,
+        phone: resolvedPhone,
+        pushName,
+        leadId: lead.id,
+        leadName: lead.name,
+        content: resolvedContent,
+        msgType,
+        instance,
+        queueId: lead.queue_id || null,
+        queueName: lead.queue_name || null,
+        queueColor: lead.queue_color || null,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: senderRole,
+      });
+      // Invalid selection — resend menu in background so the webhook does not
+      // block message delivery/realtime if Evolution is slow.
+      enqueueQueueMenu({ tenantId, instance, phone: resolvedPhone })
+        .catch((err) => console.warn('Queue menu resend not queued:', err.message));
+      console.log(`💬 Incoming message from ${maskPhone(resolvedPhone)} awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
+      return res.json({ processed: true, resent_menu: true, leadId: lead.id });
+    }
+  }
+
+  // ─── Check for satisfaction rating response ───
+  // Chave com a clínica: o mesmo paciente pode ser atendido por duas clínicas.
+  const ratingKey = `awaiting_rating_${tenantId}_${phone}`;
+  const { rows: ratingCheck } = await pool.query("SELECT value FROM app_settings WHERE key = $1", [ratingKey]);
+  if (!isReminderReply && ratingCheck.length > 0 && (msgType === 'text' || msgType === 'button_response')) {
+    let rating = null;
+    // Button response: rating_leadId_N
+    const btnMatch = msgContent.match(/rating_[^_]+_(\d)/);
+    if (btnMatch) rating = parseInt(btnMatch[1], 10);
+    // Text response: just a number 1-5
+    if (!rating) {
+      const num = parseInt(msgContent.trim(), 10);
+      if (num >= 1 && num <= 5) rating = num;
+    }
+
+    if (rating) {
+      const ratingData = ratingCheck[0].value;
+      const ratingId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO satisfaction_ratings (id, session_id, lead_id, lead_phone, rating, attendant_id, attendant_name, tenant_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [ratingId, ratingData.sessionId || null, ratingData.leadId, phone, rating, ratingData.attendantId || null, ratingData.attendantName || null, tenantId]
+      );
+      // Remove awaiting flag
+      await pool.query("DELETE FROM app_settings WHERE key = $1", [ratingKey]);
+
+      // Parecer T11: linguagem neutra; nota até 3 oferece canal para contar o que houve.
+      const stars = '⭐'.repeat(rating);
+      const thanks = rating >= 4
+        ? `${stars}\n\nMuito obrigado pela avaliação! Ficamos felizes em atender você. 😊`
+        : `${stars}\n\nObrigado pela avaliação. Se quiser, conte por aqui o que podemos melhorar: nossa equipe vai ler.`;
+
+      await enqueueWhatsAppAutoReply({
+        tenantId, instance, phone, message: thanks, kind: 'rating_thanks', category: 'service', dedupeMinutes: 10,
+      }).catch(e => console.error('[auto-reply] agradecimento não enfileirado:', e.message));
+
+      console.log(`⭐ Rating ${rating}/5 received from ${maskPhone(phone)}`);
+      return res.json({ processed: true, rating, leadId: ratingData.leadId });
+    }
+  }
+
+  // ─── Auto-return from recovery stage to queue with priority ───
+  if ((await getFollowupConfig(tenantId)).returnToQueueOnReply) {
+    try {
+      const { rows: leadStage } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1 AND tenant_id = $2', [lead.id, tenantId]);
+      const currentStage = leadStage[0]?.kanban_stage;
+      if (currentStage && RECOVERY_STAGES.includes(currentStage)) {
+        // Move lead back to "lead" stage (top of funnel)
+        await pool.query(
+          `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', priority = true, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+          [lead.id, tenantId]
+        );
+        // Log movement
+        await pool.query(
+          `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason, tenant_id)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [lead.id, currentStage, 'em_atendimento', 'Sistema (Auto-retorno)', 'Cliente respondeu durante recuperação — retornou à fila com prioridade', tenantId]
+        ).catch(() => {});
+        // Add "Recuperação de Lead" tag
+        try {
+          // Ensure the tag exists
+          const { rows: existingTag } = await pool.query(
+            "SELECT id FROM lead_tags WHERE name = 'Recuperação de Lead' AND tenant_id = $1 LIMIT 1",
+            [tenantId]
+          );
+          let tagId;
+          if (existingTag.length > 0) {
+            tagId = existingTag[0].id;
+          } else {
+            tagId = crypto.randomUUID();
+            await pool.query(
+              "INSERT INTO lead_tags (id, name, color, tenant_id) VALUES ($1, $2, $3, $4)",
+              [tagId, 'Recuperação de Lead', '#F59E0B', tenantId]
+            );
+          }
+          // Assign tag to lead
+          await pool.query(
+            "INSERT INTO lead_tag_assignments (lead_id, tag_id, tenant_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            [lead.id.toString(), tagId, tenantId]
+          );
+        } catch (tagErr) {
+          console.error('Failed to assign recovery tag:', tagErr.message);
+        }
+
+        // Create a new waiting session so lead appears at top of queue
+        const sessionId = crypto.randomUUID();
+        await pool.query(
+          `INSERT INTO attendance_sessions (id, lead_id, lead_phone, status, started_waiting_at, tenant_id)
+           VALUES ($1, $2, $3, 'waiting', NOW(), $4)
+           ON CONFLICT DO NOTHING`,
+          [sessionId, lead.id.toString(), phone, tenantId]
+        ).catch(() => {});
+
+        console.log(`🔄 Lead ${lead.id} (${maskPhone(phone)}) replied from recovery stage ${currentStage} → returned to queue with priority`);
+        broadcastSSE('lead_returned_from_recovery', {
+          leadId: lead.id,
+          leadName: lead.name || pushName,
+          phone,
+          fromStage: currentStage,
+          timestamp: new Date().toISOString(),
+        }, tenantId);
+      }
+    } catch (recoveryErr) {
+      console.error('Recovery auto-return error:', recoveryErr.message);
+    }
+  }
+
+  // ─── Normal message (queue already assigned) ───
+  await persistIncomingMessage({
+    msgId,
+    leadId: lead.id,
+    content: resolvedContent,
+    msgType,
+    phone: resolvedPhone,
+    instance,
+    pushName,
+    remoteJid,
+    rawType,
+    mediaUrl,
+    fileName: mediaFileName,
+    mimeType: mediaMimeType,
+    tenantId,
+    sender: senderRole,
+    messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+  });
+
+  broadcastIncomingMessage({
+    msgId,
+    phone: resolvedPhone,
+    pushName,
+    leadId: lead.id,
+    leadName: lead.name,
+    content: resolvedContent,
+    msgType,
+    instance,
+    queueId: lead.queue_id || null,
+    queueName: lead.queue_name || null,
+    queueColor: lead.queue_color || null,
+    mediaUrl,
+    fileName: mediaFileName,
+    mimeType: mediaMimeType,
+    tenantId,
+    sender: senderRole,
+  });
+
+  console.log(`💬 New message from ${maskPhone(phone)} → saved + broadcast to ${sseClients.size} clients`);
+
+  // Send Web Push notification to all subscribed attendants
+  sendPushToAll({
+    title: `💬 ${pushName || phone}`,
+    body: msgContent || `[${msgType}]`,
+    tag: `msg-${lead.id}`,
+    url: `/chat?lead=${encodeURIComponent(lead.id)}`,
+    leadId: lead.id,
+  }, tenantId);
+
+  if (lead && !lead.avatar_url) {
+    (async () => {
+      try {
+        const pictureUrl = await msg.fetchAvatarUrl(phone);
+        if (pictureUrl) {
+          await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
+          console.log(`📸 Auto-synced avatar for lead ${lead.id}`);
+        }
+      } catch (fetchErr) {
+        console.error('Webhook profile fetch error:', fetchErr.message);
+      }
+    })();
+  }
+
+  return res.json({ processed: true, leadId: lead.id });
+}
+
+
 app.post('/api/webhook/evolution', async (req, res) => {
   const authBody = Array.isArray(req.body) ? req.body[0] : req.body;
   let authInstance = null;
@@ -9993,615 +10654,281 @@ app.post('/api/webhook/evolution', async (req, res) => {
       return res.json({ ignored: true, reason: 'group_or_missing_jid' });
     }
 
-    const isFromMe = !!message?.key?.fromMe;
-    const senderRole = isFromMe ? 'attendant' : 'lead';
-
-    // Resolve clean phone number from remoteJid (handles LID resolution)
-    const phone = normalizeWhatsappNumber(remoteJid);
-    const resolvedPhone = resolvePhoneFromLid(phone);
-    const phoneSuffix = resolvedPhone.slice(-11);
-    const phoneSuffixes = getWhatsappPhoneSuffixVariants(resolvedPhone);
-
-    if (!tenantId) {
-      tenantId = await getFallbackTenantIdForIncomingMessage({ instanceName: instance, phoneSuffix });
-      if (tenantId) {
-        console.log(`🔐 Tenant resolved by fallback for ${instance || 'unknown-instance'} / ${maskPhone(phoneSuffix)}: ${tenantId}`);
-      } else {
-        console.warn(`⚠️ Webhook message without tenant_id: instance=${instance || 'unknown'} phone=${maskPhone(phoneSuffix)}. Message will be ignored to avoid cross-clinic leakage.`);
-        return res.status(202).json({ ignored: true, reason: 'tenant_not_resolved' });
-      }
-    }
-
-    // Webhooks do not carry a user token, but all chat tables are tenant/RLS
-    // protected. Set the resolved clinic context before looking up/creating the
-    // lead, saving chat_messages and creating attendance_sessions; otherwise a
-    // pooled connection can return an empty queue/chat or reject inserts.
-    await setDbTenantContext({ tenantId, isSuperAdmin: false });
-
-    // Extract message content
-    const msgContent =
-      message?.message?.conversation ||
-      message?.message?.extendedTextMessage?.text ||
-      message?.message?.buttonsResponseMessage?.selectedButtonId ||
-      message?.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
-      message?.message?.imageMessage?.caption ||
-      message?.message?.videoMessage?.caption ||
-      '';
-    const msgType =
-      message?.message?.imageMessage ? 'image' :
-      message?.message?.audioMessage ? 'audio' :
-      message?.message?.videoMessage ? 'video' :
-      message?.message?.documentMessage ? 'document' :
-      message?.message?.stickerMessage ? 'sticker' :
-      message?.message?.locationMessage ? 'location' :
-      message?.message?.contactMessage ? 'contact' :
-      message?.message?.buttonsResponseMessage ? 'button_response' :
-      message?.message?.listResponseMessage ? 'list_response' :
-      'text';
-
-    // Acknowledge Evolution immediately after the message is accepted for
-    // processing. Media download, avatar lookup, menu replies and automations can
-    // take seconds; if Evolution waits for all of that it can retry/stall the
-    // socket and the chat appears stuck in "digitando" with no message delivery.
-    if (!res.headersSent) {
-      res.json({ accepted: true, event: 'messages.upsert' });
-    }
-
-    // Extract media metadata
-    const mediaMsg = message?.message?.imageMessage || message?.message?.audioMessage ||
-      message?.message?.videoMessage || message?.message?.documentMessage || message?.message?.stickerMessage;
-    const mediaMimeType = mediaMsg?.mimetype || mediaMsg?.mimeType || null;
-    const mediaFileName = message?.message?.documentMessage?.fileName || null;
-
-    // Fetch media from Evolution API and save to disk
-    let mediaUrl = null;
-    if (['image', 'audio', 'video', 'document', 'sticker'].includes(msgType) && message?.key?.id) {
-      try {
-        const mediaResult = await evolutionFetch(`/chat/getBase64FromMediaMessage/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({ message: { key: message.key, message: message.message } }),
-        });
-        if (mediaResult.ok && mediaResult.data?.base64) {
-          // Save to disk instead of storing base64 in DB
-          const diskUrl = await saveMediaToDisk(
-            mediaResult.data.base64,
-            mediaMimeType,
-            mediaFileName
-          );
-          mediaUrl = diskUrl || null;
-        }
-      } catch (mediaErr) {
-        console.error('Media fetch error:', mediaErr.message);
-      }
-    }
-
-    // Find lead by phone and tenant_id
-    const { rows: leads } = await pool.query(
-      `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, queue_name, awaiting_queue_selection FROM crm_leads 
-       WHERE tenant_id = $1
-         AND RIGHT(REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g'), 11) = ANY($2::text[])
-       LIMIT 1`,
-      [tenantId, phoneSuffixes.length ? phoneSuffixes : [phoneSuffix]]
-    );
-
-    let lead = leads[0] || null;
-    const pushName = message?.pushName || phone;
-    const resolvedContent = msgContent || `[${msgType}]`;
-    const msgId = message?.key?.id || `wh-${createHash('sha1')
-      .update(`${instance || 'unknown'}:${resolvedPhone}:${resolvedContent}:${message?.messageTimestamp || body?.date_time || ''}`)
-      .digest('hex')}`;
-    const rawType = Object.keys(message?.message || {})[0] || null;
-
-    // Mensagens geradas pelo próprio número conectado também chegam via
-    // MESSAGES_UPSERT. Elas servem para sincronizar histórico, mas não podem
-    // entrar no fluxo de "cliente respondeu": não criam fila, não reenviam menu,
-    // não disparam automações e não geram notificação de entrada.
-    if (isFromMe) {
-      if (!lead) {
-        console.log(`↪️ Outgoing webhook ignored without existing lead: ${maskPhone(resolvedPhone)} (${msgId})`);
-        return res.json({ processed: true, fromMe: true, ignored: 'lead_not_found' });
-      }
-
-      await persistIncomingMessage({
-        msgId,
-        leadId: lead.id,
-        content: resolvedContent,
-        msgType,
-        phone: resolvedPhone,
-        instance,
-        pushName,
-        remoteJid,
-        rawType,
-        mediaUrl,
-        fileName: mediaFileName,
-        mimeType: mediaMimeType,
-        tenantId,
-        sender: 'attendant',
-        messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-      });
-
-      broadcastIncomingMessage({
-        msgId,
-        phone: resolvedPhone,
-        pushName,
-        leadId: lead.id,
-        leadName: lead.name,
-        content: resolvedContent,
-        msgType,
-        instance,
-        queueId: lead.queue_id || null,
-        queueName: lead.queue_name || null,
-        queueColor: lead.queue_color || null,
-        mediaUrl,
-        fileName: mediaFileName,
-        mimeType: mediaMimeType,
-        tenantId,
-        sender: 'attendant',
-      });
-
-      console.log(`↪️ Outgoing webhook synced: ${maskPhone(resolvedPhone)} (${msgId})`);
-      return res.json({ processed: true, fromMe: true, leadId: lead.id });
-    }
-
-    // ─── Opt-out: paciente respondeu SAIR / PARAR / STOP ───
-    // Registra o descadastro da clínica, cancela o que estava na fila e
-    // confirma uma única vez. Não aciona menu, boas-vindas nem automações.
-    if (tenantId && msgType === 'text' && isWhatsAppOptOutText(msgContent)) {
-      const isNewOptOut = await recordWhatsAppOptOut(tenantId, resolvedPhone, { source: 'whatsapp', keyword: String(msgContent).trim().slice(0, 40) });
-      if (lead) {
-        await persistIncomingMessage({
-          msgId, leadId: lead.id, content: resolvedContent, msgType, phone: resolvedPhone, instance, pushName,
-          remoteJid, rawType, mediaUrl, fileName: mediaFileName, mimeType: mediaMimeType, tenantId,
-          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || null,
-        }).catch(e => console.error('[opt-out] persist failed:', e.message));
-        broadcastIncomingMessage({
-          msgId, phone: resolvedPhone, pushName, leadId: lead.id, leadName: lead.name, content: resolvedContent,
-          msgType, instance, queueId: lead.queue_id || null, queueName: lead.queue_name || null,
-          queueColor: lead.queue_color || null, mediaUrl, fileName: mediaFileName, mimeType: mediaMimeType, tenantId,
-        });
-      }
-      if (isNewOptOut) {
-        // Confirmação obrigatória do SAIR: pela fila, como resposta (service), e é a
-        // ÚNICA mensagem que passa pelo filtro de opt-out (isOptOutConfirmationJob).
-        await enqueueWhatsAppAutoReply({
-          tenantId, instance, phone: resolvedPhone, kind: WA_OPT_OUT_CONFIRMATION_KIND, category: 'service',
-          message: `Pronto! A ${await getTenantClinicName(tenantId)} não vai mais enviar mensagens automáticas para este número, inclusive lembretes de consulta. Se quiser voltar a receber, é só pedir para a nossa equipe. Para falar com a gente, mande uma mensagem por aqui.`,
-        }).catch(e => console.error('[opt-out] confirmação não enfileirada:', e.message));
-      }
-      console.log(`🚫 Opt-out registrado (tenant ${tenantId}, final ${String(resolvedPhone).slice(-4)})`);
-      return res.json({ processed: true, optOut: true, leadId: lead?.id || null });
-    }
-
-    // ─── Resposta ao pedido de confirmação de consulta (botão, 1/2 ou SIM) ───
-    // Antes do lead novo, do menu de filas e da avaliação: "1"/"2" aqui é a resposta
-    // ao lembrete, não escolha de setor nem nota.
-    // Resposta a oferta de encaixe (lista de espera) primeiro: palavras e botões próprios.
-    const waitlistReply = !isFromMe
-      ? await handleWaitlistOfferReply({ tenantId, phone: resolvedPhone, msgType, msgContent, instance })
-          .catch(e => { console.error('[lista-espera] erro:', e.message); return null; })
-      : null;
-    const reminderReply = !isFromMe && !waitlistReply?.handled
-      ? await handleAppointmentReminderReply({ tenantId, phone: resolvedPhone, msgType, msgContent, instance })
-          .catch(e => { console.error('[confirmação] erro:', e.message); return null; })
-      : null;
-    const isReminderReply = !!reminderReply?.handled || !!waitlistReply?.handled;
-
-    // ─── New contact: create lead + contato + check hours + send menu ───
-    if (!lead) {
-      // Boas-vindas e fora de horário da clínica dona do número (não de outra clínica).
-      const attendanceSettingsCache = await getTenantSetting(tenantId, 'attendance_settings');
-      const newId = crypto.randomUUID();
-      await pool.query(
-        `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
-         VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', $5, $4)`,
-        [newId, pushName, resolvedPhone, tenantId, !isReminderReply]
-      );
-      lead = { id: newId, name: pushName, phone: resolvedPhone, queue_id: null, queue_name: null, awaiting_queue_selection: !isReminderReply, avatar_url: null };
-      console.log(`🆕 New lead created: ${maskPhone(resolvedPhone)}`);
-
-      // 🤖 Trigger "Lead entrou no CRM" automation
-      triggerAutomationFlows('Lead entrou no CRM', { name: pushName, phone, tenantId }).catch(() => {});
-
-      // Auto-save to contatos table (skip if phone already exists)
-      try {
-        const existingContato = await pool.query('SELECT id FROM contatos WHERE telefone = $1 AND tenant_id = $2', [resolvedPhone, tenantId]);
-        if (existingContato.rows.length === 0) {
-          await pool.query(
-            'INSERT INTO contatos (id, nome, telefone, tipo, tenant_id) VALUES ($1, $2, $3, $4, $5)',
-            [crypto.randomUUID(), pushName, resolvedPhone, 'pessoal', tenantId]
-          );
-          console.log(`📇 Auto-saved contact: ${maskPhone(resolvedPhone)}`);
-        }
-      } catch (contatoErr) {
-        console.error('Failed to auto-save contato:', contatoErr.message);
-      }
-
-      // Check business hours
-      if (!isFromMe && !isReminderReply && !isWithinBusinessHours(attendanceSettingsCache)) {
-        const offMsg = attendanceSettingsCache?.offHoursMessage ||
-          `Olá! Aqui é da ${await getTenantClinicName(tenantId)}. Nosso atendimento está fechado agora. Deixe sua mensagem que respondemos assim que abrirmos. 😊`;
-        // Pela fila (categoria 'service': é resposta à mensagem do paciente e só existe
-        // fora do expediente, então a janela de envio não se aplica).
-        const offJob = await enqueueWhatsAppAutoReply({
-          tenantId, instance, phone: resolvedPhone, message: offMsg, kind: 'off_hours', category: 'service',
-        }).catch(e => { console.error('[auto-reply] fora do horário não enfileirada:', e.message); return null; });
-        if (offJob) console.log(`🕐 Off-hours reply queued (job ${offJob})`);
-        if (!isFromMe) {
-          await ensureWaitingSessionForIncomingLead({
-            lead,
-            phone: resolvedPhone,
-            queueId: lead.queue_id || null,
-            queueName: lead.queue_name || null,
-            tenantId,
-          });
-        }
-        await persistIncomingMessage({
-          msgId,
-          leadId: lead.id,
-          content: resolvedContent,
-          msgType,
-          phone: resolvedPhone,
-          instance,
-          pushName,
-          remoteJid,
-          rawType,
-          mediaUrl,
-          fileName: mediaFileName,
-          mimeType: mediaMimeType,
-          tenantId,
-          sender: senderRole,
-          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-        });
-        broadcastIncomingMessage({
-          msgId,
-          phone: resolvedPhone,
-          pushName,
-          leadId: lead.id,
-          leadName: lead.name,
-          content: resolvedContent,
-          msgType,
-          instance,
-          mediaUrl,
-          fileName: mediaFileName,
-          mimeType: mediaMimeType,
-          tenantId,
-          sender: senderRole,
-          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-        });
-        return res.json({ processed: true, offHours: true, leadId: lead.id });
-      }
-
-      // Boas-vindas pela fila; o menu de filas é enfileirado depois dela (hook do job)
-      // para manter a ordem. Sem boas-vindas enfileirada, o menu entra na fila já.
-      let welcomeJob = null;
-      if (!isFromMe && !isReminderReply && attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
-        welcomeJob = await enqueueWhatsAppAutoReply({
-          tenantId, instance, phone: resolvedPhone, message: attendanceSettingsCache.welcomeMessage,
-          kind: 'welcome', category: 'transactional', thenQueueMenu: true,
-        }).catch(e => { console.error('[auto-reply] boas-vindas não enfileirada:', e.message); return null; });
-      }
-
-      // Send queue menu
-      if (!isFromMe && !isReminderReply && !welcomeJob) {
-        enqueueQueueMenu({ tenantId, instance, phone: resolvedPhone })
-          .catch((err) => console.warn('Queue menu not queued:', err.message));
-      }
-    }
-
-    if (!isFromMe) {
-      await ensureWaitingSessionForIncomingLead({
-        lead,
-        phone: resolvedPhone,
-        queueId: lead.queue_id || null,
-        queueName: lead.queue_name || null,
-        tenantId,
-      });
-    }
-
-    // ─── Lead is awaiting queue selection ───
-    if (!isFromMe && !isReminderReply && lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
-      const selectedQueue = await matchQueue(msgContent, tenantId);
-
-      if (selectedQueue) {
-        // Assign queue to lead
-        await pool.query(
-          `UPDATE crm_leads SET queue_id = $1, queue_name = $2, awaiting_queue_selection = false, updated_at = NOW() WHERE id = $3 AND tenant_id = $4`,
-          [selectedQueue.id, selectedQueue.name, lead.id, tenantId]
-        );
-        lead.queue_id = selectedQueue.id;
-        lead.queue_name = selectedQueue.name;
-
-        if (!isFromMe) {
-          await ensureWaitingSessionForIncomingLead({
-            lead,
-            phone: resolvedPhone,
-            queueId: selectedQueue.id,
-            queueName: selectedQueue.name,
-            tenantId,
-          });
-        }
-
-        // Confirmação do setor escolhido: resposta ao paciente, pela fila.
-        await enqueueWhatsAppAutoReply({
-          tenantId, instance, phone: resolvedPhone, kind: 'queue_selected', category: 'service', dedupeMinutes: 10,
-          message: `✅ Você foi direcionado para o setor *${selectedQueue.icon} ${selectedQueue.name}*.\n\nUm de nossos atendentes irá te ajudar em breve! 😊`,
-        }).catch(e => console.error('[auto-reply] confirmação de setor não enfileirada:', e.message));
-
-        console.log(`📌 Lead ${lead.id} routed to queue: ${selectedQueue.name}`);
-
-        // Broadcast queue assignment to SSE
-        broadcastSSE('queue_assigned', {
-          leadId: lead.id,
-          leadName: lead.name,
-          phone: resolvedPhone,
-          queueId: selectedQueue.id,
-          queueName: selectedQueue.name,
-          queueColor: selectedQueue.color,
-          timestamp: new Date().toISOString(),
-        }, tenantId);
-
-        // Also persist and broadcast the queue-selection message itself so it
-        // appears when the attendant opens the chat from a global notification.
-        const queueSelectionContent = `[Selecionou: ${selectedQueue.name}]`;
-        await persistIncomingMessage({
-          msgId,
-          leadId: lead.id,
-          content: queueSelectionContent,
-          msgType: 'text',
-          phone: resolvedPhone,
-          instance,
-          pushName,
-          remoteJid,
-          rawType,
-          mediaUrl,
-          fileName: mediaFileName,
-          mimeType: mediaMimeType,
-          tenantId,
-          sender: senderRole,
-          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-        });
-
-        broadcastIncomingMessage({
-          msgId,
-          phone: resolvedPhone,
-          pushName,
-          leadId: lead.id,
-          leadName: lead.name,
-          content: queueSelectionContent,
-          msgType: 'text',
-          instance,
-          queueId: selectedQueue.id,
-          queueName: selectedQueue.name,
-          queueColor: selectedQueue.color,
-          tenantId,
-          sender: senderRole,
-        });
-
-        return res.json({ processed: true, leadId: lead.id, queueId: selectedQueue.id });
-      } else {
-        await persistIncomingMessage({
-          msgId,
-          leadId: lead.id,
-          content: resolvedContent,
-          msgType,
-          phone: resolvedPhone,
-          instance,
-          pushName,
-          remoteJid,
-          rawType,
-          mediaUrl,
-          fileName: mediaFileName,
-          mimeType: mediaMimeType,
-          tenantId,
-          sender: senderRole,
-          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-        });
-        broadcastIncomingMessage({
-          msgId,
-          phone: resolvedPhone,
-          pushName,
-          leadId: lead.id,
-          leadName: lead.name,
-          content: resolvedContent,
-          msgType,
-          instance,
-          queueId: lead.queue_id || null,
-          queueName: lead.queue_name || null,
-          queueColor: lead.queue_color || null,
-          mediaUrl,
-          fileName: mediaFileName,
-          mimeType: mediaMimeType,
-          tenantId,
-          sender: senderRole,
-        });
-        // Invalid selection — resend menu in background so the webhook does not
-        // block message delivery/realtime if Evolution is slow.
-        enqueueQueueMenu({ tenantId, instance, phone: resolvedPhone })
-          .catch((err) => console.warn('Queue menu resend not queued:', err.message));
-        console.log(`💬 Incoming message from ${maskPhone(resolvedPhone)} awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
-        return res.json({ processed: true, resent_menu: true, leadId: lead.id });
-      }
-    }
-
-    // ─── Check for satisfaction rating response ───
-    // Chave com a clínica: o mesmo paciente pode ser atendido por duas clínicas.
-    const ratingKey = `awaiting_rating_${tenantId}_${phone}`;
-    const { rows: ratingCheck } = await pool.query("SELECT value FROM app_settings WHERE key = $1", [ratingKey]);
-    if (!isReminderReply && ratingCheck.length > 0 && (msgType === 'text' || msgType === 'button_response')) {
-      let rating = null;
-      // Button response: rating_leadId_N
-      const btnMatch = msgContent.match(/rating_[^_]+_(\d)/);
-      if (btnMatch) rating = parseInt(btnMatch[1], 10);
-      // Text response: just a number 1-5
-      if (!rating) {
-        const num = parseInt(msgContent.trim(), 10);
-        if (num >= 1 && num <= 5) rating = num;
-      }
-
-      if (rating) {
-        const ratingData = ratingCheck[0].value;
-        const ratingId = crypto.randomUUID();
-        await pool.query(
-          `INSERT INTO satisfaction_ratings (id, session_id, lead_id, lead_phone, rating, attendant_id, attendant_name, tenant_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [ratingId, ratingData.sessionId || null, ratingData.leadId, phone, rating, ratingData.attendantId || null, ratingData.attendantName || null, tenantId]
-        );
-        // Remove awaiting flag
-        await pool.query("DELETE FROM app_settings WHERE key = $1", [ratingKey]);
-
-        // Parecer T11: linguagem neutra; nota até 3 oferece canal para contar o que houve.
-        const stars = '⭐'.repeat(rating);
-        const thanks = rating >= 4
-          ? `${stars}\n\nMuito obrigado pela avaliação! Ficamos felizes em atender você. 😊`
-          : `${stars}\n\nObrigado pela avaliação. Se quiser, conte por aqui o que podemos melhorar: nossa equipe vai ler.`;
-
-        await enqueueWhatsAppAutoReply({
-          tenantId, instance, phone, message: thanks, kind: 'rating_thanks', category: 'service', dedupeMinutes: 10,
-        }).catch(e => console.error('[auto-reply] agradecimento não enfileirado:', e.message));
-
-        console.log(`⭐ Rating ${rating}/5 received from ${maskPhone(phone)}`);
-        return res.json({ processed: true, rating, leadId: ratingData.leadId });
-      }
-    }
-
-    // ─── Auto-return from recovery stage to queue with priority ───
-    if ((await getFollowupConfig(tenantId)).returnToQueueOnReply) {
-      try {
-        const { rows: leadStage } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1 AND tenant_id = $2', [lead.id, tenantId]);
-        const currentStage = leadStage[0]?.kanban_stage;
-        if (currentStage && RECOVERY_STAGES.includes(currentStage)) {
-          // Move lead back to "lead" stage (top of funnel)
-          await pool.query(
-            `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', priority = true, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
-            [lead.id, tenantId]
-          );
-          // Log movement
-          await pool.query(
-            `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason, tenant_id)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [lead.id, currentStage, 'em_atendimento', 'Sistema (Auto-retorno)', 'Cliente respondeu durante recuperação — retornou à fila com prioridade', tenantId]
-          ).catch(() => {});
-          // Add "Recuperação de Lead" tag
-          try {
-            // Ensure the tag exists
-            const { rows: existingTag } = await pool.query(
-              "SELECT id FROM lead_tags WHERE name = 'Recuperação de Lead' AND tenant_id = $1 LIMIT 1",
-              [tenantId]
-            );
-            let tagId;
-            if (existingTag.length > 0) {
-              tagId = existingTag[0].id;
-            } else {
-              tagId = crypto.randomUUID();
-              await pool.query(
-                "INSERT INTO lead_tags (id, name, color, tenant_id) VALUES ($1, $2, $3, $4)",
-                [tagId, 'Recuperação de Lead', '#F59E0B', tenantId]
-              );
-            }
-            // Assign tag to lead
-            await pool.query(
-              "INSERT INTO lead_tag_assignments (lead_id, tag_id, tenant_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-              [lead.id.toString(), tagId, tenantId]
-            );
-          } catch (tagErr) {
-            console.error('Failed to assign recovery tag:', tagErr.message);
-          }
-
-          // Create a new waiting session so lead appears at top of queue
-          const sessionId = crypto.randomUUID();
-          await pool.query(
-            `INSERT INTO attendance_sessions (id, lead_id, lead_phone, status, started_waiting_at, tenant_id)
-             VALUES ($1, $2, $3, 'waiting', NOW(), $4)
-             ON CONFLICT DO NOTHING`,
-            [sessionId, lead.id.toString(), phone, tenantId]
-          ).catch(() => {});
-
-          console.log(`🔄 Lead ${lead.id} (${maskPhone(phone)}) replied from recovery stage ${currentStage} → returned to queue with priority`);
-          broadcastSSE('lead_returned_from_recovery', {
-            leadId: lead.id,
-            leadName: lead.name || pushName,
-            phone,
-            fromStage: currentStage,
-            timestamp: new Date().toISOString(),
-          }, tenantId);
-        }
-      } catch (recoveryErr) {
-        console.error('Recovery auto-return error:', recoveryErr.message);
-      }
-    }
-
-    // ─── Normal message (queue already assigned) ───
-    await persistIncomingMessage({
-      msgId,
-      leadId: lead.id,
-      content: resolvedContent,
-      msgType,
-      phone: resolvedPhone,
-      instance,
-      pushName,
-      remoteJid,
-      rawType,
-      mediaUrl,
-      fileName: mediaFileName,
-      mimeType: mediaMimeType,
-      tenantId,
-      sender: senderRole,
-      messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-    });
-
-    broadcastIncomingMessage({
-      msgId,
-      phone: resolvedPhone,
-      pushName,
-      leadId: lead.id,
-      leadName: lead.name,
-      content: resolvedContent,
-      msgType,
-      instance,
-      queueId: lead.queue_id || null,
-      queueName: lead.queue_name || null,
-      queueColor: lead.queue_color || null,
-      mediaUrl,
-      fileName: mediaFileName,
-      mimeType: mediaMimeType,
-      tenantId,
-      sender: senderRole,
-    });
-
-    console.log(`💬 New message from ${maskPhone(phone)} → saved + broadcast to ${sseClients.size} clients`);
-
-    // Send Web Push notification to all subscribed attendants
-    sendPushToAll({
-      title: `💬 ${pushName || phone}`,
-      body: msgContent || `[${msgType}]`,
-      tag: `msg-${lead.id}`,
-      url: `/chat?lead=${encodeURIComponent(lead.id)}`,
-      leadId: lead.id,
-    }, tenantId);
-
-    if (lead && !lead.avatar_url) {
-      (async () => {
-        try {
-          const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
-            method: 'POST',
-            body: JSON.stringify({ number: phone }),
-            timeoutMs: 5000,
-          });
-          const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
-          if (pictureUrl) {
-            await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
-            console.log(`📸 Auto-synced avatar for lead ${lead.id}`);
-          }
-        } catch (fetchErr) {
-          console.error('Webhook profile fetch error:', fetchErr.message);
-        }
-      })();
-    }
-
-    res.json({ processed: true, leadId: lead.id });
+    const msg = evolutionInboundMessage({ message, remoteJid, instance });
+    await handleInboundWhatsAppMessage({ res, tenantId, instance, body, msg, allowTenantFallback: true });
   } catch (error) {
     console.error('Webhook error:', error);
     if (!res.headersSent) res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// OPENWA (reserva por QR) — webhook e canais (F1, docs/whatsapp/migracao-provedores.md)
+// ═══════════════════════════════════════════════════════════════
+
+const randomBytesHex = (n) => randomBytes(n).toString('hex');
+
+// Campos de canal que podem ir para a tela (nunca credenciais nem ids internos do OpenWA).
+function publicChannel(c, state = null) {
+  if (!c) return null;
+  return {
+    id: c.id, provider: c.provider, role: c.role, status: c.status, instance: c.instance_name,
+    displayPhone: c.display_phone || null, state: state || c.connection_state || null,
+    connectedAt: c.connected_at || null, createdAt: c.created_at || null,
+  };
+}
+
+// Estado do canal vindo do OpenWA (webhook ou consulta). Atualiza canal + mapa da instância,
+// avisa a tela da clínica e, ao conectar, vira principal se o principal atual não estiver no ar.
+async function applyOpenWaChannelState(channel, state, { qr = null, phone = null } = {}) {
+  const tenantId = String(channel.tenant_id);
+  await pool.query(
+    `UPDATE whatsapp_channels
+        SET connection_state = $3,
+            state_since = CASE WHEN connection_state IS DISTINCT FROM $3 THEN NOW() ELSE state_since END,
+            connected_at = CASE WHEN $3 = 'open' THEN COALESCE(connected_at, NOW()) ELSE connected_at END,
+            display_phone = COALESCE($4, display_phone), last_checked_at = NOW(), updated_at = NOW()
+      WHERE id = $1 AND tenant_id = $2`,
+    [channel.id, tenantId, state, phone ? String(phone).replace(/\D/g, '') || null : null]
+  ).catch(e => console.error('[openwa] estado do canal:', e.message));
+  waChannels.invalidate(channel.instance_name);
+  waOpenInstancesCache = { at: 0, names: waOpenInstancesCache.names };
+  broadcastSSE('whatsapp_channel_state', { channelId: channel.id, state, ...(qr ? { qr } : {}) }, tenantId);
+  if (state === 'open' && channel.role !== 'primary') {
+    const primary = await waChannels.getPrimary(tenantId);
+    const open = await getOpenEvolutionInstances();
+    if (!primary || (primary.id !== channel.id && !open.has(primary.instance_name))) {
+      const r = await waChannels.setPrimary(tenantId, channel.id);
+      if (r.ok) console.log(`🔁 [openwa] canal ${channel.id} virou o principal da clínica ${tenantId} (principal anterior fora do ar)`);
+    }
+  }
+}
+
+async function handleOpenWaEvent(channel, evt) {
+  const tenantId = String(channel.tenant_id);
+  const instance = channel.instance_name;
+  if (evt.type === 'channel.state') {
+    return applyOpenWaChannelState(channel, evt.state, { qr: evt.qr, phone: evt.phone });
+  }
+  if (evt.type === 'message.status') {
+    const lookupIds = [evt.messageId];
+    let updated = [];
+    try { updated = await applyMessageStatusUpdate({ tenantId, lookupIds, newStatus: evt.status }); } catch (e) { console.error('[openwa] ack:', e.message); }
+    if (!updated.length) rememberPendingMessageStatus(tenantId, evt.messageId, evt.status);
+    broadcastSSE('message_status_update', { messageId: evt.messageId, status: evt.status, instance }, tenantId);
+    return;
+  }
+  if (evt.type === 'message.inbound') {
+    if (evt.isGroup || !evt.chatId) return;
+    const routed = await providerForInstance(instance);
+    const msg = inboundMessageFromEvent(evt, {
+      // Número do paciente: senderPhone (quando o OpenWA resolve @lid) ou o chatId.
+      remoteJid: evt.chatId.endsWith('@lid') && evt.from ? `${evt.from}@s.whatsapp.net` : evt.chatId.replace(/@c\.us$/, '@s.whatsapp.net'),
+      fetchMediaBase64: async () => {
+        if (!routed.provider?.downloadMedia) return null;
+        const m = await routed.provider.downloadMedia(routed.channel, evt.media);
+        return m.ok ? m.base64 : null;
+      },
+    });
+    await handleInboundWhatsAppMessage({ res: detachedResponse(), tenantId, instance, body: {}, msg, allowTenantFallback: false });
+  }
+}
+
+// Webhook do OpenWA: um URL por canal; a clínica vem do canal no nosso banco. Assinatura
+// HMAC (X-OpenWA-Signature) sobre o corpo bruto com o segredo daquele canal; sem corpo bruto,
+// sem segredo ou assinatura errada → 401. Repetido (X-OpenWA-Idempotency-Key) → 200 sem processar.
+app.post('/api/webhook/openwa/:channelId', async (req, res) => {
+  const ip = ipKey(req);
+  const reject = () => {
+    const falhaKey = chaveFalhaWebhook(ip, `openwa|${String(req.params.channelId || '').slice(0, 40)}`, 16);
+    const b = [RL.evolutionFalha.blocked(falhaKey), RL.evolutionFalhaIpTotal.blocked(ip)].find(x => x.blocked);
+    if (b) return sendTooMany(res, b.retryAfterSec, 'Too many requests');
+    RL.evolutionFalha.hit(falhaKey);
+    RL.evolutionFalhaIpTotal.hit(ip);
+    return res.status(401).json({ error: 'Unauthorized' });
+  };
+  try {
+    const channel = await waChannels.getById(req.params.channelId);
+    if (!channel || channel.provider !== 'openwa' || channel.status !== 'active') return reject();
+    const cred = waChannels.decryptCredentials(channel);
+    if (!cred.ok || !cred.value?.webhookSecret || !Buffer.isBuffer(req.rawBody)) return reject();
+    if (!openWaProvider.verifyWebhook(req.rawBody, req.get('x-openwa-signature'), cred.value.webhookSecret)) return reject();
+    if (String(req.body?.sessionId || '') !== String(channel.external_id)) return reject();
+    const porCanal = RL.evolutionInstancia.hit(`openwa:${channel.id}`);
+    if (!porCanal.allowed) return sendTooMany(res, porCanal.retryAfterSec, 'Too many requests');
+
+    const eventId = req.get('x-openwa-idempotency-key') || req.body?.idempotencyKey || null;
+    if (!(await claimWebhookEvent(pool, 'openwa', eventId))) return res.json({ duplicate: true });
+    const events = validEvents(openWaProvider.parseWebhook(req.body))
+      .filter(e => e.channelRef === String(channel.external_id));
+    res.json({ accepted: true, events: events.length });
+    for (const evt of events) {
+      await handleOpenWaEvent(channel, evt).catch(e => console.error('[openwa] evento:', evt.type, e.message));
+    }
+  } catch (error) {
+    console.error('[openwa] webhook:', error.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// Canais da clínica (todos os provedores), para a tela Canais.
+app.get('/api/whatsapp/channels', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const rows = await waChannels.listForTenant(String(user.tenant_id));
+    res.json({ channels: rows.map(c => publicChannel(c)), openwaAvailable: openWaReady() });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao listar canais' });
+  }
+});
+
+// Conectar um número reserva por QR (OpenWA). Cria a sessão com a chave ADMIN, a chave
+// própria da sessão (operator, allowedSessions) cifrada no canal, o webhook assinado e inicia.
+app.post('/api/whatsapp/openwa/channels', async (req, res) => {
+  let provisioned = null;
+  try {
+    const { user } = await verifyAdmin(req);
+    const tenantId = String(user.tenant_id || '');
+    if (!isValidTenantId(tenantId)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!openWaReady()) return res.status(503).json({ error: 'Número reserva por QR ainda não está disponível neste servidor.' });
+    const existing = (await waChannels.listForTenant(tenantId)).filter(c => c.provider === 'openwa' && c.status === 'active');
+    if (existing.length) return res.status(409).json({ error: 'A clínica já tem um número reserva por QR. Desconecte o atual antes de conectar outro.', channel: publicChannel(existing[0]) });
+
+    const instanceName = `${tenantId.slice(0, 8)}-owa-${randomUUID().slice(0, 8)}`;
+    provisioned = await openWaProvider.provisionSession({ name: instanceName });
+    if (!provisioned.ok) return res.status(502).json({ error: 'Não foi possível criar a sessão no servidor de WhatsApp. Tente de novo em alguns minutos.' });
+
+    const channelId = randomUUID();
+    const webhookSecret = randomBytesHex(32);
+    const enc = waChannels.encryptCredentials({ id: channelId, tenant_id: tenantId }, {
+      apiKey: provisioned.apiKey, apiKeyId: provisioned.apiKeyId, webhookSecret,
+    });
+    if (!enc.ok) throw new Error('Falha ao cifrar credenciais');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: prim } = await client.query(
+        `SELECT 1 FROM whatsapp_channels WHERE tenant_id = $1 AND role = 'primary' AND status = 'active' LIMIT 1`, [tenantId]);
+      await client.query(
+        `INSERT INTO whatsapp_channels (id, tenant_id, provider, role, external_id, instance_name, credentials_enc, credentials_key_version, connection_state)
+         VALUES ($1, $2, 'openwa', $3, $4, $5, $6, $7, 'connecting')`,
+        [channelId, tenantId, prim.length ? 'backup' : 'primary', provisioned.sessionId, instanceName, enc.value, waCredentialCipher.currentVersion]
+      );
+      // Mesma transação: o mapa da instância (dono, ritmo, pausa, saúde) — o gatilho mantém o canal.
+      await client.query(
+        `INSERT INTO whatsapp_instances (instance_name, tenant_id) VALUES ($1, $2)
+         ON CONFLICT (instance_name) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
+        [instanceName, tenantId]
+      );
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+    setCachedTenantId(instanceName, tenantId);
+    waChannels.invalidate(instanceName);
+    const channel = { id: channelId, tenant_id: tenantId, provider: 'openwa', external_id: provisioned.sessionId, instance_name: instanceName, credentials: { apiKey: provisioned.apiKey, apiKeyId: provisioned.apiKeyId, webhookSecret } };
+    provisioned = null; // daqui em diante a sessão pertence ao canal (removida pelo DELETE do canal)
+    const hook = await openWaProvider.registerWebhook(channel, { url: `${OPENWA_WEBHOOK_BASE}/api/webhook/openwa/${channelId}`, secret: webhookSecret });
+    if (!hook.ok) console.error(`[openwa] webhook não registrado no canal ${channelId} (HTTP ${hook.status})`);
+    const started = await openWaProvider.start(channel);
+    const created = await waChannels.getForTenant(tenantId, channelId);
+    res.status(201).json({ channel: publicChannel(created, started.state || 'connecting'), webhookRegistered: hook.ok });
+  } catch (error) {
+    if (provisioned?.ok) await openWaProvider.removeSession({ external_id: provisioned.sessionId, credentials: { apiKeyId: provisioned.apiKeyId } }).catch(() => {});
+    const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
+    if (status === 500) console.error('[openwa] criar canal:', error.message);
+    res.status(status).json({ error: status === 500 ? 'Erro ao conectar o número reserva' : error.message });
+  }
+});
+
+// Canal OpenWA da clínica com credenciais (para as rotas abaixo). null = não é da clínica.
+async function loadTenantOpenWaChannel(user, channelId) {
+  if (!isValidTenantId(user?.tenant_id)) return null;
+  const c = await waChannels.getForTenant(String(user.tenant_id), channelId);
+  if (!c || c.provider !== 'openwa') return null;
+  const cred = waChannels.decryptCredentials(c);
+  return { record: c, channel: cred.ok ? { ...c, credentials: cred.value } : null };
+}
+
+app.get('/api/whatsapp/channels/:id/qr', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const loaded = await loadTenantOpenWaChannel(user, req.params.id);
+    if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
+    if (!loaded.channel) return res.status(503).json({ error: 'Credenciais do canal indisponíveis. Desconecte e conecte de novo.' });
+    let r = await openWaProvider.getQr(loaded.channel);
+    if (!r.ok && r.state === 'close') { await openWaProvider.start(loaded.channel); r = await openWaProvider.getQr(loaded.channel); }
+    if (r.ok && r.qr) return res.json({ qr: r.qr, state: 'connecting' });
+    const st = await openWaProvider.getState(loaded.channel);
+    if (st.ok) await applyOpenWaChannelState(loaded.record, st.state, { phone: st.phone });
+    res.json({ qr: null, state: st.ok ? st.state : null });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao obter o QR' });
+  }
+});
+
+app.get('/api/whatsapp/channels/:id/state', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const loaded = await loadTenantOpenWaChannel(user, req.params.id);
+    if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
+    if (!loaded.channel) return res.json({ channel: publicChannel(loaded.record), live: false });
+    const st = await openWaProvider.getState(loaded.channel);
+    if (st.ok && st.state !== loaded.record.connection_state) await applyOpenWaChannelState(loaded.record, st.state, { phone: st.phone });
+    res.json({ channel: publicChannel(loaded.record, st.ok ? st.state : null), live: st.ok });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao consultar o canal' });
+  }
+});
+
+// Desconectar (logout no WhatsApp; o canal continua e pode gerar QR de novo).
+app.post('/api/whatsapp/channels/:id/disconnect', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    const loaded = await loadTenantOpenWaChannel(user, req.params.id);
+    if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
+    if (loaded.channel) await openWaProvider.logout(loaded.channel);
+    await applyOpenWaChannelState(loaded.record, 'close');
+    res.json({ ok: true });
+  } catch (error) {
+    const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
+    res.status(status).json({ error: status === 500 ? 'Erro ao desconectar' : error.message });
+  }
+});
+
+// Remover o canal: apaga a sessão e revoga a chave no OpenWA; apaga a instância (o gatilho
+// apaga o canal na mesma transação).
+app.delete('/api/whatsapp/channels/:id', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    const loaded = await loadTenantOpenWaChannel(user, req.params.id);
+    if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
+    if (loaded.channel) await openWaProvider.removeSession(loaded.channel);
+    await pool.query('DELETE FROM whatsapp_instances WHERE instance_name = $1 AND tenant_id = $2', [loaded.record.instance_name, String(user.tenant_id)]);
+    await pool.query('DELETE FROM whatsapp_channels WHERE id = $1 AND tenant_id = $2', [loaded.record.id, String(user.tenant_id)]);
+    waChannels.invalidate(loaded.record.instance_name);
+    res.json({ ok: true });
+  } catch (error) {
+    const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
+    res.status(status).json({ error: status === 500 ? 'Erro ao remover o canal' : error.message });
+  }
+});
+
+// Tornar um canal da clínica o principal (envios automáticos saem por ele).
+app.post('/api/whatsapp/channels/:id/primary', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const r = await waChannels.setPrimary(String(user.tenant_id), req.params.id);
+    if (!r.ok) return res.status(404).json({ error: 'Canal não encontrado' });
+    res.json({ ok: true });
+  } catch (error) {
+    const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
+    res.status(status).json({ error: status === 500 ? 'Erro ao trocar o principal' : error.message });
   }
 });
 
@@ -11385,10 +11712,46 @@ async function recordWhatsAppOptOut(tenantId, phone, { source = 'whatsapp', keyw
 
 // Instâncias abertas na Evolution (cache curto para não martelar a API).
 let waOpenInstancesCache = { at: 0, names: new Set() };
+
+// Estado ao vivo das sessões OpenWA, por instance_name do canal. names = todos os canais
+// OpenWA conhecidos (mesmo sem resposta do OpenWA), para a saúde não os chamar de "ausente".
+async function getOpenWaLiveStates() {
+  const channels = await waChannels.listByProvider('openwa');
+  const names = new Set(channels.map(c => c.instance_name).filter(Boolean));
+  if (!channels.length || !openWaProvider.configured() || !OPENWA_ADMIN_KEY) return { ok: false, names, byInstance: new Map() };
+  const r = await openWaProvider.listStates();
+  const bySession = new Map(r.states.map(st => [st.ref, st.state]));
+  const byInstance = new Map();
+  for (const c of channels) {
+    if (!c.instance_name) continue;
+    const st = bySession.get(String(c.external_id));
+    byInstance.set(c.instance_name, st === 'restricted' ? 'close' : (st || 'ausente'));
+  }
+  return { ok: r.ok, names, byInstance };
+}
+
+// Adaptador + canal de um instance_name (fila e chat). Sem canal ou canal Evolution: Evolution
+// (comportamento de antes). OpenWA: credenciais decifradas só em memória, nunca em log.
+async function providerForInstance(instance) {
+  const channel = await waChannels.getByInstance(instance);
+  if (!channel || channel.provider === 'evolution') {
+    return { provider: providerForChannel(null), channel: channel ? { ...channel, externalId: instance } : instance, record: channel };
+  }
+  if (channel.provider === 'openwa') {
+    const cred = waChannels.decryptCredentials(channel);
+    if (!cred.ok) return { provider: null, channel, record: channel, error: `Credenciais do canal indisponíveis (${cred.error})` };
+    return { provider: openWaProvider, channel: { ...channel, credentials: cred.value }, record: channel };
+  }
+  return { provider: null, channel, record: channel, error: `Provedor ${channel.provider} ainda não suportado` };
+}
+
 async function getOpenEvolutionInstances() {
   if (Date.now() - waOpenInstancesCache.at < 60_000) return waOpenInstancesCache.names;
   const result = await providerForChannel(null).listStates();
   const names = new Set(result.states.filter(st => st.state === 'open').map(st => st.ref));
+  // Sessões OpenWA prontas entram no mesmo conjunto (chave = instance_name do canal).
+  const owa = await getOpenWaLiveStates().catch(() => ({ ok: false, byInstance: new Map() }));
+  for (const [name, st] of owa.byInstance) if (st === 'open') names.add(name);
   // Em falha, guarda o resultado vazio por ~30 s (cache negativo) para não
   // repetir a espera de timeout a cada mensagem enfileirada.
   waOpenInstancesCache = result.ok ? { at: Date.now(), names } : { at: Date.now() - 30_000, names: waOpenInstancesCache.names };
@@ -11413,6 +11776,9 @@ async function resolveInstanceTenant(instanceName) {
 async function getTenantDefaultInstance(tenantId) {
   if (!isValidTenantId(tenantId)) return null;
   const open = await getOpenEvolutionInstances();
+  // Canal principal da clínica (whatsapp_channels), se estiver conectado.
+  const primary = await waChannels.getPrimary(tenantId);
+  if (primary?.instance_name && String(primary.tenant_id) === String(tenantId) && open.has(primary.instance_name)) return primary.instance_name;
   const { rows } = await pool.query(
     'SELECT instance_name FROM whatsapp_instances WHERE tenant_id = $1 ORDER BY created_at ASC NULLS LAST',
     [tenantId]
@@ -11795,18 +12161,22 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
   // 7) Envio com "digitando..."
   scheduleNextWhatsAppSend(instance);
   const phone = normalizeWhatsappNumber(job.patient_phone);
-  // Adaptador do canal (F0: sempre Evolution). Sucesso = ok + id da mensagem (key.id).
-  const provider = providerForChannel({ provider: 'evolution', externalId: instance });
+  // Adaptador do canal (whatsapp_channels; sem canal = Evolution). Sucesso = ok + id da mensagem.
+  const routed = await providerForInstance(instance);
+  if (routed.record && String(routed.record.tenant_id) !== tenantId) return fail('Bloqueado: o número de envio pertence a outra clínica');
+  if (!routed.provider) return fail(routed.error || 'Canal de WhatsApp indisponível');
+  const provider = routed.provider;
+  const sendOpts = { delayMs: 0, timeoutMs: 45_000, idempotencyKey: `job-${job.id}` };
   // timeout > tempo de "digitando" + margem; evita falso "falhou"
-  const sendTextNow = () => provider.sendText(instance, phone, job.message, { delayMs: typingDelayMs(job.message), timeoutMs: 45_000 });
+  const sendTextNow = () => provider.sendText(routed.channel, phone, job.message, { ...sendOpts, delayMs: typingDelayMs(job.message) });
   // Botões/lista: tenta o endpoint interativo; sem ok/key.id (muitos aparelhos não
   // exibem botões via Baileys), cai para o texto do job, que é a versão numerada.
   const interactive = vars.interactive && WA_INTERACTIVE_ENDPOINTS.has(vars.interactive.endpoint)
     && vars.interactive.payload && typeof vars.interactive.payload === 'object' ? vars.interactive : null;
   let sent;
   if (interactive) {
-    sent = await provider.sendInteractive(instance, phone, {
-      endpoint: interactive.endpoint, payload: interactive.payload, delayMs: typingDelayMs(job.message), timeoutMs: 45_000,
+    sent = await provider.sendInteractive(routed.channel, phone, {
+      ...sendOpts, endpoint: interactive.endpoint, payload: interactive.payload, delayMs: typingDelayMs(job.message),
     });
     // Timeout (504 do evolutionFetch): os botões podem ter saído sem a resposta chegar.
     // Não reenvia em texto para não duplicar; o job falha como incerto. Verificar na
@@ -11817,6 +12187,10 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
   }
   const ok = sent.ok;
   const result = sent.raw || { status: sent.status, data: { error: sent.error } };
+  // Provedor recusou por ritmo (OpenWA SEND_PACING_LIMITED): reagenda; não é falha nem disjuntor.
+  if (!ok && sent.retryAfterMs > 0) {
+    return release(new Date(Date.now() + sent.retryAfterMs + randomBetween(0, 5) * 60_000), 'Limite de ritmo do provedor; nova tentativa depois');
+  }
   await recordWhatsAppOutcome(instance, tenantId, ok);
   if (ok) {
     await pool.query(`UPDATE automation_jobs SET status = 'sent', sent_at = NOW(), claimed_at = NULL, error = NULL WHERE id = $1`, [job.id]);
@@ -14005,7 +14379,7 @@ async function syncWhatsAppContacts() {
       if (!instTenantId) continue; // instância sem clínica: não importa
       try {
         let waContacts = [];
-        const cRes = await evolutionProvider.rawFetch(`/chat/findContacts/${name}`, {
+        const cRes = await evolutionProvider.rawFetch(`/chat/findContacts/${encodeURIComponent(name)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ where: {} }),
@@ -14016,7 +14390,7 @@ async function syncWhatsAppContacts() {
         }
         if (waContacts.length === 0) {
           try {
-            const altRes = await evolutionProvider.rawFetch(`/contact/find/${name}`, {
+            const altRes = await evolutionProvider.rawFetch(`/contact/find/${encodeURIComponent(name)}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({}),
@@ -14136,7 +14510,7 @@ app.post('/api/contatos/sync/now', async (req, res) => {
       try {
         let waContacts = [];
         console.log(`[sync][${name}] Tentando chat/findContacts...`);
-        const cRes = await evolutionProvider.rawFetch(`/chat/findContacts/${name}`, {
+        const cRes = await evolutionProvider.rawFetch(`/chat/findContacts/${encodeURIComponent(name)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ where: {} }),
@@ -14156,7 +14530,7 @@ app.post('/api/contatos/sync/now', async (req, res) => {
         if (waContacts.length === 0) {
           console.log(`[sync][${name}] Tentando fallback contact/find...`);
           try {
-            const altRes = await evolutionProvider.rawFetch(`/contact/find/${name}`, {
+            const altRes = await evolutionProvider.rawFetch(`/contact/find/${encodeURIComponent(name)}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({}),
@@ -17515,6 +17889,8 @@ if (process.env.NODE_ENV !== 'test') {
   await asSystemJob(ensureWhatsAppChannelsSchema)();
   asSystemJob(checkWhatsAppHealth)();
   setInterval(asSystemJob(checkWhatsAppHealth), WA_HEALTH_INTERVAL_MS);
+  // Dedupe de webhooks (whatsapp_webhook_events): guarda 8 dias (a Meta reentrega por 7).
+  setInterval(asSystemJob(() => pruneWebhookEvents(pool)), 6 * 60 * 60 * 1000);
   console.log(`   🩺 Saúde do WhatsApp: verificação a cada ${WA_HEALTH_INTERVAL_MS / 60_000} min`);
   asSystemJob(processAutomationJobs)();
   automationSchedulerInterval = setInterval(asSystemJob(processAutomationJobs), 5 * 1000);
@@ -17560,6 +17936,7 @@ export { checkWhatsAppHealth, processAutomationJobs as processAutomationJobsForH
 export { processAutomationJobs };
 export function resetWhatsAppQueueStateForTests() {
   waPacing.clear(); waOutcomes.clear(); waOpenInstancesCache = { at: 0, names: new Set() };
+  waChannels.invalidate();
 }
 export { parseAppointmentReminderReply };
 export { parseWaitlistOfferReply };

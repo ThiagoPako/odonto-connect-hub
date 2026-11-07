@@ -4,6 +4,8 @@
 //
 // Formato guardado (texto): "v<versão>:<iv base64>:<tag base64>:<cifrado base64>".
 // A versão permite trocar a chave: a atual cifra; as antigas só decifram.
+// AAD obrigatório = `${channel.id}:${tenant_id}`: o valor cifrado de um canal/clínica não
+// decifra se for copiado para outra linha (revisão do Igor, F0). IV 12 bytes, tag 16 bytes.
 //
 // Chaves (32 bytes, em base64 ou hex de 64 caracteres):
 //   WA_CREDENTIALS_KEY           chave atual
@@ -13,16 +15,23 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 
 const ALGO = 'aes-256-gcm';
 const IV_BYTES = 12;
+const TAG_BYTES = 16;
+
+// AAD do canal. Os dois campos são obrigatórios (sem eles não cifra nem decifra).
+export function channelAad(channelId, tenantId) {
+  const c = String(channelId || '').trim();
+  const t = String(tenantId || '').trim();
+  return c && t ? `${c}:${t}` : '';
+}
 
 export function parseCredentialKey(raw) {
   const value = String(raw || '').trim();
   if (!value) return null;
-  let key = null;
-  if (/^[0-9a-f]{64}$/i.test(value)) key = Buffer.from(value, 'hex');
-  else {
-    try { key = Buffer.from(value, 'base64'); } catch { key = null; }
-  }
-  return key && key.length === 32 ? key : null;
+  // Só hex de 64 caracteres ou base64 canônico de 32 bytes (44 caracteres com "=").
+  if (/^[0-9a-f]{64}$/i.test(value)) return Buffer.from(value, 'hex');
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(value)) return null;
+  const key = Buffer.from(value, 'base64');
+  return key.length === 32 && key.toString('base64') === value ? key : null;
 }
 
 // keys: { [versão]: Buffer(32) }. Lança só na criação (configuração errada); cifrar e
@@ -39,11 +48,13 @@ export function createCredentialCipher({ keys, currentVersion }) {
 
   return {
     currentVersion: version,
-    encrypt(plaintext) {
+    encrypt(plaintext, aad) {
       if (plaintext === null || plaintext === undefined) return { ok: false, error: 'Valor vazio' };
+      if (!aad) return { ok: false, error: 'AAD obrigatório (canal + clínica)' };
       try {
         const iv = randomBytes(IV_BYTES);
-        const cipher = createCipheriv(ALGO, table.get(version), iv);
+        const cipher = createCipheriv(ALGO, table.get(version), iv, { authTagLength: TAG_BYTES });
+        cipher.setAAD(Buffer.from(String(aad), 'utf8'));
         const ct = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);
         const tag = cipher.getAuthTag();
         return { ok: true, value: `v${version}:${iv.toString('base64')}:${tag.toString('base64')}:${ct.toString('base64')}` };
@@ -51,14 +62,19 @@ export function createCredentialCipher({ keys, currentVersion }) {
         return { ok: false, error: 'Falha ao cifrar' };
       }
     },
-    decrypt(stored) {
+    decrypt(stored, aad) {
+      if (!aad) return { ok: false, error: 'AAD obrigatório (canal + clínica)' };
       const m = /^v(\d+):([A-Za-z0-9+/=]+):([A-Za-z0-9+/=]+):([A-Za-z0-9+/=]*)$/.exec(String(stored || ''));
       if (!m) return { ok: false, error: 'Formato inválido' };
       const key = table.get(Number(m[1]));
       if (!key) return { ok: false, error: `Chave da versão ${m[1]} indisponível` };
+      const iv = Buffer.from(m[2], 'base64');
+      const tag = Buffer.from(m[3], 'base64');
+      if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES) return { ok: false, error: 'Formato inválido' };
       try {
-        const decipher = createDecipheriv(ALGO, key, Buffer.from(m[2], 'base64'));
-        decipher.setAuthTag(Buffer.from(m[3], 'base64'));
+        const decipher = createDecipheriv(ALGO, key, iv, { authTagLength: TAG_BYTES });
+        decipher.setAAD(Buffer.from(String(aad), 'utf8'));
+        decipher.setAuthTag(tag);
         const pt = Buffer.concat([decipher.update(Buffer.from(m[4], 'base64')), decipher.final()]);
         return { ok: true, value: pt.toString('utf8'), version: Number(m[1]) };
       } catch {

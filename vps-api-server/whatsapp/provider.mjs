@@ -16,7 +16,7 @@ export const WA_CAPABILITY_KEYS = Object.freeze([
 
 // Métodos que todo adaptador expõe (os testes de contrato conferem esta lista).
 export const WA_PROVIDER_METHODS = Object.freeze([
-  'sendText', 'sendInteractive', 'getState', 'listStates', 'parseWebhook',
+  'sendText', 'sendInteractive', 'sendMedia', 'getState', 'listStates', 'parseWebhook',
 ]);
 
 // SendResult: { ok, providerMessageId, uncertain, retryable, status, error, raw }
@@ -24,13 +24,16 @@ export const WA_PROVIDER_METHODS = Object.freeze([
 //              outro caminho, para não duplicar (regra atual dos botões na fila).
 //   retryable: falha transitória (5xx, rede); a fila pode reagendar.
 //   raw:       resposta original { ok, status, data } (para mensagens de erro já existentes).
-export function sendResult({ ok = false, providerMessageId = null, uncertain = false, retryable = false, status = 0, error = null, raw = null } = {}) {
+//   retryAfterMs: o provedor recusou por ritmo (OpenWA 429 SEND_PACING_LIMITED). A fila reagenda
+//              para depois desse prazo; não é falha nem conta para o disjuntor.
+export function sendResult({ ok = false, providerMessageId = null, uncertain = false, retryable = false, retryAfterMs = 0, status = 0, error = null, raw = null } = {}) {
   const id = providerMessageId ? String(providerMessageId) : null;
   return {
     ok: !!(ok && id),
     providerMessageId: id,
     uncertain: !!uncertain,
     retryable: !!retryable,
+    retryAfterMs: ok && id ? 0 : Math.max(0, Number(retryAfterMs) || 0),
     status: Number(status) || 0,
     error: ok && id ? null : (error || (ok ? 'Provedor não devolveu o id da mensagem' : 'Falha no envio')),
     raw,

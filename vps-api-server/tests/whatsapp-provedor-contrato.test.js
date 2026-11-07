@@ -9,8 +9,8 @@ import {
   WA_CAPABILITY_KEYS,
 } from '../whatsapp/provider.mjs';
 import { validateInternalEvent, inboundMessageEvent } from '../whatsapp/events.mjs';
-import { createCredentialCipher, credentialCipherFromEnv, parseCredentialKey } from '../whatsapp/crypto.mjs';
-import { createEvolutionAdapter, parseEvolutionWebhook } from '../whatsapp/adapters/evolution.mjs';
+import { createCredentialCipher, credentialCipherFromEnv, parseCredentialKey, channelAad } from '../whatsapp/crypto.mjs';
+import { createEvolutionAdapter, parseEvolutionWebhook, maskWaIdentifiers, isSafeProviderPath } from '../whatsapp/adapters/evolution.mjs';
 
 const jsonResponse = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 
@@ -126,6 +126,19 @@ describe('Adaptador Evolution — contrato', () => {
     expect(await adapter.getState('inst')).toMatchObject({ ok: true, state: 'open' });
   });
 
+  test('rawFetch recusa caminho com ".." (também codificado) antes da rede', async () => {
+    await expect(adapter.rawFetch('/chat/findContacts/a/../b')).rejects.toThrow(/recusado/);
+    await expect(adapter.rawFetch('/chat/findContacts/a%2F%2E%2E%2Fb')).rejects.toThrow(/recusado/);
+    expect(calls).toHaveLength(0);
+    expect(isSafeProviderPath('/instance/fetchInstances')).toBe(true);
+  });
+
+  test('log mascara JID e telefone', () => {
+    const t = maskWaIdentifiers('{"remoteJid":"5511999990000@s.whatsapp.net","n":"5511988887777","lid":"123456789012345@lid"}');
+    expect(t).not.toMatch(/5511999990000|5511988887777|123456789012345/);
+    expect(t).toContain('***0000@s.whatsapp.net');
+  });
+
   test('rawFetch injeta a apikey; withKey=false não manda a chave', async () => {
     await adapter.rawFetch('/chat/findContacts/inst', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
     expect(calls[0].url).toBe('http://evo.teste.invalid/chat/findContacts/inst');
@@ -204,9 +217,11 @@ describe('Webhook da Evolution → eventos internos', () => {
     expect(parseEvolutionWebhook(null)).toEqual([]);
   });
 
-  test('validador recusa evento com tenant (o tenant vem do canal, nunca do provedor)', () => {
-    const e = inboundMessageEvent('evolution', inst, { messageId: 'M', chatId: 'c', tenantId: 'x' });
-    expect(validateInternalEvent(e)).toContain('evento não pode trazer tenant (vem do canal)');
+  test('tenant vindo do provedor é descartado na criação do evento; o validador ainda recusa se aparecer', () => {
+    const e = inboundMessageEvent('evolution', inst, { messageId: 'M', chatId: 'c', tenantId: 'x', tenant_id: 'y' });
+    expect(e).not.toHaveProperty('tenantId');
+    expect(e).not.toHaveProperty('tenant_id');
+    expect(validateInternalEvent({ ...e, tenantId: 'x' })).toContain('evento não pode trazer tenant (vem do canal)');
   });
 });
 
@@ -227,51 +242,69 @@ describe('Registro de provedores', () => {
   });
 });
 
-describe('Cifra das credenciais (AES-256-GCM)', () => {
+describe('Cifra das credenciais (AES-256-GCM, AAD do canal)', () => {
   const k1 = randomBytes(32);
   const k2 = randomBytes(32);
+  const aadA = channelAad('11111111-1111-1111-1111-11111111aaaa', '11111111-1111-1111-1111-111111111111');
+  const aadB = channelAad('22222222-2222-2222-2222-22222222bbbb', '22222222-2222-2222-2222-222222222222');
 
-  test('cifra e decifra; o texto guardado não contém o segredo', () => {
+  test('cifra e decifra com o AAD do canal; o texto guardado não contém o segredo', () => {
     const c = createCredentialCipher({ keys: { 1: k1 }, currentVersion: 1 });
-    const enc = c.encrypt('token-secreto-da-meta');
+    const enc = c.encrypt('token-secreto', aadA);
     expect(enc.ok).toBe(true);
     expect(enc.value).toMatch(/^v1:/);
     expect(enc.value).not.toContain('token-secreto');
-    expect(c.decrypt(enc.value)).toEqual({ ok: true, value: 'token-secreto-da-meta', version: 1 });
-    expect(c.encrypt('x').value).not.toBe(c.encrypt('x').value); // IV aleatório
+    expect(c.decrypt(enc.value, aadA)).toEqual({ ok: true, value: 'token-secreto', version: 1 });
+    expect(c.encrypt('x', aadA).value).not.toBe(c.encrypt('x', aadA).value); // IV aleatório
   });
 
-  test('valor adulterado ou chave errada não decifra (e não lança)', () => {
+  test('sem AAD não cifra nem decifra; AAD de outro canal/clínica não decifra', () => {
     const c = createCredentialCipher({ keys: { 1: k1 }, currentVersion: 1 });
-    const enc = c.encrypt('segredo').value;
+    expect(c.encrypt('x', '').ok).toBe(false);
+    expect(channelAad('', 'x')).toBe('');
+    const enc = c.encrypt('segredo', aadA).value;
+    expect(c.decrypt(enc, '').ok).toBe(false);
+    expect(c.decrypt(enc, aadB)).toEqual({ ok: false, error: 'Falha ao decifrar' });
+  });
+
+  test('valor adulterado, chave errada, IV ≠ 12 ou tag ≠ 16 bytes: recusado sem lançar', () => {
+    const c = createCredentialCipher({ keys: { 1: k1 }, currentVersion: 1 });
+    const enc = c.encrypt('segredo', aadA).value;
     const parts = enc.split(':');
-    const ct = Buffer.from(parts[3], 'base64'); ct[0] ^= 1; parts[3] = ct.toString('base64');
-    expect(c.decrypt(parts.join(':'))).toEqual({ ok: false, error: 'Falha ao decifrar' });
-    const outra = createCredentialCipher({ keys: { 1: k2 }, currentVersion: 1 });
-    expect(outra.decrypt(enc).ok).toBe(false);
-    expect(c.decrypt('lixo').ok).toBe(false);
-    expect(c.decrypt(null).ok).toBe(false);
+    const ct = Buffer.from(parts[3], 'base64'); ct[0] ^= 1;
+    expect(c.decrypt([parts[0], parts[1], parts[2], ct.toString('base64')].join(':'), aadA).ok).toBe(false);
+    expect(createCredentialCipher({ keys: { 1: k2 }, currentVersion: 1 }).decrypt(enc, aadA).ok).toBe(false);
+    const tagCurta = Buffer.from(parts[2], 'base64').subarray(0, 8).toString('base64');
+    expect(c.decrypt([parts[0], parts[1], tagCurta, parts[3]].join(':'), aadA)).toEqual({ ok: false, error: 'Formato inválido' });
+    const ivLongo = randomBytes(16).toString('base64');
+    expect(c.decrypt([parts[0], ivLongo, parts[2], parts[3]].join(':'), aadA)).toEqual({ ok: false, error: 'Formato inválido' });
+    expect(c.decrypt('lixo', aadA).ok).toBe(false);
+    expect(c.decrypt(null, aadA).ok).toBe(false);
   });
 
   test('troca de chave: versão antiga decifra, nova cifra, needsRotation avisa', () => {
-    const antiga = createCredentialCipher({ keys: { 1: k1 }, currentVersion: 1 }).encrypt('s').value;
+    const antiga = createCredentialCipher({ keys: { 1: k1 }, currentVersion: 1 }).encrypt('s', aadA).value;
     const nova = createCredentialCipher({ keys: { 1: k1, 2: k2 }, currentVersion: 2 });
-    expect(nova.decrypt(antiga)).toMatchObject({ ok: true, value: 's', version: 1 });
+    expect(nova.decrypt(antiga, aadA)).toMatchObject({ ok: true, value: 's', version: 1 });
     expect(nova.needsRotation(antiga)).toBe(true);
-    expect(nova.encrypt('s').value).toMatch(/^v2:/);
+    expect(nova.encrypt('s', aadA).value).toMatch(/^v2:/);
   });
 
-  test('ambiente: base64 ou hex de 32 bytes; ausente/curta → null', () => {
+  test('chave: só hex de 64 ou base64 canônico de 32 bytes', () => {
     expect(credentialCipherFromEnv({})).toBeNull();
     expect(credentialCipherFromEnv({ WA_CREDENTIALS_KEY: 'curta' })).toBeNull();
     expect(parseCredentialKey(k1.toString('hex'))).toEqual(k1);
+    expect(parseCredentialKey(k1.toString('base64'))).toEqual(k1);
+    expect(parseCredentialKey(k1.toString('base64').replace(/=$/, ''))).toBeNull(); // sem padding: não canônico
+    expect(parseCredentialKey(k1.toString('base64url'))).toBeNull();
+    expect(parseCredentialKey(randomBytes(24).toString('base64'))).toBeNull();
     const c = credentialCipherFromEnv({
-      WA_CREDENTIALS_KEY: k2.toString('base64'), WA_CREDENTIALS_KEY_VERSION: '2',
+      WA_CREDENTIALS_KEY: k2.toString('hex'), WA_CREDENTIALS_KEY_VERSION: '2',
       WA_CREDENTIALS_KEY_PREVIOUS: `1:${k1.toString('hex')}`,
     });
     expect(c.currentVersion).toBe(2);
-    const antiga = createCredentialCipher({ keys: { 1: k1 }, currentVersion: 1 }).encrypt('ok').value;
-    expect(c.decrypt(antiga).value).toBe('ok');
+    const antiga = createCredentialCipher({ keys: { 1: k1 }, currentVersion: 1 }).encrypt('ok', aadA).value;
+    expect(c.decrypt(antiga, aadA).value).toBe('ok');
   });
 
   test('configuração errada lança só na criação', () => {
