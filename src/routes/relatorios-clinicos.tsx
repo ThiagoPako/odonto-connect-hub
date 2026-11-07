@@ -319,7 +319,7 @@ function RelatoriosClinicosPage() {
                           sel ? "bg-primary/10 text-primary font-semibold" : "text-foreground hover:bg-muted"
                         )}
                       >
-                        <span className="truncate">{p.nome}</span>
+                        <span className="break-words min-w-0">{p.nome}</span>
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground shrink-0">{p.count}</span>
                       </button>
                     );
