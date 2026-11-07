@@ -18,6 +18,8 @@ import {
 } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { formatBRL, parseValorBRL, maskValorDigitado, maskCPF, cpfValido, isoParaBr, centavos } from "@/lib/formatos";
+import { localDateISO } from "@/lib/utils";
 import type { FinanceMovement, BankAccount, Employee, Payroll, Bill } from "@/data/financeiroMockData";
 
 
@@ -84,6 +86,26 @@ function monthlyTotals(movements: FinanceMovement[], n = 7): { mes: string; entr
 function startOfToday(): Date {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+// ===== Formulários =====
+const inputCls = "w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground aria-[invalid=true]:border-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40";
+const labelCls = "text-[11px] text-muted-foreground font-medium mb-1 block";
+type Erros = Record<string, string | undefined>;
+/** Mensagem de erro abaixo do campo, ligada a ele por aria-describedby. */
+function ErroCampo({ id, msg }: { id: string; msg?: string }) {
+  if (!msg) return null;
+  return <p id={`${id}-erro`} className="mt-1 text-[11px] text-destructive">{msg}</p>;
+}
+const ariaErro = (id: string, erros: Erros) =>
+  erros[id] ? { "aria-invalid": true as const, "aria-describedby": `${id}-erro` } : {};
+/** Valor em reais obrigatório e maior que zero; devolve o número ou a mensagem de erro. */
+function validarValor(text: string): number | string {
+  if (!text.trim()) return "Informe o valor.";
+  const v = parseValorBRL(text);
+  if (v === null) return "Valor inválido. Use o formato brasileiro, por exemplo 1.234,56 (não 1,234.56).";
+  if (v <= 0) return "O valor precisa ser maior que zero.";
+  return v;
 }
 
 // Map API row to frontend types
@@ -171,14 +193,15 @@ function FinanceiroPage() {
   const totalFolhaPendente = folhaPendente.reduce((s, p) => s + p.netSalary, 0);
 
   // Pagar conta
-  const handlePayBill = async (billId: string, bankAccountId: string) => {
+  const handlePayBill = async (billId: string, bankAccountId: string): Promise<boolean> => {
     const bill = bills.find((b) => b.id === billId);
-    if (!bill) return;
-    if (!bankAccountId) { toast.error("Cadastre ou escolha uma conta bancária antes de pagar."); return; }
+    if (!bill) return false;
+    if (bill.status === "pago") { toast.info("Esta conta já está paga."); return true; }
+    if (!bankAccountId) { toast.error("Cadastre ou escolha uma conta bancária antes de pagar."); return false; }
     const bank = banks.find((bk) => bk.id === bankAccountId);
     const now = new Date().toLocaleDateString("pt-BR");
     const upd = await finBillsApi.update(billId, { status: 'pago', bank_account_id: bankAccountId, payment_date: now });
-    if (upd.error) { toast.error("Erro ao pagar conta: " + upd.error); return; }
+    if (upd.error) { toast.error("Erro ao pagar conta: " + upd.error); return false; }
     const mov = await finMovementsApi.create({
       type: 'saida', description: bill.description, category: bill.category,
       value: bill.value, date: now, bank_account_id: bankAccountId,
@@ -187,17 +210,19 @@ function FinanceiroPage() {
     if (mov.error) toast.error("Conta marcada como paga, mas a saída não foi lançada nas movimentações: " + mov.error);
     else toast.success("Conta paga e lançada nas movimentações");
     await loadAll();
+    return true;
   };
 
   // Pagar folha
-  const handlePayPayroll = async (payrollId: string, bankAccountId: string) => {
+  const handlePayPayroll = async (payrollId: string, bankAccountId: string): Promise<boolean> => {
     const pr = payrolls.find((p) => p.id === payrollId);
-    if (!pr) return;
-    if (!bankAccountId) { toast.error("Cadastre ou escolha uma conta bancária antes de pagar."); return; }
+    if (!pr) return false;
+    if (pr.status === "pago") { toast.info("Esta folha já está paga."); return true; }
+    if (!bankAccountId) { toast.error("Cadastre ou escolha uma conta bancária antes de pagar."); return false; }
     const bank = banks.find((bk) => bk.id === bankAccountId);
     const now = new Date().toLocaleDateString("pt-BR");
     const upd = await finPayrollsApi.update(payrollId, { status: 'pago', bank_account_id: bankAccountId, payment_date: now });
-    if (upd.error) { toast.error("Erro ao pagar folha: " + upd.error); return; }
+    if (upd.error) { toast.error("Erro ao pagar folha: " + upd.error); return false; }
     const mov = await finMovementsApi.create({
       type: 'saida', description: `Folha Pgto — ${pr.employeeName} (${pr.month})`,
       category: 'salario', value: pr.netSalary, date: now,
@@ -206,6 +231,7 @@ function FinanceiroPage() {
     if (mov.error) toast.error("Folha marcada como paga, mas a saída não foi lançada nas movimentações: " + mov.error);
     else toast.success("Folha paga e lançada nas movimentações");
     await loadAll();
+    return true;
   };
 
   // Adicionar movimento manual — devolve true se salvou (o formulário só limpa nesse caso)
@@ -250,7 +276,8 @@ function FinanceiroPage() {
       employee_id: (created.data as any)?.id ?? null, employee_name: emp.name,
       month: `${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear()}`,
       gross_salary: emp.salary, benefits: emp.benefits,
-      deductions, net_salary: emp.salary + emp.benefits - deductions,
+      // Centavos: 1500,10 + 200,20 − 0,30 virava 1700.0000000000002 no banco
+      deductions, net_salary: centavos(emp.salary + emp.benefits - deductions),
       status: 'pendente',
     });
     if (folha.error) toast.error("Funcionário cadastrado, mas a folha do mês não foi criada: " + folha.error);
@@ -290,14 +317,16 @@ function FinanceiroPage() {
       <main className="flex-1 overflow-auto">
         {/* Tabs */}
         <div className="border-b border-border bg-card/80 sticky top-0 z-30 backdrop-blur-md">
-          <div className="flex gap-1 px-6 overflow-x-auto">
+          <div role="tablist" aria-label="Seções do financeiro" className="flex flex-wrap gap-x-1 px-3 sm:px-6">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               return (
                 <button
                   key={tab.id}
+                  role="tab"
+                  aria-selected={activeTab === tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
+                  className={`flex items-center gap-2 px-3 sm:px-4 py-3 text-xs font-medium border-b-2 transition-all ${
                     activeTab === tab.id
                       ? "border-primary text-primary"
                       : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
@@ -311,7 +340,7 @@ function FinanceiroPage() {
           </div>
         </div>
 
-        <div className="p-6 space-y-6">
+        <div className="p-4 sm:p-6 space-y-6">
           {loadErrors.length > 0 && (
             <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               <div>
@@ -401,11 +430,11 @@ function TabVisaoGeral({
   return (
     <>
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 animate-slide-up" style={{ animationFillMode: 'both' }}>
-        <KpiCard title="Saldo Total" value={`R$ ${saldoTotal.toLocaleString("pt-BR")}`} icon={Wallet} />
-        <KpiCard title="Entradas (Mês)" value={`R$ ${totalEntradas.toLocaleString("pt-BR")}`} change="Receitas" changeType="positive" icon={ArrowUpRight} />
-        <KpiCard title="Saídas (Mês)" value={`R$ ${totalSaidas.toLocaleString("pt-BR")}`} change="Despesas" changeType="negative" icon={ArrowDownRight} />
-        <KpiCard title="Contas Pendentes" value={`R$ ${totalPendente.toLocaleString("pt-BR")}`} change="A pagar" changeType="negative" icon={Clock} />
-        <KpiCard title="Folha Pendente" value={`R$ ${totalFolhaPendente.toLocaleString("pt-BR")}`} change="Salários" changeType="neutral" icon={Users} />
+        <KpiCard title="Saldo Total" value={formatBRL(saldoTotal)} icon={Wallet} />
+        <KpiCard title="Entradas (Mês)" value={formatBRL(totalEntradas)} change="Receitas" changeType="positive" icon={ArrowUpRight} />
+        <KpiCard title="Saídas (Mês)" value={formatBRL(totalSaidas)} change="Despesas" changeType="negative" icon={ArrowDownRight} />
+        <KpiCard title="Contas Pendentes" value={formatBRL(totalPendente)} change="A pagar" changeType="negative" icon={Clock} />
+        <KpiCard title="Folha Pendente" value={formatBRL(totalFolhaPendente)} change="Salários" changeType="neutral" icon={Users} />
       </div>
 
       {/* Gráficos */}
@@ -433,7 +462,7 @@ function TabVisaoGeral({
                     <p className="text-[10px] text-muted-foreground">{bk.bank} • {bk.type}</p>
                   </div>
                 </div>
-                <span className="text-sm font-bold text-foreground">R$ {bk.balance.toLocaleString("pt-BR")}</span>
+                <span className="text-sm font-bold text-foreground">{formatBRL(bk.balance)}</span>
               </div>
             ))}
             {banks.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhum banco cadastrado</p>}
@@ -458,7 +487,7 @@ function TabVisaoGeral({
                   </div>
                 </div>
                 <span className={`text-xs font-bold ${m.type === "entrada" ? "text-success" : "text-destructive"}`}>
-                  {m.type === "entrada" ? "+" : "-"}R$ {m.value.toLocaleString("pt-BR")}
+                  {m.type === "entrada" ? "+" : "-"}{formatBRL(m.value)}
                 </span>
               </div>
             ))}
@@ -479,7 +508,7 @@ function TabVisaoGeral({
               <div key={i} className="bg-destructive/5 rounded-lg p-3 border border-destructive/10">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-medium text-foreground">{o.patient}</span>
-                  <span className="text-xs font-bold text-destructive">R$ {o.value.toLocaleString("pt-BR")}</span>
+                  <span className="text-xs font-bold text-destructive">{formatBRL(o.value)}</span>
                 </div>
                 <p className="text-[10px] text-muted-foreground">{o.procedure} • {o.daysLate}d atraso</p>
               </div>
@@ -500,81 +529,114 @@ function TabMovimentacoes({
   movements: FinanceMovement[]; showAdd: boolean; setShowAdd: (v: boolean) => void;
   onAdd: (m: Omit<FinanceMovement, "id">) => Promise<boolean>; banks: BankAccount[];
 }) {
-  const [form, setForm] = useState({
+  const vazio = () => ({
     type: "entrada" as "entrada" | "saida",
     description: "", category: "consulta" as FinanceCategory, value: "",
-    bankAccountId: banks[0]?.id ?? "", patient: "",
+    date: localDateISO(), bankAccountId: banks[0]?.id ?? "", patient: "",
   });
+  const [form, setForm] = useState(vazio);
+  const [erros, setErros] = useState<Erros>({});
+  const [saving, setSaving] = useState(false);
+  // A lista de bancos chega depois do primeiro render: escolhe o primeiro quando aparecer.
+  useEffect(() => {
+    if (!form.bankAccountId && banks[0]) setForm((f) => ({ ...f, bankAccountId: banks[0].id }));
+  }, [banks, form.bankAccountId]);
 
   const handleSubmit = async () => {
-    if (!form.description || !form.value) { toast.error("Preencha descrição e valor."); return; }
+    const e: Erros = {};
+    if (!form.description.trim()) e["mov-desc"] = "Informe a descrição.";
+    const valor = validarValor(form.value);
+    if (typeof valor === "string") e["mov-valor"] = valor;
+    if (!form.date) e["mov-data"] = "Informe a data.";
+    else if (form.date > localDateISO()) e["mov-data"] = "A data não pode ser no futuro. Para contas futuras use Contas a Pagar.";
+    if (banks.length > 0 && !form.bankAccountId) e["mov-banco"] = "Escolha a conta bancária.";
+    setErros(e);
+    if (Object.keys(e).length || typeof valor === "string") return;
     const bank = banks.find((b) => b.id === form.bankAccountId);
+    setSaving(true);
     const ok = await onAdd({
-      type: form.type, description: form.description, category: form.category,
-      value: parseFloat(form.value), date: new Date().toLocaleDateString("pt-BR"),
+      type: form.type, description: form.description.trim(), category: form.category,
+      value: valor, date: isoParaBr(form.date),
       bankAccountId: form.bankAccountId, bankName: bank?.bank ?? "—",
-      patient: form.patient || undefined,
+      patient: form.patient.trim() || undefined,
     });
-    if (ok) setForm({ type: "entrada", description: "", category: "consulta", value: "", bankAccountId: banks[0]?.id ?? "", patient: "" });
+    setSaving(false);
+    if (ok) { setForm(vazio()); setErros({}); }
   };
 
   return (
     <>
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">Movimentações</h2>
-        <button onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
+        <button onClick={() => setShowAdd(!showAdd)} aria-expanded={showAdd} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
           <Plus className="h-4 w-4" /> Nova Movimentação
         </button>
       </div>
 
       {showAdd && (
-        <div className="bg-card rounded-xl border border-border p-5 space-y-4 animate-fade-in">
+        <form noValidate onSubmit={(ev) => { ev.preventDefault(); handleSubmit(); }} className="bg-card rounded-xl border border-border p-5 space-y-4 animate-fade-in">
           <h3 className="text-sm font-semibold text-card-foreground">Adicionar Movimentação</h3>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {banks.length === 0 && (
+            <p className="rounded-lg bg-warning/10 px-3 py-2 text-[11px] text-foreground">
+              Nenhuma conta bancária cadastrada: a movimentação fica sem banco. Cadastre o banco na aba Bancos para acompanhar o saldo.
+            </p>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Tipo</label>
-              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as "entrada" | "saida" })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground">
-                <option value="entrada">Entrada</option>
-                <option value="saida">Saída</option>
+              <label htmlFor="mov-tipo" className={labelCls}>Tipo</label>
+              <select id="mov-tipo" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as "entrada" | "saida" })} className={inputCls}>
+                <option value="entrada">Entrada (recebimento)</option>
+                <option value="saida">Saída (pagamento)</option>
               </select>
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Descrição</label>
-              <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" placeholder="Ex: Consulta avaliação" />
+              <label htmlFor="mov-desc" className={labelCls}>Descrição *</label>
+              <input id="mov-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
+                className={inputCls} placeholder="Ex: Consulta avaliação" {...ariaErro("mov-desc", erros)} />
+              <ErroCampo id="mov-desc" msg={erros["mov-desc"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Categoria</label>
-              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as FinanceCategory })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground">
+              <label htmlFor="mov-cat" className={labelCls}>Categoria</label>
+              <select id="mov-cat" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as FinanceCategory })} className={inputCls}>
                 {Object.entries(categoryLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Valor (R$)</label>
-              <input type="number" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" placeholder="0,00" />
+              <label htmlFor="mov-valor" className={labelCls}>Valor (R$) *</label>
+              <input id="mov-valor" inputMode="decimal" autoComplete="off" value={form.value}
+                onChange={(e) => setForm({ ...form, value: maskValorDigitado(e.target.value) })}
+                className={inputCls} placeholder="0,00" {...ariaErro("mov-valor", erros)} />
+              <ErroCampo id="mov-valor" msg={erros["mov-valor"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Banco</label>
-              <select value={form.bankAccountId} onChange={(e) => setForm({ ...form, bankAccountId: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground">
+              <label htmlFor="mov-data" className={labelCls}>Data *</label>
+              <input id="mov-data" type="date" max={localDateISO()} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })}
+                className={inputCls} {...ariaErro("mov-data", erros)} />
+              <ErroCampo id="mov-data" msg={erros["mov-data"]} />
+            </div>
+            <div>
+              <label htmlFor="mov-banco" className={labelCls}>Banco</label>
+              <select id="mov-banco" value={form.bankAccountId} onChange={(e) => setForm({ ...form, bankAccountId: e.target.value })}
+                className={inputCls} disabled={banks.length === 0} {...ariaErro("mov-banco", erros)}>
+                {banks.length === 0 && <option value="">Nenhum banco cadastrado</option>}
                 {banks.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.bank})</option>)}
               </select>
+              <ErroCampo id="mov-banco" msg={erros["mov-banco"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Paciente (opcional)</label>
-              <input value={form.patient} onChange={(e) => setForm({ ...form, patient: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" placeholder="Nome do paciente" />
+              <label htmlFor="mov-pac" className={labelCls}>Paciente (opcional)</label>
+              <input id="mov-pac" value={form.patient} onChange={(e) => setForm({ ...form, patient: e.target.value })}
+                className={inputCls} placeholder="Nome do paciente" />
             </div>
-            <div className="flex items-end">
-              <button onClick={handleSubmit} className="h-9 px-6 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
-                Salvar
-              </button>
+            <div className="flex items-end gap-2">
+              <Button type="submit" size="sm" disabled={saving}>
+                {saving && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
+                {saving ? "Salvando…" : "Salvar"}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setErros({}); }}>Cancelar</Button>
             </div>
           </div>
-        </div>
+        </form>
       )}
 
       <div className="bg-card rounded-xl border border-border overflow-hidden">
@@ -611,7 +673,7 @@ function TabMovimentacoes({
                 <td className="px-4 py-3 text-xs text-muted-foreground">{categoryLabels[m.category as FinanceCategory] ?? m.category}</td>
                 <td className="px-4 py-3 text-xs text-muted-foreground">{m.bankName}</td>
                 <td className={`px-4 py-3 text-xs font-bold text-right ${m.type === "entrada" ? "text-success" : "text-destructive"}`}>
-                  {m.type === "entrada" ? "+" : "-"}R$ {m.value.toLocaleString("pt-BR")}
+                  {m.type === "entrada" ? "+" : "-"}{formatBRL(m.value)}
                 </td>
                 <td className="px-4 py-3 text-xs text-muted-foreground">{m.date}</td>
               </tr>
@@ -633,14 +695,18 @@ function TabContasPagar({
   bills, showAdd, setShowAdd, onAdd, onPay, banks,
 }: {
   bills: Bill[]; showAdd: boolean; setShowAdd: (v: boolean) => void;
-  onAdd: (b: Omit<Bill, "id">) => Promise<boolean>; onPay: (billId: string, bankId: string) => void; banks: BankAccount[];
+  onAdd: (b: Omit<Bill, "id">) => Promise<boolean>; onPay: (billId: string, bankId: string) => Promise<boolean>; banks: BankAccount[];
 }) {
-  const [form, setForm] = useState({
+  const vazio = () => ({
     description: "", category: "aluguel" as FinanceCategory, value: "",
     dueDate: "", supplier: "", recurrent: false,
   });
+  const [form, setForm] = useState(vazio);
+  const [erros, setErros] = useState<Erros>({});
+  const [saving, setSaving] = useState(false);
   const [payingId, setPayingId] = useState<string | null>(null);
   const [payBankId, setPayBankId] = useState(banks[0]?.id ?? "");
+  const [payBusy, setPayBusy] = useState(false);
 
   // Vencidas primeiro, depois por vencimento mais próximo (o texto dd/mm/aaaa não ordena sozinho)
   const dueTime = (b: Bill) => parseBrDate(b.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
@@ -651,56 +717,74 @@ function TabContasPagar({
   const pagos = bills.filter((b) => b.status === "pago");
 
   const handleSubmit = async () => {
-    if (!form.description || !form.value || !form.dueDate) { toast.error("Preencha descrição, valor e vencimento."); return; }
+    const e: Erros = {};
+    if (!form.description.trim()) e["conta-desc"] = "Informe a descrição.";
+    const valor = validarValor(form.value);
+    if (typeof valor === "string") e["conta-valor"] = valor;
+    if (!form.dueDate) e["conta-venc"] = "Informe o vencimento.";
+    setErros(e);
+    if (Object.keys(e).length || typeof valor === "string") return;
+    setSaving(true);
     // O input de data devolve aaaa-mm-dd; o servidor guarda dd/mm/aaaa como as demais contas.
-    const [yy, mm, dd] = form.dueDate.split("-");
     const ok = await onAdd({
-      description: form.description, category: form.category, value: parseFloat(form.value),
-      dueDate: `${dd}/${mm}/${yy}`, status: "pendente", supplier: form.supplier || undefined,
+      description: form.description.trim(), category: form.category, value: valor,
+      dueDate: isoParaBr(form.dueDate), status: "pendente", supplier: form.supplier.trim() || undefined,
       recurrent: form.recurrent,
     });
-    if (ok) setForm({ description: "", category: "aluguel", value: "", dueDate: "", supplier: "", recurrent: false });
+    setSaving(false);
+    if (ok) { setForm(vazio()); setErros({}); }
+  };
+
+  // Um clique só: o botão fica travado até o servidor responder (evita pagar e lançar em dobro).
+  const confirmarPagamento = async (billId: string) => {
+    if (payBusy) return;
+    setPayBusy(true);
+    const ok = await onPay(billId, payBankId);
+    setPayBusy(false);
+    if (ok) setPayingId(null);
   };
 
   return (
     <>
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">Contas a Pagar</h2>
-        <button onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
+        <button onClick={() => setShowAdd(!showAdd)} aria-expanded={showAdd} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
           <Plus className="h-4 w-4" /> Nova Conta
         </button>
       </div>
 
       {showAdd && (
-        <div className="bg-card rounded-xl border border-border p-5 space-y-4 animate-fade-in">
+        <form noValidate onSubmit={(ev) => { ev.preventDefault(); handleSubmit(); }} className="bg-card rounded-xl border border-border p-5 space-y-4 animate-fade-in">
           <h3 className="text-sm font-semibold text-card-foreground">Cadastrar Conta a Pagar</h3>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Descrição</label>
-              <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
+              <label htmlFor="conta-desc" className={labelCls}>Descrição *</label>
+              <input id="conta-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
+                className={inputCls} placeholder="Ex: Aluguel de novembro" {...ariaErro("conta-desc", erros)} />
+              <ErroCampo id="conta-desc" msg={erros["conta-desc"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Categoria</label>
-              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as FinanceCategory })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground">
+              <label htmlFor="conta-cat" className={labelCls}>Categoria</label>
+              <select id="conta-cat" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as FinanceCategory })} className={inputCls}>
                 {Object.entries(categoryLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Valor (R$)</label>
-              <input type="number" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
+              <label htmlFor="conta-valor" className={labelCls}>Valor (R$) *</label>
+              <input id="conta-valor" inputMode="decimal" autoComplete="off" value={form.value}
+                onChange={(e) => setForm({ ...form, value: maskValorDigitado(e.target.value) })}
+                className={inputCls} placeholder="0,00" {...ariaErro("conta-valor", erros)} />
+              <ErroCampo id="conta-valor" msg={erros["conta-valor"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Vencimento</label>
-              <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
+              <label htmlFor="conta-venc" className={labelCls}>Vencimento *</label>
+              <input id="conta-venc" type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+                className={inputCls} {...ariaErro("conta-venc", erros)} />
+              <ErroCampo id="conta-venc" msg={erros["conta-venc"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Fornecedor</label>
-              <input value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
+              <label htmlFor="conta-forn" className={labelCls}>Fornecedor</label>
+              <input id="conta-forn" value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })} className={inputCls} />
             </div>
             <div className="flex items-end gap-3">
               <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
@@ -709,13 +793,15 @@ function TabContasPagar({
                 Recorrente
               </label>
             </div>
-            <div className="flex items-end">
-              <button onClick={handleSubmit} className="h-9 px-6 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
-                Salvar
-              </button>
+            <div className="flex items-end gap-2">
+              <Button type="submit" size="sm" disabled={saving}>
+                {saving && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
+                {saving ? "Salvando…" : "Salvar"}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setErros({}); }}>Cancelar</Button>
             </div>
           </div>
-        </div>
+        </form>
       )}
 
       {/* Pendentes */}
@@ -743,18 +829,20 @@ function TabContasPagar({
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-sm font-bold text-foreground">R$ {b.value.toLocaleString("pt-BR")}</span>
+                <span className="text-sm font-bold text-foreground">{formatBRL(b.value)}</span>
                 {payingId === b.id ? (
                   <div className="flex items-center gap-2 animate-fade-in">
-                    <select value={payBankId} onChange={(e) => setPayBankId(e.target.value)}
+                    <select value={payBankId} onChange={(e) => setPayBankId(e.target.value)} aria-label="Conta bancária do pagamento"
                       className="h-8 rounded-lg border border-border bg-background px-2 text-[10px] text-foreground">
+                      {banks.length === 0 && <option value="">Cadastre um banco</option>}
                       {banks.map((bk) => <option key={bk.id} value={bk.id}>{bk.name}</option>)}
                     </select>
-                    <button onClick={() => { onPay(b.id, payBankId); setPayingId(null); }}
-                      className="h-8 px-3 rounded-lg bg-success text-success-foreground text-[10px] font-bold hover:bg-success/90 transition-colors">
-                      Confirmar
+                    <button onClick={() => confirmarPagamento(b.id)} disabled={payBusy || !payBankId}
+                      className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-success text-success-foreground text-[10px] font-bold hover:bg-success/90 transition-colors disabled:opacity-60">
+                      {payBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+                      {payBusy ? "Pagando…" : `Pagar ${formatBRL(b.value)}`}
                     </button>
-                    <button onClick={() => setPayingId(null)} aria-label="Cancelar pagamento" className="h-8 w-8 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted">✕</button>
+                    <button onClick={() => setPayingId(null)} disabled={payBusy} aria-label="Cancelar pagamento" className="h-8 w-8 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted">✕</button>
                   </div>
                 ) : (
                   <button onClick={() => { setPayingId(b.id); setPayBankId(banks[0]?.id ?? ""); }}
@@ -784,7 +872,7 @@ function TabContasPagar({
                 <p className="text-xs text-foreground">{b.description}</p>
                 <p className="text-[10px] text-muted-foreground">{b.supplier ?? "—"} • Pago em {b.paymentDate}</p>
               </div>
-              <span className="text-xs font-medium text-muted-foreground">R$ {b.value.toLocaleString("pt-BR")}</span>
+              <span className="text-xs font-medium text-muted-foreground">{formatBRL(b.value)}</span>
             </div>
           ))}
           {pagos.length === 0 && (
@@ -804,84 +892,120 @@ function TabFuncionarios({
   employees: Employee[]; payrolls: Payroll[];
   showAdd: boolean; setShowAdd: (v: boolean) => void;
   onAdd: (e: Omit<Employee, "id">, deductions: number) => Promise<boolean>;
-  onPayPayroll: (id: string, bankId: string) => void; banks: BankAccount[];
+  onPayPayroll: (id: string, bankId: string) => Promise<boolean>; banks: BankAccount[];
 }) {
-  const [form, setForm] = useState({ name: "", role: "", cpf: "", salary: "", benefits: "", deductions: "" });
+  const vazio = { name: "", role: "", cpf: "", salary: "", benefits: "", deductions: "" };
+  const [form, setForm] = useState(vazio);
+  const [erros, setErros] = useState<Erros>({});
+  const [saving, setSaving] = useState(false);
   const [payingId, setPayingId] = useState<string | null>(null);
   const [payBankId, setPayBankId] = useState(banks[0]?.id ?? "");
+  const [payBusy, setPayBusy] = useState(false);
 
   const currentMonth = `${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear()}`;
   const folhaMesAtual = payrolls.filter((p) => p.month === currentMonth);
 
+  const opcional = (text: string): number | string => {
+    if (!text.trim()) return 0;
+    const v = parseValorBRL(text);
+    if (v === null) return "Valor inválido. Use o formato brasileiro, por exemplo 1.234,56 (não 1,234.56).";
+    if (v < 0) return "Não pode ser negativo.";
+    return v;
+  };
+
   const handleSubmit = async () => {
-    if (!form.name || !form.role || !form.salary) { toast.error("Preencha nome, cargo e salário."); return; }
-    const salary = parseFloat(form.salary);
-    const benefits = parseFloat(form.benefits || "0") || 0;
-    const deductions = parseFloat(form.deductions || "0") || 0;
-    if (deductions < 0) { toast.error("Descontos não podem ser negativos."); return; }
-    if (deductions > salary + benefits) { toast.error("Descontos não podem passar de salário + benefícios."); return; }
+    const e: Erros = {};
+    if (!form.name.trim()) e["func-nome"] = "Informe o nome.";
+    if (!form.role.trim()) e["func-cargo"] = "Informe o cargo.";
+    if (form.cpf && !cpfValido(form.cpf)) e["func-cpf"] = "CPF inválido. Confira os 11 dígitos.";
+    const salary = validarValor(form.salary);
+    if (typeof salary === "string") e["func-sal"] = salary;
+    const benefits = opcional(form.benefits);
+    if (typeof benefits === "string") e["func-ben"] = benefits;
+    const deductions = opcional(form.deductions);
+    if (typeof deductions === "string") e["func-desc"] = deductions;
+    else if (typeof salary === "number" && typeof benefits === "number" && deductions > salary + benefits)
+      e["func-desc"] = "Descontos não podem passar de salário + benefícios.";
+    setErros(e);
+    if (Object.keys(e).length || typeof salary === "string" || typeof benefits === "string" || typeof deductions === "string") return;
+    setSaving(true);
     const ok = await onAdd({
-      name: form.name, role: form.role, cpf: form.cpf,
+      name: form.name.trim(), role: form.role.trim(), cpf: form.cpf,
       admissionDate: new Date().toLocaleDateString("pt-BR"),
       salary, benefits,
       bankAccountId: banks[0]?.id ?? "", active: true,
     }, deductions);
-    if (ok) setForm({ name: "", role: "", cpf: "", salary: "", benefits: "", deductions: "" });
+    setSaving(false);
+    if (ok) { setForm(vazio); setErros({}); }
+  };
+
+  const confirmarPagamento = async (id: string) => {
+    if (payBusy) return;
+    setPayBusy(true);
+    const ok = await onPayPayroll(id, payBankId);
+    setPayBusy(false);
+    if (ok) setPayingId(null);
   };
 
   return (
     <>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">Funcionários & Folha de Pagamento</h2>
-        <button onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
+        <button onClick={() => setShowAdd(!showAdd)} aria-expanded={showAdd} className="flex shrink-0 items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
           <Plus className="h-4 w-4" /> Novo Funcionário
         </button>
       </div>
 
       {showAdd && (
-        <div className="bg-card rounded-xl border border-border p-5 space-y-4 animate-fade-in">
+        <form noValidate onSubmit={(ev) => { ev.preventDefault(); handleSubmit(); }} className="bg-card rounded-xl border border-border p-5 space-y-4 animate-fade-in">
           <h3 className="text-sm font-semibold text-card-foreground">Cadastrar Funcionário</h3>
-          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Nome</label>
-              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
+              <label htmlFor="func-nome" className={labelCls}>Nome *</label>
+              <input id="func-nome" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} {...ariaErro("func-nome", erros)} />
+              <ErroCampo id="func-nome" msg={erros["func-nome"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Cargo</label>
-              <input value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
+              <label htmlFor="func-cargo" className={labelCls}>Cargo *</label>
+              <input id="func-cargo" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className={inputCls} placeholder="Ex: Auxiliar de saúde bucal" {...ariaErro("func-cargo", erros)} />
+              <ErroCampo id="func-cargo" msg={erros["func-cargo"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">CPF</label>
-              <input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" placeholder="000.000.000-00" />
+              <label htmlFor="func-cpf" className={labelCls}>CPF</label>
+              <input id="func-cpf" inputMode="numeric" value={form.cpf} onChange={(e) => setForm({ ...form, cpf: maskCPF(e.target.value) })}
+                className={inputCls} placeholder="000.000.000-00" {...ariaErro("func-cpf", erros)} />
+              <ErroCampo id="func-cpf" msg={erros["func-cpf"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Salário (R$)</label>
-              <input type="number" value={form.salary} onChange={(e) => setForm({ ...form, salary: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
+              <label htmlFor="func-sal" className={labelCls}>Salário (R$) *</label>
+              <input id="func-sal" inputMode="decimal" value={form.salary} onChange={(e) => setForm({ ...form, salary: maskValorDigitado(e.target.value) })}
+                className={inputCls} placeholder="0,00" {...ariaErro("func-sal", erros)} />
+              <ErroCampo id="func-sal" msg={erros["func-sal"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Benefícios (R$)</label>
-              <input type="number" value={form.benefits} onChange={(e) => setForm({ ...form, benefits: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" placeholder="0" />
+              <label htmlFor="func-ben" className={labelCls}>Benefícios (R$)</label>
+              <input id="func-ben" inputMode="decimal" value={form.benefits} onChange={(e) => setForm({ ...form, benefits: maskValorDigitado(e.target.value) })}
+                className={inputCls} placeholder="0,00" {...ariaErro("func-ben", erros)} />
+              <ErroCampo id="func-ben" msg={erros["func-ben"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Descontos (R$)</label>
-              <input type="number" min="0" value={form.deductions} onChange={(e) => setForm({ ...form, deductions: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" placeholder="0" />
+              <label htmlFor="func-desc" className={labelCls}>Descontos (R$)</label>
+              <input id="func-desc" inputMode="decimal" value={form.deductions} onChange={(e) => setForm({ ...form, deductions: maskValorDigitado(e.target.value) })}
+                className={inputCls} placeholder="0,00" {...ariaErro("func-desc", erros)} />
+              <ErroCampo id="func-desc" msg={erros["func-desc"]} />
             </div>
           </div>
-          <div className="flex justify-end">
-            <button onClick={handleSubmit} className="h-9 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
-              Salvar
-            </button>
+          <div className="flex justify-end gap-2">
+            <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setErros({}); }}>Cancelar</Button>
+            <Button type="submit" size="sm" disabled={saving}>
+              {saving && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
+              {saving ? "Salvando…" : "Salvar"}
+            </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
             A folha deste mês é criada com o valor líquido = salário + benefícios − descontos. Informe INSS, IRRF e outros descontos no campo "Descontos".
           </p>
-        </div>
+        </form>
       )}
 
       {/* Lista de funcionários */}
@@ -907,9 +1031,9 @@ function TabFuncionarios({
                 <td className="px-5 py-3 text-xs font-medium text-foreground">{emp.name}</td>
                 <td className="px-4 py-3 text-xs text-muted-foreground">{emp.role}</td>
                 <td className="px-4 py-3 text-xs text-muted-foreground">{emp.admissionDate}</td>
-                <td className="px-4 py-3 text-xs text-foreground text-right">R$ {emp.salary.toLocaleString("pt-BR")}</td>
-                <td className="px-4 py-3 text-xs text-muted-foreground text-right">R$ {emp.benefits.toLocaleString("pt-BR")}</td>
-                <td className="px-4 py-3 text-xs font-bold text-foreground text-right">R$ {(emp.salary + emp.benefits).toLocaleString("pt-BR")}</td>
+                <td className="px-4 py-3 text-xs text-foreground text-right">{formatBRL(emp.salary)}</td>
+                <td className="px-4 py-3 text-xs text-muted-foreground text-right">{formatBRL(emp.benefits)}</td>
+                <td className="px-4 py-3 text-xs font-bold text-foreground text-right">{formatBRL((emp.salary + emp.benefits))}</td>
               </tr>
             ))}
             {employees.length === 0 && (
@@ -934,24 +1058,28 @@ function TabFuncionarios({
               <div className="flex-1 min-w-[160px]">
                 <p className="text-xs font-medium text-foreground">{pr.employeeName}</p>
                 <p className="text-[10px] text-muted-foreground">
-                  Bruto: R$ {pr.grossSalary.toLocaleString("pt-BR")} + Benef: R$ {pr.benefits.toLocaleString("pt-BR")} - Desc: R$ {pr.deductions.toLocaleString("pt-BR")}
+                  Bruto: {formatBRL(pr.grossSalary)} + Benef: {formatBRL(pr.benefits)} - Desc: {formatBRL(pr.deductions)}
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-sm font-bold text-foreground">R$ {pr.netSalary.toLocaleString("pt-BR")}</span>
+                <span className="text-sm font-bold text-foreground">{formatBRL(pr.netSalary)}</span>
                 {pr.status === "pago" ? (
                   <span className="text-[10px] font-bold text-success bg-success/10 px-2.5 py-1 rounded-full flex items-center gap-1">
                     <CheckCircle className="h-3 w-3" /> Pago {pr.paymentDate}
                   </span>
                 ) : payingId === pr.id ? (
                   <div className="flex items-center gap-2 animate-fade-in">
-                    <select value={payBankId} onChange={(e) => setPayBankId(e.target.value)}
+                    <select value={payBankId} onChange={(e) => setPayBankId(e.target.value)} aria-label="Conta bancária do pagamento"
                       className="h-8 rounded-lg border border-border bg-background px-2 text-[10px] text-foreground">
+                      {banks.length === 0 && <option value="">Cadastre um banco</option>}
                       {banks.map((bk) => <option key={bk.id} value={bk.id}>{bk.name}</option>)}
                     </select>
-                    <button onClick={() => { onPayPayroll(pr.id, payBankId); setPayingId(null); }}
-                      className="h-8 px-3 rounded-lg bg-success text-success-foreground text-[10px] font-bold hover:bg-success/90">Confirmar</button>
-                    <button onClick={() => setPayingId(null)} aria-label="Cancelar pagamento" className="h-8 w-8 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted">✕</button>
+                    <button onClick={() => confirmarPagamento(pr.id)} disabled={payBusy || !payBankId}
+                      className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-success text-success-foreground text-[10px] font-bold hover:bg-success/90 disabled:opacity-60">
+                      {payBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+                      {payBusy ? "Pagando…" : `Pagar ${formatBRL(pr.netSalary)}`}
+                    </button>
+                    <button onClick={() => setPayingId(null)} disabled={payBusy} aria-label="Cancelar pagamento" className="h-8 w-8 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted">✕</button>
                   </div>
                 ) : (
                   <button onClick={() => { setPayingId(pr.id); setPayBankId(banks[0]?.id ?? ""); }}
@@ -980,17 +1108,28 @@ function TabBancos({
   showAdd: boolean; setShowAdd: (v: boolean) => void;
   onAdd: (b: Omit<BankAccount, "id">) => Promise<boolean>;
 }) {
-  const [form, setForm] = useState({ name: "", bank: "", agency: "", account: "", type: "corrente" as BankAccount["type"], balance: "" });
+  const vazio = { name: "", bank: "", agency: "", account: "", type: "corrente" as BankAccount["type"], balance: "" };
+  const [form, setForm] = useState(vazio);
+  const [erros, setErros] = useState<Erros>({});
+  const [saving, setSaving] = useState(false);
   const colors = ["hsl(152, 60%, 42%)", "hsl(270, 60%, 55%)", "hsl(38, 92%, 50%)", "hsl(187, 85%, 43%)", "hsl(0, 72%, 51%)"];
 
   const handleSubmit = async () => {
-    if (!form.name || !form.bank) { toast.error("Preencha nome e banco."); return; }
+    const e: Erros = {};
+    if (!form.name.trim()) e["banco-nome"] = "Dê um nome à conta (ex.: Conta principal).";
+    if (!form.bank.trim()) e["banco-banco"] = "Informe o banco.";
+    const saldo = form.balance.trim() ? parseValorBRL(form.balance) : 0;
+    if (saldo === null) e["banco-saldo"] = "Valor inválido. Use o formato brasileiro, por exemplo 1.234,56 (não 1,234.56).";
+    setErros(e);
+    if (Object.keys(e).length || saldo === null) return;
+    setSaving(true);
     const ok = await onAdd({
-      name: form.name, bank: form.bank, agency: form.agency, account: form.account,
-      type: form.type, balance: parseFloat(form.balance || "0"),
+      name: form.name.trim(), bank: form.bank.trim(), agency: form.agency.trim(), account: form.account.trim(),
+      type: form.type, balance: saldo,
       color: colors[banks.length % colors.length],
     });
-    if (ok) setForm({ name: "", bank: "", agency: "", account: "", type: "corrente", balance: "" });
+    setSaving(false);
+    if (ok) { setForm(vazio); setErros({}); }
   };
 
   const saldoTotal = banks.reduce((s, b) => s + b.balance, 0);
@@ -999,53 +1138,54 @@ function TabBancos({
     <>
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">Contas Bancárias</h2>
-        <button onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
+        <button onClick={() => setShowAdd(!showAdd)} aria-expanded={showAdd} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
           <Plus className="h-4 w-4" /> Novo Banco
         </button>
       </div>
 
       {showAdd && (
-        <div className="bg-card rounded-xl border border-border p-5 space-y-4 animate-fade-in">
+        <form noValidate onSubmit={(ev) => { ev.preventDefault(); handleSubmit(); }} className="bg-card rounded-xl border border-border p-5 space-y-4 animate-fade-in">
           <h3 className="text-sm font-semibold text-card-foreground">Adicionar Conta Bancária</h3>
-          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Nome da Conta</label>
-              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
+              <label htmlFor="banco-nome" className={labelCls}>Nome da conta *</label>
+              <input id="banco-nome" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} placeholder="Ex: Conta principal" {...ariaErro("banco-nome", erros)} />
+              <ErroCampo id="banco-nome" msg={erros["banco-nome"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Banco</label>
-              <input value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" placeholder="Ex: Itaú" />
+              <label htmlFor="banco-banco" className={labelCls}>Banco *</label>
+              <input id="banco-banco" value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} className={inputCls} placeholder="Ex: Itaú" {...ariaErro("banco-banco", erros)} />
+              <ErroCampo id="banco-banco" msg={erros["banco-banco"]} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Agência</label>
-              <input value={form.agency} onChange={(e) => setForm({ ...form, agency: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
+              <label htmlFor="banco-ag" className={labelCls}>Agência</label>
+              <input id="banco-ag" inputMode="numeric" value={form.agency} onChange={(e) => setForm({ ...form, agency: e.target.value })} className={inputCls} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Conta</label>
-              <input value={form.account} onChange={(e) => setForm({ ...form, account: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
+              <label htmlFor="banco-conta" className={labelCls}>Conta</label>
+              <input id="banco-conta" value={form.account} onChange={(e) => setForm({ ...form, account: e.target.value })} className={inputCls} />
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Saldo Inicial</label>
-              <input type="number" value={form.balance} onChange={(e) => setForm({ ...form, balance: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
+              <label htmlFor="banco-saldo" className={labelCls}>Saldo inicial (R$)</label>
+              <input id="banco-saldo" inputMode="decimal" value={form.balance} onChange={(e) => setForm({ ...form, balance: e.target.value.replace(/[^\d.,-]/g, "") })}
+                className={inputCls} placeholder="0,00" {...ariaErro("banco-saldo", erros)} />
+              <ErroCampo id="banco-saldo" msg={erros["banco-saldo"]} />
             </div>
-            <div className="flex items-end">
-              <button onClick={handleSubmit} className="h-9 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
-                Salvar
-              </button>
+            <div className="flex items-end gap-2">
+              <Button type="submit" size="sm" disabled={saving}>
+                {saving && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
+                {saving ? "Salvando…" : "Salvar"}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => { setShowAdd(false); setErros({}); }}>Cancelar</Button>
             </div>
           </div>
-        </div>
+        </form>
       )}
 
       {/* Saldo total */}
       <div className="bg-card rounded-xl border border-border p-6 text-center">
         <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Saldo Total Consolidado</p>
-        <p className="text-3xl font-bold text-foreground font-heading">R$ {saldoTotal.toLocaleString("pt-BR")}</p>
+        <p className="text-3xl font-bold text-foreground font-heading">{formatBRL(saldoTotal)}</p>
       </div>
 
       {/* Cards dos bancos */}
@@ -1067,10 +1207,10 @@ function TabBancos({
                   <p className="text-[10px] text-muted-foreground">{bk.bank} • Ag {bk.agency} • CC {bk.account}</p>
                 </div>
               </div>
-              <p className="text-2xl font-bold text-foreground font-heading mb-3">R$ {bk.balance.toLocaleString("pt-BR")}</p>
+              <p className="text-2xl font-bold text-foreground font-heading mb-3">{formatBRL(bk.balance)}</p>
               <div className="flex gap-4 text-[10px]">
-                <span className="text-success">↑ R$ {entradas.toLocaleString("pt-BR")}</span>
-                <span className="text-destructive">↓ R$ {saidas.toLocaleString("pt-BR")}</span>
+                <span className="text-success">↑ {formatBRL(entradas)}</span>
+                <span className="text-destructive">↓ {formatBRL(saidas)}</span>
               </div>
               {/* Últimas movimentações do banco */}
               <div className="mt-4 pt-3 border-t border-border/50 space-y-1.5">
@@ -1078,7 +1218,7 @@ function TabBancos({
                   <div key={m.id} className="flex items-center justify-between">
                     <span className="text-[10px] text-muted-foreground truncate mr-2">{m.description}</span>
                     <span className={`text-[10px] font-bold ${m.type === "entrada" ? "text-success" : "text-destructive"}`}>
-                      {m.type === "entrada" ? "+" : "-"}{m.value.toLocaleString("pt-BR")}
+                      {m.type === "entrada" ? "+" : "-"}{formatBRL(m.value)}
                     </span>
                   </div>
                 ))}
@@ -1193,10 +1333,10 @@ function TabDRE({ movements }: { movements: FinanceMovement[] }) {
                     {line.label}
                   </td>
                   <td className={`px-4 py-3 text-xs text-right ${line.isBold ? "font-bold" : ""} text-foreground`}>
-                    {isMargin ? (atual.margem === null ? "—" : `${line.currentMonth}%`) : `R$ ${line.currentMonth.toLocaleString("pt-BR")}`}
+                    {isMargin ? (atual.margem === null ? "—" : `${line.currentMonth}%`) : formatBRL(line.currentMonth)}
                   </td>
                   <td className="px-4 py-3 text-xs text-right text-muted-foreground">
-                    {!hasPrev ? "—" : isMargin ? `${line.previousMonth}%` : `R$ ${line.previousMonth!.toLocaleString("pt-BR")}`}
+                    {!hasPrev ? "—" : isMargin ? `${line.previousMonth}%` : formatBRL(line.previousMonth!)}
                   </td>
                   <td className={`px-4 py-3 text-xs text-right font-bold ${
                     isMargin || variation === null ? "text-muted-foreground" :

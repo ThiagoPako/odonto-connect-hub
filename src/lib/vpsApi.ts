@@ -274,6 +274,8 @@ export async function adminUploadUserAvatar(userId: string, file: File) {
 
 export const pacientesApi = {
   list: () => vpsApiFetch('/pacientes'),
+  /** Um paciente da clínica do usuário (erro "Paciente não encontrado" se for de outra). */
+  get: (id: string) => vpsApiFetch(`/pacientes/${encodeURIComponent(id)}`),
   create: (body: unknown) => vpsApiFetch('/pacientes', { method: 'POST', body }),
   update: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}`, { method: 'PUT', body }),
   delete: (id: string) => vpsApiFetch(`/pacientes/${id}`, { method: 'DELETE' }),
@@ -282,6 +284,38 @@ export const pacientesApi = {
   getOdontograma: (id: string) => vpsApiFetch(`/pacientes/${id}/odontograma`),
   saveOdontograma: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}/odontograma`, { method: 'PUT', body }),
   getHistorico: (id: string) => vpsApiFetch<HistoricoConsulta[]>(`/pacientes/${id}/historico`),
+};
+
+// ─── Lista de espera e encaixe (horário liberado → oferta por clique da recepção) ───
+export interface ListaEsperaItem {
+  id: string;
+  paciente_id: string;
+  paciente_nome: string;
+  dentista_id: string | null;
+  dentista_nome: string | null;
+  periodo: "manha" | "tarde" | "noite" | "qualquer";
+  observacao: string | null;
+  status: "aguardando" | "oferecido";
+  created_at: string;
+}
+export interface EncaixeInfo {
+  disponivel: boolean;
+  liberado: boolean;
+  futuro: boolean;
+  candidatos: number;
+  dentroDaJanela?: boolean;
+  oferta: { id: string; status: "enviada" | "aceita"; expires_at: string; paciente_nome: string } | null;
+}
+export const listaEsperaApi = {
+  list: () => vpsApiFetch<ListaEsperaItem[]>('/lista-espera'),
+  add: (body: { paciente_id: string; dentista_id?: string | null; periodo: ListaEsperaItem["periodo"]; observacao?: string }) =>
+    vpsApiFetch<{ id: string }>('/lista-espera', { method: 'POST', body }),
+  remove: (id: string) => vpsApiFetch(`/lista-espera/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  liberarHorario: (agendamentoId: string) =>
+    vpsApiFetch<{ success: boolean }>(`/agenda/${encodeURIComponent(agendamentoId)}/liberar-horario`, { method: 'POST' }),
+  encaixe: (agendamentoId: string) => vpsApiFetch<EncaixeInfo>(`/agenda/${encodeURIComponent(agendamentoId)}/encaixe`),
+  oferecer: (agendamentoId: string) =>
+    vpsApiFetch<{ oferta: { id: string; paciente_nome: string; expires_at: string } }>(`/agenda/${encodeURIComponent(agendamentoId)}/oferecer-horario`, { method: 'POST' }),
 };
 
 export const agendaApi = {
@@ -383,6 +417,8 @@ export interface AgendamentoVPS {
   categoria_cor?: string;
   confirmacao_canal?: string;
   confirmacao_quando?: string;
+  /** Pedido de confirmação pelo WhatsApp: na_fila · aguardando · confirmado · remarcar · falhou (só leitura). */
+  lembrete_status?: "na_fila" | "aguardando" | "confirmado" | "remarcar" | "falhou" | null;
   alerta_retorno_canal?: string;
   alerta_retorno_quando?: string;
   evento_titulo?: string;
@@ -769,7 +805,26 @@ export const execucoesApi = {
 
 // ─── WhatsApp (via proxy) ───────────────────────────────────
 
+/** Estado de cada número da clínica gravado pelo job de saúde (a cada 5 min). */
+export interface WhatsAppHealthInstance {
+  instance: string;
+  state: "open" | "connecting" | "close" | "ausente" | "desconhecido";
+  since: string | null;
+  downForMinutes: number;
+  reconnectLoop: boolean;
+  pendingJobs: number;
+  lastCheckedAt: string | null;
+}
+
+export const optOutApi = {
+  status: (leadId: string) =>
+    vpsApiFetch<{ optedOut: boolean; since?: string; keyword?: string | null }>('/whatsapp/opt-out', { params: { leadId }, background: true }),
+  revogar: (leadId: string, solicitacao: string) =>
+    vpsApiFetch<{ success: boolean }>('/whatsapp/opt-out/revogar', { method: 'POST', body: { leadId, solicitacao } }),
+};
+
 export const whatsappApi = {
+  health: () => vpsApiFetch<{ instances: WhatsAppHealthInstance[]; anyDown: boolean; pendingJobsWithoutInstance?: number; alertAfterMinutes?: number }>('/whatsapp/health', { background: true }),
   instances: () => vpsApiFetch('/whatsapp/instances'),
   create: (instanceName: string) => vpsApiFetch('/whatsapp/instances', { method: 'POST', body: { instanceName } }),
   connect: (instance: string) => vpsApiFetch(`/whatsapp/connect/${instance}`),
@@ -945,7 +1000,7 @@ export const sessionsApi = {
   firstResponse: (body: { leadId: string }) =>
     vpsApiFetch<{ success: boolean }>('/sessions/first-response', { method: 'POST', body, background: true }),
   close: (body: unknown) =>
-    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number }>('/sessions/close', { method: 'POST', body }),
+    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number; surveyQueued?: boolean }>('/sessions/close', { method: 'POST', body }),
   checkActive: (leadId: string) =>
     vpsApiFetch<{ active: boolean; attendantId?: string; attendantName?: string; isCurrentUser?: boolean }>(`/sessions/active/${leadId}`, { background: true }),
   list: (params?: { active?: boolean }) =>

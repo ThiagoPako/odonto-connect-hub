@@ -37,6 +37,22 @@ CREATE TABLE IF NOT EXISTS whatsapp_opt_outs (
   PRIMARY KEY (tenant_id, phone_key)
 );
 
+-- Opt-out desfeito pela clínica a pedido do paciente: como pediu, quem desfez e quando.
+CREATE TABLE IF NOT EXISTS whatsapp_opt_out_reversals (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id UUID NOT NULL,
+  phone_key TEXT NOT NULL,
+  phone TEXT,
+  opted_out_at TIMESTAMPTZ,
+  keyword TEXT,
+  lead_id TEXT,
+  requested_via TEXT NOT NULL,
+  reverted_by UUID,
+  reverted_by_email TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_wa_opt_out_reversals_tenant ON whatsapp_opt_out_reversals (tenant_id, phone_key, created_at DESC);
+
 -- Preenche a clínica dos registros antigos
 UPDATE automation_flows f SET tenant_id = p.tenant_id FROM profiles p
  WHERE f.tenant_id IS NULL AND p.id::text = f.created_by::text AND p.tenant_id IS NOT NULL;
