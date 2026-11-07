@@ -36,6 +36,7 @@ import {
   extractEvolutionMessages, normalizeEvolutionAckStatus, maskWaIdentifiers,
 } from './whatsapp/adapters/evolution.mjs';
 import { createOpenWaAdapter } from './whatsapp/adapters/openwa.mjs';
+import { situacaoAssinatura, sqlTenantBloqueado, rotaLiberadaNoBloqueio, ERRO_ASSINATURA_BLOQUEADA, CARENCIA_VENCIMENTO_DIAS } from './assinatura.mjs';
 import { validarPaciente, CAMPOS_PACIENTE, quantidadeEstoque, TIPOS_MOVIMENTO_ESTOQUE } from './cadastros-validacao.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
@@ -186,6 +187,54 @@ app.use((req, res, next) => {
     return json(body);
   };
   next();
+});
+
+// ─── Assinatura vencida: 5 dias de carência, depois bloqueia (assinatura.mjs) ───
+// Cache curto por clínica: a regra roda em toda requisição autenticada.
+const ASSINATURA_CACHE_TTL_MS = 60_000;
+const cacheAssinatura = new Map();
+function esquecerAssinatura(tenantId) { if (tenantId) cacheAssinatura.delete(String(tenantId)); }
+async function situacaoDoTenant(tenantId) {
+  if (!isValidTenantId(tenantId)) return null;
+  const chave = String(tenantId);
+  const c = cacheAssinatura.get(chave);
+  if (c && c.ate > Date.now()) return c.sit;
+  let sit = null;
+  try {
+    const { rows } = await pool.query('SELECT status, trial_ends_at, current_period_end FROM tenants WHERE id = $1 LIMIT 1', [chave]);
+    if (rows[0]) sit = situacaoAssinatura(rows[0]);
+  } catch (err) {
+    // Falha aberta: erro de banco não tranca a clínica
+    if (err?.code !== '22P02' && err?.code !== '42P01') console.warn('[assinatura] consulta falhou:', err?.code || err?.message);
+    return null;
+  }
+  if (cacheAssinatura.size > 5000) cacheAssinatura.clear();
+  cacheAssinatura.set(chave, { sit, ate: Date.now() + ASSINATURA_CACHE_TTL_MS });
+  return sit;
+}
+function respostaAssinaturaBloqueada(res, sit) {
+  return res.status(402).json({
+    error: 'O acesso da clínica está suspenso: a assinatura venceu há mais de ' + CARENCIA_VENCIMENTO_DIAS + ' dias. Seus dados estão guardados. Regularize para voltar a usar.',
+    code: ERRO_ASSINATURA_BLOQUEADA,
+    assinatura: sit,
+  });
+}
+// Antes de todas as rotas da API: com a clínica bloqueada, só login, perfil e "Minha assinatura".
+// Super-admin nunca é bloqueado. Webhooks e rotas sem Bearer seguem a própria autenticação.
+app.use('/api', async (req, res, next) => {
+  try {
+    if (isWebhookRequestPath(req) || rotaLiberadaNoBloqueio(req.originalUrl)) return next();
+    if (!/^Bearer\s/i.test(String(req.headers.authorization || ''))) return next();
+    let user;
+    try { ({ user } = await verifyUser(req)); } catch { return next(); }
+    if (user.is_super_admin || !user.tenant_id) return next();
+    const sit = await situacaoDoTenant(user.tenant_id);
+    if (sit?.situacao === 'bloqueado') return respostaAssinaturaBloqueada(res, sit);
+    return next();
+  } catch (err) {
+    console.warn('[assinatura] middleware:', err?.message);
+    return next();
+  }
 });
 
 // ─── Media File Storage ─────────────────────────────────────
@@ -1776,7 +1825,7 @@ app.get('/api/super-admin/tenants', async (req, res) => {
       FROM tenants t LEFT JOIN plans p ON p.id = t.plan_id
       ORDER BY t.created_at DESC
     `);
-    res.json({ data: rows });
+    res.json({ data: rows.map((t) => ({ ...t, assinatura: situacaoAssinatura(t) })) });
   } catch (e) {
     responderErroSaas(res, e, 'super-admin:tenants');
   }
@@ -1807,10 +1856,11 @@ app.patch('/api/super-admin/tenants/:id', async (req, res) => {
       vals
     );
     if (!rows[0]) return res.status(404).json({ error: 'Clínica não encontrada' });
+    esquecerAssinatura(id);
     const campos = Object.entries({ status, plan_slug, trial_ends_at, current_period_end })
       .filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => `${k}=${v}`).join(' ');
     console.log(`[AUDIT super-admin] alterou clinica=${id} actor=${actor.id} ${campos}`);
-    res.json({ data: rows[0] });
+    res.json({ data: { ...rows[0], assinatura: situacaoAssinatura(rows[0]) } });
   } catch (e) {
     responderErroSaas(res, e, 'super-admin:tenant-update');
   }
@@ -2445,6 +2495,8 @@ app.get('/api/auth/me', async (req, res) => {
       tenant_id: profile.tenant_id || null,
       is_super_admin: !!profile.is_super_admin,
       tenant_features: tenantMetadata?.features || {},
+      // Situação da assinatura da clínica ativa (aviso na carência, tela de bloqueio depois)
+      assinatura: user.tenant_id ? await situacaoDoTenant(user.tenant_id) : null,
     });
   } catch (error) {
     console.error('auth/me error:', error.message);
@@ -9725,6 +9777,10 @@ app.get('/api/events', async (req, res) => {
   if (await usuarioDesativado(authenticatedUserId)) {
     return res.status(401).json({ error: 'Usuário desativado' });
   }
+  if (!authenticatedIsSuperAdmin) {
+    const sit = await situacaoDoTenant(tenantId);
+    if (sit?.situacao === 'bloqueado') return respostaAssinaturaBloqueada(res, sit);
+  }
 
   // Set headers for SSE
   res.writeHead(200, {
@@ -12946,6 +13002,9 @@ async function processAutomationJobs() {
          FROM automation_jobs
         WHERE status = 'pending' AND scheduled_at <= NOW() AND COALESCE(channel, 'whatsapp') = 'whatsapp'
           AND (claimed_at IS NULL OR claimed_at < NOW() - ${WA_CLAIM_TIMEOUT_SQL})
+          -- Clínica bloqueada por assinatura vencida: marketing fica parado (lembrete e resposta ao paciente seguem)
+          AND NOT (COALESCE(category, 'transactional') = 'marketing' AND EXISTS (
+                SELECT 1 FROM tenants t WHERE t.id = automation_jobs.tenant_id AND ${sqlTenantBloqueado('t')}))
         ORDER BY COALESCE(NULLIF(instance, ''), 'tenant:' || COALESCE(tenant_id::text, 'none')),
                  (trigger_event = 'auto_reply') DESC NULLS LAST, scheduled_at ASC
         LIMIT 200`

@@ -1,5 +1,15 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
-import { getToken, clearToken, getMe, login as loginVps, setCachedTenantId } from "@/lib/vpsApi";
+import { getToken, clearToken, getMe, login as loginVps, setCachedTenantId, ASSINATURA_BLOQUEADA_EVENT } from "@/lib/vpsApi";
+
+/** Situação da assinatura da clínica (vps-api-server/assinatura.mjs). */
+export interface AssinaturaSituacao {
+  situacao: "ok" | "carencia" | "bloqueado";
+  status: string;
+  vence_em: string | null;
+  bloqueio_em: string | null;
+  dias_para_bloqueio: number | null;
+  motivo: "teste_vencido" | "pagamento_vencido" | "suspensa" | "cancelada" | null;
+}
 
 export interface AuthUser {
   id: string;
@@ -10,6 +20,7 @@ export interface AuthUser {
   tenant_id: string | null;
   is_super_admin: boolean;
   tenant_features?: Record<string, boolean>;
+  assinatura?: AssinaturaSituacao | null;
 }
 
 interface AuthState {
@@ -62,9 +73,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
     document.addEventListener("visibilitychange", refreshOnVisibility);
+    // A API respondeu 402 (assinatura bloqueada no meio da sessão): recarrega para mostrar a tela de bloqueio.
+    const onAssinaturaBloqueada = () => {
+      fetchCurrentUser().then((u) => { if (mounted && u) setUser(u); }).catch(() => undefined);
+    };
+    window.addEventListener(ASSINATURA_BLOQUEADA_EVENT, onAssinaturaBloqueada);
     return () => {
       mounted = false;
       document.removeEventListener("visibilitychange", refreshOnVisibility);
+      window.removeEventListener(ASSINATURA_BLOQUEADA_EVENT, onAssinaturaBloqueada);
     };
   }, []);
 

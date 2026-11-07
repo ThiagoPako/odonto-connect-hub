@@ -2,6 +2,7 @@ import { Outlet, Link, createRootRoute, HeadContent, Scripts, useLocation, useNa
 import { useEffect } from "react";
 import { AppSidebar, MobileTopBar } from "@/components/AppSidebar";
 import { WhatsAppConnectionBanner } from "@/components/WhatsAppConnectionBanner";
+import { AssinaturaBloqueadaTela, AssinaturaCarenciaBanner } from "@/components/AssinaturaAviso";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { useGlobalChatNotifier } from "@/hooks/useGlobalChatNotifier";
 import { canAccessRoute } from "@/lib/routeAccess";
@@ -109,7 +110,7 @@ function RootComponent() {
 }
 
 function AuthGate() {
-  const { isAuthenticated, isLoading, user } = useAuth();
+  const { isAuthenticated, isLoading, user, logout } = useAuth();
   const location = useLocation();
 
   // Captura UTMs ao carregar a aplicação
@@ -144,6 +145,26 @@ function AuthGate() {
   const userRole = user?.role ?? "user";
   const hasAccess = canAccessRoute(location.pathname, userRole, !!user?.is_super_admin, user?.tenant_features);
 
+  // Assinatura vencida há mais de 5 dias (ou clínica suspensa): só a tela de bloqueio; o admin
+  // ainda abre "Minha assinatura". Super-admin nunca é bloqueado.
+  const assinatura = user?.is_super_admin ? null : user?.assinatura ?? null;
+  const ehAdmin = userRole === "admin";
+  if (assinatura?.situacao === "bloqueado") {
+    if (ehAdmin && location.pathname === "/minha-assinatura") {
+      return (
+        <main id="conteudo" className="min-h-dvh bg-background">
+          <div className="mx-auto max-w-5xl px-4 pt-4">
+            <button onClick={() => window.history.back()} className="text-sm underline underline-offset-2 text-muted-foreground hover:text-foreground">
+              Voltar
+            </button>
+          </div>
+          <Outlet />
+        </main>
+      );
+    }
+    return <AssinaturaBloqueadaTela assinatura={assinatura} ehAdmin={ehAdmin} onSair={logout} />;
+  }
+
   // Authenticated — show sidebar + content (or unauthorized)
   return (
     // h-dvh: no celular a barra do navegador não esconde o fim da página.
@@ -154,6 +175,7 @@ function AuthGate() {
       <AppSidebar />
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         <MobileTopBar />
+        {assinatura?.situacao === "carencia" && <AssinaturaCarenciaBanner assinatura={assinatura} ehAdmin={ehAdmin} />}
         <WhatsAppConnectionBanner />
         <main id="conteudo" className="flex-1 min-w-0 overflow-y-auto">
           {hasAccess ? <Outlet /> : <UnauthorizedComponent />}

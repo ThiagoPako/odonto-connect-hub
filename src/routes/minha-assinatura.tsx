@@ -16,6 +16,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
 import { AlertTriangle, CreditCard, Crown, Loader2, RefreshCw } from "lucide-react";
 
 export const Route = createFileRoute("/minha-assinatura")({
@@ -47,6 +48,8 @@ const limite = (v: number | null, singular: string, plural: string) =>
   v == null ? `${plural} ilimitados` : `até ${v} ${v === 1 ? singular : plural}`;
 
 function MinhaAssinaturaPage() {
+  const { user } = useAuth();
+  const assinatura = user?.assinatura ?? null;
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [sub, setSub] = useState<Subscription | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -114,6 +117,11 @@ function MinhaAssinaturaPage() {
   const trialDaysLeft = tenant.trial_ends_at
     ? Math.max(0, Math.ceil((new Date(tenant.trial_ends_at).getTime() - Date.now()) / 86400000))
     : 0;
+  const dataBr = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "";
+  // O vencimento que vale para o bloqueio é o da clínica (tenants.current_period_end)
+  const fimPeriodo = tenant.current_period_end ?? sub?.current_period_end ?? null;
+  const bloqueada = assinatura?.situacao === "bloqueado";
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -137,13 +145,32 @@ function MinhaAssinaturaPage() {
             </div>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            {tenant.status === "trial" ? (
+            {bloqueada ? (
+              <p className="flex items-start gap-2 text-destructive">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+                <span>
+                  {assinatura?.motivo === "suspensa" || assinatura?.motivo === "cancelada"
+                    ? "O acesso da clínica está suspenso."
+                    : `Venceu em ${dataBr(assinatura?.vence_em)} e o prazo de 5 dias terminou em ${dataBr(assinatura?.bloqueio_em)}.`}{" "}
+                  Os dados estão guardados. Fale com o suporte do Odonto Connect para regularizar.
+                </span>
+              </p>
+            ) : assinatura?.situacao === "carencia" ? (
+              <p className="flex items-start gap-2 text-warning-ink">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+                <span>
+                  {assinatura.motivo === "teste_vencido" ? "O teste" : "A assinatura"} venceu em {dataBr(assinatura.vence_em)}.
+                  O acesso será bloqueado em <strong>{assinatura.dias_para_bloqueio} dia{assinatura.dias_para_bloqueio !== 1 ? "s" : ""}</strong>{" "}
+                  ({dataBr(assinatura.bloqueio_em)}). Fale com o suporte do Odonto Connect para regularizar.
+                </span>
+              </p>
+            ) : tenant.status === "trial" ? (
               <p>
                 Seu teste termina em <strong>{trialDaysLeft} dia{trialDaysLeft !== 1 ? "s" : ""}</strong>.
                 Escolha um plano abaixo para continuar usando após o trial.
               </p>
-            ) : sub?.current_period_end ? (
-              <p>Próxima renovação: {new Date(sub.current_period_end).toLocaleDateString("pt-BR")}</p>
+            ) : fimPeriodo ? (
+              <p>Assinatura válida até {dataBr(fimPeriodo)}. Depois disso há 5 dias de tolerância antes do bloqueio.</p>
             ) : null}
           </CardContent>
         </Card>
@@ -178,7 +205,7 @@ function MinhaAssinaturaPage() {
                       <li>• {limite(p.max_pacientes, "paciente", "pacientes")}</li>
                     </ul>
                     <Button
-                      disabled={isCurrent || changing === p.slug}
+                      disabled={isCurrent || changing === p.slug || bloqueada}
                       onClick={() => setConfirmPlan(p)}
                       className="w-full"
                       variant={isCurrent ? "secondary" : "default"}
