@@ -385,25 +385,30 @@ function ConsultaPage() {
     setTabAtiva("consulta");
     timerRef.current = setInterval(() => setTempoAtendimento(t => t + 1), 1000);
 
-    // Update appointment status to "em_atendimento" on VPS
+    // Update appointment status to "em_atendimento" on VPS (vpsApiFetch não lança: confere error)
     if (appointmentSelecionado) {
-      agendaApi.update(appointmentSelecionado.id, { status: "em_atendimento" }).then(() => {
+      agendaApi.update(appointmentSelecionado.id, { status: "em_atendimento" }).then(({ error }) => {
+        if (error) toast.error("A consulta começou, mas a agenda não foi marcada como \u201cem atendimento\u201d: " + error);
         fetchAgenda(); // Refresh agenda list
-      }).catch(() => {});
+      });
     }
 
     toast.success(`Consulta iniciada — ${pacienteSelecionado.nome}`);
   }, [pacienteSelecionado, appointmentSelecionado, fetchAgenda]);
 
+  const finalizandoRef = useRef(false);
+  const [finalizando, setFinalizando] = useState(false);
   const finalizarAtendimento = useCallback(async () => {
-    setAtendimentoAtivo(false);
-    if (timerRef.current) clearInterval(timerRef.current);
-    setMostrarGravacao(false);
-
+    if (finalizandoRef.current) return; // duplo clique gravava a consulta duas vezes
     if (!pacienteSelecionado) {
+      setAtendimentoAtivo(false);
+      if (timerRef.current) clearInterval(timerRef.current);
+      setMostrarGravacao(false);
       toast.success("Consulta finalizada!");
       return;
     }
+    finalizandoRef.current = true;
+    setFinalizando(true);
 
     // Calculate started_at from duration
     const startedAt = new Date(Date.now() - tempoAtendimento * 1000).toISOString();
@@ -424,22 +429,31 @@ function ConsultaPage() {
       started_at: startedAt,
     });
 
+    finalizandoRef.current = false;
+    setFinalizando(false);
+
+    // Se o servidor não salvou, a consulta continua aberta com tudo na tela e a agenda
+    // NÃO vira "finalizado" (antes: agenda finalizada e anotações perdidas sem aviso claro).
+    if (error) {
+      console.error("Erro ao salvar consulta:", error);
+      toast.error(`A consulta NÃO foi salva: ${error}. As anotações continuam na tela; tente finalizar de novo.`, { duration: 10000 });
+      return;
+    }
+
+    setAtendimentoAtivo(false);
+    if (timerRef.current) clearInterval(timerRef.current);
+    setMostrarGravacao(false);
     // O áudio nunca é persistido: ao finalizar, descarta as gravações da memória (LGPD art. 16).
     setGravacoes([]);
 
     // Update appointment status to "finalizado" on VPS
     if (appointmentSelecionado) {
-      agendaApi.update(appointmentSelecionado.id, { status: "finalizado" }).then(() => {
-        fetchAgenda(); // Refresh agenda list
-      }).catch(() => {});
+      const { error: agendaError } = await agendaApi.update(appointmentSelecionado.id, { status: "finalizado" });
+      if (agendaError) toast.error("Consulta salva, mas a agenda não foi marcada como finalizada: " + agendaError);
+      fetchAgenda(); // Refresh agenda list
     }
 
-    if (error) {
-      console.error("Erro ao salvar consulta:", error);
-      toast.error(`Consulta finalizada localmente — erro ao salvar: ${error}`);
-    } else {
-      toast.success(`Consulta finalizada — ${formatTime(tempoAtendimento)} de atendimento`);
-    }
+    toast.success(`Consulta finalizada — ${formatTime(tempoAtendimento)} de atendimento`);
   }, [pacienteSelecionado, appointmentSelecionado, tempoAtendimento, queixaPrincipal, procedimentoRealizado, dente, notas, prescricoes, gravacoes, aiState.reportId, fetchAgenda]);
 
   useEffect(() => {
@@ -655,7 +669,7 @@ function ConsultaPage() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <DashboardHeader title="Consulta" />
-      <main className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-6">
         {pacienteSelecionado && (
           <div className="sticky -top-6 z-20 -mt-6 mb-4 pt-6 pb-1 bg-background max-w-[1600px] mx-auto">
             <AlertasMedicosBanner
@@ -731,8 +745,8 @@ function ConsultaPage() {
                                 {apt.patientInitials}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-foreground truncate">{apt.patientName}</p>
-                                <p className="text-[11px] text-muted-foreground truncate">{apt.procedure}</p>
+                                <p className="text-sm font-medium text-foreground break-words">{apt.patientName}</p>
+                                <p className="text-[11px] text-muted-foreground break-words">{apt.procedure}</p>
                               </div>
                             </div>
                             <div className="flex items-center justify-between mt-2">
@@ -791,13 +805,13 @@ function ConsultaPage() {
                                 </span>
                               </div>
                               {c.procedimento && (
-                                <p className="text-[10px] text-primary font-medium truncate">{c.procedimento}</p>
+                                <p className="text-[10px] text-primary font-medium break-words">{c.procedimento}</p>
                               )}
                               {c.queixa_principal && (
-                                <p className="text-[10px] text-muted-foreground truncate mt-0.5">Queixa: {c.queixa_principal}</p>
+                                <p className="text-[10px] text-muted-foreground break-words mt-0.5">Queixa: {c.queixa_principal}</p>
                               )}
                               {c.dente_regiao && (
-                                <p className="text-[10px] text-muted-foreground truncate">Dente: {c.dente_regiao}</p>
+                                <p className="text-[10px] text-muted-foreground break-words">Dente: {c.dente_regiao}</p>
                               )}
                               {c.dentist_name && (
                                 <p className="text-[9px] text-muted-foreground/70 mt-1">{c.dentist_name}</p>
@@ -846,9 +860,10 @@ function ConsultaPage() {
                           </span>
                           <button
                             onClick={finalizarAtendimento}
-                            className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-destructive hover:border-destructive/30 hover:bg-destructive/5 transition-all"
+                            disabled={finalizando}
+                            className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-destructive hover:border-destructive/30 hover:bg-destructive/5 transition-all disabled:opacity-60"
                           >
-                            <Square className="h-3 w-3" /> Finalizar
+                            {finalizando ? <Loader2 className="h-3 w-3 animate-spin" /> : <Square className="h-3 w-3" />} {finalizando ? "Salvando…" : "Finalizar"}
                           </button>
                         </>
                       )}
@@ -1008,9 +1023,11 @@ function ConsultaPage() {
                           <div className="flex justify-end pt-2">
                             <button
                               onClick={finalizarAtendimento}
-                              className="flex items-center gap-2 h-9 px-5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-all"
+                              disabled={finalizando}
+                              className="flex items-center gap-2 h-9 px-5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-all disabled:opacity-60"
                             >
-                              <Save className="h-3.5 w-3.5" /> Finalizar Atendimento
+                              {finalizando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                              {finalizando ? "Salvando consulta…" : "Finalizar Atendimento"}
                             </button>
                           </div>
                         </div>
@@ -1362,7 +1379,7 @@ function ConsultaPage() {
                                             D{job.delay_days}
                                           </div>
                                           <div className="flex-1 min-w-0">
-                                            <p className="text-foreground truncate">{job.message}</p>
+                                            <p className="text-foreground truncate" title={job.message}>{job.message}</p>
                                             <p className="text-[10px] text-muted-foreground">
                                               Envio: {new Date(job.scheduled_at).toLocaleDateString('pt-BR')} às {new Date(job.scheduled_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                             </p>
@@ -1456,7 +1473,7 @@ function ConsultaPage() {
                 )}
               </div>
             </div>
-      </main>
+      </div>
     </div>
   );
 }

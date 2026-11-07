@@ -25,6 +25,7 @@ interface Props {
 const STATUS_OPTIONS = [
   { value: "agendado", label: "Agendado" },
   { value: "confirmado", label: "Confirmado" },
+  { value: "remarcar", label: "Pediu remarcação" },
   { value: "em_atendimento", label: "Em atendimento" },
   { value: "finalizado", label: "Finalizado" },
   { value: "faltou", label: "Faltou" },
