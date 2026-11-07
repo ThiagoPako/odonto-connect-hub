@@ -213,19 +213,25 @@ async function situacaoDoTenant(tenantId) {
   return sit;
 }
 // 402 com texto neutro (a equipe vê o mesmo erro; o detalhe do atraso fica para o admin, CDC 42).
-function respostaAssinaturaBloqueada(res, sit) {
+// Quem não é admin recebe só a etapa (as datas e o motivo do atraso ficam para o admin, CDC 42).
+function assinaturaParaUsuario(sit, user) {
+  if (!sit) return null;
+  if (user?.is_super_admin || user?.role === 'admin') return sit;
+  return { situacao: sit.situacao, motivo: sit.motivo === 'suspensa' || sit.motivo === 'cancelada' ? sit.motivo : null };
+}
+function respostaAssinaturaBloqueada(res, sit, user = null) {
   if (sit?.situacao === 'somente_leitura') {
     return res.status(402).json({
       error: 'Sistema em modo consulta: dá para ver, exportar, responder pacientes e remarcar ou cancelar consultas, mas não criar nem alterar cadastros. O administrador da clínica pode regularizar em "Minha assinatura".',
       code: ERRO_ASSINATURA_SOMENTE_LEITURA,
-      assinatura: sit,
+      assinatura: assinaturaParaUsuario(sit, user),
     });
   }
   const motivo = sit?.situacao === 'cancelado' ? 'a assinatura da clínica foi cancelada' : 'o acesso da clínica está suspenso';
   return res.status(402).json({
     error: `Acesso bloqueado: ${motivo}. Nenhum dado foi apagado: o prontuário continua disponível para consulta e os dados podem ser exportados.`,
     code: ERRO_ASSINATURA_BLOQUEADA,
-    assinatura: sit,
+    assinatura: assinaturaParaUsuario(sit, user),
   });
 }
 // Antes de todas as rotas da API: aplica a etapa da escada (assinatura.mjs → permitidoNaEtapa).
@@ -238,7 +244,12 @@ app.use('/api', async (req, res, next) => {
     try { ({ user } = await verifyUser(req)); } catch { return next(); }
     if (user.is_super_admin || !user.tenant_id) return next();
     const sit = await situacaoDoTenant(user.tenant_id);
-    if (sit && !permitidoNaEtapa(sit.situacao, req.method, req.originalUrl)) return respostaAssinaturaBloqueada(res, sit);
+    if (sit && !permitidoNaEtapa(sit.situacao, req.method, req.originalUrl)) return respostaAssinaturaBloqueada(res, sit, user);
+    // Somente leitura: remarcar/cancelar consulta sim; mudar o resto do agendamento, não
+    if (sit?.situacao === 'somente_leitura' && req.method === 'PUT' && /^\/api\/agenda\/[^/]+\/?$/.test(req.originalUrl.split('?')[0])) {
+      const extras = Object.keys(req.body || {}).filter((k) => !['data', 'hora', 'duracao', 'status'].includes(k));
+      if (extras.length) return respostaAssinaturaBloqueada(res, sit, user);
+    }
     return next();
   } catch (err) {
     console.warn('[assinatura] middleware:', err?.message);
@@ -2507,7 +2518,7 @@ app.get('/api/auth/me', async (req, res) => {
       is_super_admin: !!profile.is_super_admin,
       tenant_features: tenantMetadata?.features || {},
       // Situação da assinatura da clínica ativa (aviso na carência, tela de bloqueio depois)
-      assinatura: user.tenant_id ? await situacaoDoTenant(user.tenant_id) : null,
+      assinatura: user.tenant_id ? assinaturaParaUsuario(await situacaoDoTenant(user.tenant_id), { ...user, role: userRole }) : null,
     });
   } catch (error) {
     console.error('auth/me error:', error.message);
@@ -17355,8 +17366,8 @@ async function exigirAdminDaClinica(user) {
   throw erro('Apenas o administrador desta clínica pode exportar os dados');
 }
 const EXPORTACAO_LOTE = 5000;
-RL.exportacao = createLimiter('exportacao_usuario', { windowMs: 60_000, max: 20 });
-app.use('/api/exportacao', rateLimitMiddleware(RL.exportacao, userRateKey, { message: 'Muitas exportações seguidas. Aguarde um minuto e tente de novo.' }));
+RL.exportacao = createLimiter('exportacao_usuario', { windowMs: 60_000, max: 40 });
+app.use(/^\/api\/exportacao\/[^/]+\.csv$/, rateLimitMiddleware(RL.exportacao, userRateKey, { message: 'Muitas exportações seguidas. Aguarde um minuto e tente de novo.' }));
 
 async function tabelasExportaveis() {
   const nomes = [...EXPORTACAO_TABELAS.keys()];
@@ -17401,28 +17412,40 @@ app.get('/api/exportacao/:tabela.csv', async (req, res) => {
     if (!EXPORTACAO_TABELAS.has(tabela) || !(await tabelasExportaveis()).has(tabela)) {
       return res.status(404).json({ error: 'Conjunto de dados não encontrado' });
     }
-    // Em lotes (não carrega a tabela inteira na memória do processo único da API)
-    const lote = (offset) => pool.query(
-      `SELECT * FROM public."${tabela}" WHERE tenant_id = $1 ORDER BY ctid LIMIT ${EXPORTACAO_LOTE} OFFSET $2`, [user.tenant_id, offset]);
-    let { rows, fields } = await lote(0);
-    const colunas = (fields || []).map((f) => f.name);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${tabela}-${new Date().toISOString().slice(0, 10)}.csv"`);
-    res.write('\uFEFF' + colunas.map(celulaCsv).join(',') + '\n');
+    // Em lotes, todos no mesmo retrato do banco (REPEATABLE READ): edição simultânea não
+    // duplica nem some com linha, e a tabela inteira não vai para a memória de uma vez.
+    let cancelado = false;
+    req.on('close', () => { if (!res.writableEnded) cancelado = true; });
+    const client = await pool.connect();
     let total = 0;
-    for (let offset = 0; rows.length; ) {
-      res.write(rows.map((r) => linhaCsv(colunas, r)).join('\n') + '\n');
-      total += rows.length;
-      if (rows.length < EXPORTACAO_LOTE) break;
-      offset += EXPORTACAO_LOTE;
-      ({ rows } = await lote(offset));
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const lote = (offset) => client.query(
+        `SELECT * FROM public."${tabela}" WHERE tenant_id = $1 ORDER BY ctid LIMIT ${EXPORTACAO_LOTE} OFFSET $2`, [user.tenant_id, offset]);
+      let { rows, fields } = await lote(0);
+      const colunas = (fields || []).map((f) => f.name);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${tabela}-${new Date().toISOString().slice(0, 10)}.csv"`);
+      res.write('\uFEFF' + colunas.map(celulaCsv).join(',') + '\n');
+      for (let offset = 0; rows.length && !cancelado; ) {
+        res.write(rows.map((r) => linhaCsv(colunas, r)).join('\n') + '\n');
+        total += rows.length;
+        if (rows.length < EXPORTACAO_LOTE) break;
+        offset += EXPORTACAO_LOTE;
+        ({ rows } = await lote(offset));
+      }
+      await client.query('COMMIT');
+    } finally {
+      client.release();
     }
-    console.log(`[AUDIT exportacao] user=${user.id} clinica=${user.tenant_id} tabela=${tabela} registros=${total}`);
+    console.log(`[AUDIT exportacao] user=${user.id} clinica=${user.tenant_id} tabela=${tabela} registros=${total}${cancelado ? ' (interrompida pelo cliente)' : ''}`);
     res.end();
   } catch (error) {
     const status = httpStatusOf(error);
     if (status === 500) console.error('[exportacao]', error?.message);
-    if (res.headersSent) return res.end();
+    // Já começou a mandar o arquivo: derruba a conexão para o download falhar em vez de
+    // entregar um CSV incompleto como se estivesse completo.
+    if (res.headersSent) return res.destroy(error);
     res.status(status).json({ error: status === 500 ? 'Erro ao exportar' : error.message });
   }
 });

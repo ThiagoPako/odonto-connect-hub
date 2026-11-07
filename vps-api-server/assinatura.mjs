@@ -24,6 +24,13 @@ function data(v) {
   const d = v instanceof Date ? v : new Date(v);
   return Number.isNaN(d.getTime()) ? null : d;
 }
+// Os degraus contam dias de calendário: o vencimento vale até 23:59:59 do dia em São Paulo
+// (UTC−3, sem horário de verão desde 2019). Renovado às 15h de 01/11 → D+8 começa em 09/11.
+function fimDoDiaSp(d) {
+  const sp = new Date(d.getTime() - 3 * 3_600_000);
+  const fim = Date.UTC(sp.getUTCFullYear(), sp.getUTCMonth(), sp.getUTCDate(), 23, 59, 59, 999);
+  return new Date(fim + 3 * 3_600_000);
+}
 const iso = (d) => (d ? d.toISOString() : null);
 const mais = (d, dias) => new Date(d.getTime() + dias * DIA_MS);
 
@@ -39,8 +46,9 @@ export function situacaoAssinatura(tenant, agora = new Date()) {
   if (status === 'canceled') return { ...base, situacao: 'cancelado', motivo: 'cancelada' };
 
   const teste = status === 'trial';
-  const vence = teste ? data(tenant?.trial_ends_at) : data(tenant?.current_period_end);
-  if (!vence) return { ...base, situacao: 'ok', motivo: null };
+  const venceBruto = teste ? data(tenant?.trial_ends_at) : data(tenant?.current_period_end);
+  if (!venceBruto) return { ...base, situacao: 'ok', motivo: null };
+  const vence = fimDoDiaSp(venceBruto);
   const esc = teste ? ESCADA_TESTE_DIAS : ESCADA_PAGA_DIAS;
   const degraus = {
     somente_leitura: mais(vence, esc.somente_leitura),

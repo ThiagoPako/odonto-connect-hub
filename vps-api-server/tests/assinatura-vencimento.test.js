@@ -27,20 +27,24 @@ describe('etapas da escada (assinatura paga)', () => {
     expect(paga(-3).situacao).toBe('ok');
     expect(situacaoAssinatura({ status: 'active', current_period_end: null }, agora).situacao).toBe('ok');
   });
+  // agora = 07/11 09h em SP; paga(n) venceu n dias de calendário antes (D+n)
+  test('D0 (dia do vencimento) ainda em dia', () => {
+    expect(paga(0).situacao).toBe('ok');
+  });
   test('D+1 a D+7: carência, próxima etapa = somente leitura', () => {
-    expect(paga(0.5)).toMatchObject({ situacao: 'carencia', proxima_etapa: 'somente_leitura', dias_para_proxima: 7 });
-    expect(paga(6.9).situacao).toBe('carencia');
+    expect(paga(1)).toMatchObject({ situacao: 'carencia', proxima_etapa: 'somente_leitura', dias_para_proxima: 7 });
+    expect(paga(7).situacao).toBe('carencia');
   });
   test('D+8 a D+29: somente leitura', () => {
-    expect(paga(7.1)).toMatchObject({ situacao: 'somente_leitura', proxima_etapa: 'bloqueado' });
-    expect(paga(28.9).situacao).toBe('somente_leitura');
+    expect(paga(8)).toMatchObject({ situacao: 'somente_leitura', proxima_etapa: 'bloqueado' });
+    expect(paga(29).situacao).toBe('somente_leitura');
   });
   test('D+30 a D+59: bloqueado', () => {
-    expect(paga(29.1)).toMatchObject({ situacao: 'bloqueado', proxima_etapa: 'cancelado' });
-    expect(paga(58.9).situacao).toBe('bloqueado');
+    expect(paga(30)).toMatchObject({ situacao: 'bloqueado', proxima_etapa: 'cancelado' });
+    expect(paga(59).situacao).toBe('bloqueado');
   });
   test('D+60: cancelado, com data de exclusão 91 dias depois (nada apagado antes)', () => {
-    const s = paga(59.1);
+    const s = paga(60);
     expect(s).toMatchObject({ situacao: 'cancelado', proxima_etapa: null });
     expect(new Date(s.exclusao_em).getTime() - new Date(s.cancelamento_em).getTime()).toBe(91 * DIA);
   });
@@ -51,6 +55,13 @@ describe('etapas da escada (assinatura paga)', () => {
     expect(new Date(s.bloqueio_em).getTime() - v).toBe(29 * DIA);
     expect(new Date(s.cancelamento_em).getTime() - v).toBe(59 * DIA);
   });
+  test('conta dias de calendário em São Paulo (vencimento vale até 23:59 do dia)', () => {
+    // venceu 01/11 às 15h (SP) → ainda carência em 08/11 às 23h; modo consulta em 09/11 00:01
+    const tenant = { status: 'active', current_period_end: '2026-11-01T18:00:00Z' };
+    expect(situacaoAssinatura(tenant, new Date('2026-11-09T02:00:00Z')).situacao).toBe('carencia');
+    expect(situacaoAssinatura(tenant, new Date('2026-11-09T03:01:00Z')).situacao).toBe('somente_leitura');
+    expect(situacaoAssinatura(tenant, new Date('2026-11-01T23:00:00Z')).situacao).toBe('ok'); // 20h do próprio dia
+  });
   test('suspensa → bloqueado na hora; cancelada → cancelado na hora', () => {
     expect(situacaoAssinatura({ status: 'suspended' }, agora)).toMatchObject({ situacao: 'bloqueado', motivo: 'suspensa' });
     expect(situacaoAssinatura({ status: 'canceled', current_period_end: venceuHa(-30) }, agora)).toMatchObject({ situacao: 'cancelado', motivo: 'cancelada' });
@@ -59,13 +70,14 @@ describe('etapas da escada (assinatura paga)', () => {
 
 describe('etapas da escada (teste encerrado sem contratar)', () => {
   test('vence → somente leitura direto (sem carência) por 30 dias', () => {
-    expect(teste(-1).situacao).toBe('ok');
-    expect(teste(0.1)).toMatchObject({ situacao: 'somente_leitura', motivo: 'teste_vencido' });
-    expect(teste(29.9).situacao).toBe('somente_leitura');
+    expect(teste(0).situacao).toBe('ok');
+    expect(teste(1)).toMatchObject({ situacao: 'somente_leitura', motivo: 'teste_vencido' });
+    expect(teste(30).situacao).toBe('somente_leitura');
   });
-  test('depois segue a escada: bloqueio no dia 30, cancelamento no dia 60', () => {
-    expect(teste(30.1).situacao).toBe('bloqueado');
-    expect(teste(60.1).situacao).toBe('cancelado');
+  test('depois segue a escada: bloqueio após os 30 dias, cancelamento 30 dias depois', () => {
+    expect(teste(31).situacao).toBe('bloqueado');
+    expect(teste(60).situacao).toBe('bloqueado');
+    expect(teste(61).situacao).toBe('cancelado');
   });
 });
 
@@ -161,6 +173,18 @@ describe('rotas por etapa (API)', () => {
     expect(r.body.error).not.toMatch(/venc|pagamento|atras/i); // texto neutro para a equipe (CDC 42)
     expect(sqlLog.some((s) => /INSERT INTO pacientes/.test(s))).toBe(false);
   });
+  test('somente leitura: remarcar/cancelar passa; mudar outro campo do agendamento → 402', async () => {
+    const put = (body) => request(app).put('/api/agenda/abc').set('Authorization', `Bearer ${tok(T.leitura)}`).send(body);
+    expect((await put({ status: 'cancelado' })).status).not.toBe(402);
+    expect((await put({ data: '2026-12-01', hora: '10:00' })).status).not.toBe(402);
+    expect((await put({ procedimento: 'Implante' })).status).toBe(402);
+  });
+  test('equipe (não admin) recebe só a etapa, sem datas nem motivo do atraso (CDC 42)', async () => {
+    const me = await get('/api/auth/me', T.leitura, { role: 'recepcionista' });
+    expect(me.body.assinatura).toEqual({ situacao: 'somente_leitura', motivo: null });
+    const r = await request(app).post('/api/pacientes').set('Authorization', `Bearer ${tok(T.leitura, { role: 'recepcionista' })}`).send({ nome: 'x' });
+    expect(r.body.assinatura).toEqual({ situacao: 'somente_leitura', motivo: null });
+  });
   test('somente leitura: responder paciente não é barrado', async () => {
     expect((await post('/api/whatsapp/send-text', T.leitura, { number: '5511999999999', text: 'oi' })).status).not.toBe(402);
   });
@@ -198,10 +222,10 @@ describe('exportação (liberada em todas as etapas; só admin da própria clín
   };
   const OUTRA = 'abababab-abab-abab-abab-abababababab';
   const tok = (tenant, role = 'admin', extra = {}) => jwt.sign({ sub: ADMIN, email: 'a@x.com', role, tenant_id: tenant, is_super_admin: false, ...extra }, JWT_SECRET);
-  let spy, sqlLog;
+  let spy, spyConnect, sqlLog;
   beforeEach(() => {
     sqlLog = [];
-    spy = jest.spyOn(pool, 'query').mockImplementation(async (sql, params = []) => {
+    const responder = async (sql, params = []) => {
       const t = String(sql);
       sqlLog.push({ t, params });
       if (/SELECT status, trial_ends_at, current_period_end FROM tenants/.test(t)) return { rows: tenants[params[0]] ? [tenants[params[0]]] : [] };
@@ -215,9 +239,23 @@ describe('exportação (liberada em todas as etapas; só admin da própria clín
           : { rows: [], fields: [] };
       }
       return { rows: [], rowCount: 0 };
-    });
+    };
+    spy = jest.spyOn(pool, 'query').mockImplementation(responder);
+    spyConnect = jest.spyOn(pool, 'connect').mockImplementation(async () => ({ query: responder, release: () => {} }));
   });
-  afterEach(() => spy.mockRestore());
+  afterEach(() => { spy.mockRestore(); spyConnect.mockRestore(); });
+
+  test('CSV sai dentro de uma transação REPEATABLE READ (lotes no mesmo retrato)', async () => {
+    const r = await request(app).get('/api/exportacao/pacientes.csv').set('Authorization', `Bearer ${tok(T.ok)}`);
+    expect(r.status).toBe(200);
+    const ordem = sqlLog.map((q) => q.t);
+    const iBegin = ordem.findIndex((t) => /BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY/.test(t));
+    const iSel = ordem.findIndex((t) => /SELECT \* FROM public\."pacientes"/.test(t));
+    const iCommit = ordem.findIndex((t) => /^COMMIT$/.test(t));
+    expect(iBegin).toBeGreaterThan(-1);
+    expect(iSel).toBeGreaterThan(iBegin);
+    expect(iCommit).toBeGreaterThan(iSel);
+  });
 
   test.each(['ok', 'leitura', 'cancel'])('etapa "%s": lista e baixa o CSV de pacientes da própria clínica', async (k) => {
     const lista = await request(app).get('/api/exportacao').set('Authorization', `Bearer ${tok(T[k])}`);
