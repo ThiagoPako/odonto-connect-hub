@@ -205,11 +205,21 @@ function SuperAdminPage() {
                               </Badge>
                               {t.assinatura?.situacao === "carencia" && (
                                 <Badge variant="outline" className="h-5 px-1.5 text-[10px] border-warning/60 text-warning-ink bg-warning-soft">
-                                  Vencida · bloqueia em {t.assinatura.dias_para_bloqueio}d
+                                  Vencida · consulta em {t.assinatura.dias_para_proxima}d
+                                </Badge>
+                              )}
+                              {t.assinatura?.situacao === "somente_leitura" && (
+                                <Badge variant="outline" className="h-5 px-1.5 text-[10px] border-destructive/50 text-destructive">
+                                  Modo consulta · bloqueia em {t.assinatura.dias_para_proxima}d
                                 </Badge>
                               )}
                               {t.assinatura?.situacao === "bloqueado" && (
                                 <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">Bloqueada</Badge>
+                              )}
+                              {t.assinatura?.situacao === "cancelado" && (
+                                <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">
+                                  Cancelada{t.assinatura.exclusao_em ? ` · exclusão ${new Date(t.assinatura.exclusao_em).toLocaleDateString("pt-BR")}` : ""}
+                                </Badge>
                               )}
                             </div>
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">

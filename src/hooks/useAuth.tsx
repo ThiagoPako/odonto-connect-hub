@@ -3,11 +3,16 @@ import { getToken, clearToken, getMe, login as loginVps, setCachedTenantId, ASSI
 
 /** Situação da assinatura da clínica (vps-api-server/assinatura.mjs). */
 export interface AssinaturaSituacao {
-  situacao: "ok" | "carencia" | "bloqueado";
+  situacao: "ok" | "carencia" | "somente_leitura" | "bloqueado" | "cancelado";
   status: string;
   vence_em: string | null;
+  somente_leitura_em: string | null;
   bloqueio_em: string | null;
-  dias_para_bloqueio: number | null;
+  cancelamento_em: string | null;
+  exclusao_em: string | null;
+  proxima_etapa: AssinaturaSituacao["situacao"] | null;
+  proxima_etapa_em: string | null;
+  dias_para_proxima: number | null;
   motivo: "teste_vencido" | "pagamento_vencido" | "suspensa" | "cancelada" | null;
 }
 

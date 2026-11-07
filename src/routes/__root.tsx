@@ -2,7 +2,7 @@ import { Outlet, Link, createRootRoute, HeadContent, Scripts, useLocation, useNa
 import { useEffect } from "react";
 import { AppSidebar, MobileTopBar } from "@/components/AppSidebar";
 import { WhatsAppConnectionBanner } from "@/components/WhatsAppConnectionBanner";
-import { AssinaturaBloqueadaTela, AssinaturaCarenciaBanner } from "@/components/AssinaturaAviso";
+import { AssinaturaBloqueadaBarra, AssinaturaBloqueadaTela, AssinaturaCarenciaBanner, AssinaturaSomenteLeituraBanner } from "@/components/AssinaturaAviso";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { useGlobalChatNotifier } from "@/hooks/useGlobalChatNotifier";
 import { canAccessRoute } from "@/lib/routeAccess";
@@ -145,25 +145,28 @@ function AuthGate() {
   const userRole = user?.role ?? "user";
   const hasAccess = canAccessRoute(location.pathname, userRole, !!user?.is_super_admin, user?.tenant_features);
 
-  // Assinatura vencida há mais de 5 dias (ou clínica suspensa): só a tela de bloqueio; o admin
-  // ainda abre "Minha assinatura". Super-admin nunca é bloqueado.
+  // Escada da assinatura vencida (assinatura.mjs). Bloqueado/cancelado (D+30 em diante): só as
+  // telas liberadas — prontuário em leitura, exportação e "Minha assinatura" —, sem o menu
+  // completo (que consultaria rotas recusadas). Super-admin nunca é bloqueado.
   const assinatura = user?.is_super_admin ? null : user?.assinatura ?? null;
   const ehAdmin = userRole === "admin";
-  if (assinatura?.situacao === "bloqueado") {
-    // Liberadas no bloqueio: pagar/ver a assinatura e exportar os dados (LGPD art. 18; prontuário)
-    if (ehAdmin && (location.pathname === "/minha-assinatura" || location.pathname === "/exportar-dados")) {
+  if (assinatura?.situacao === "bloqueado" || assinatura?.situacao === "cancelado") {
+    const podeProntuario = canAccessRoute("/pacientes", userRole, false, user?.tenant_features);
+    const p = location.pathname;
+    const liberada =
+      (ehAdmin && (p === "/minha-assinatura" || p === "/exportar-dados")) ||
+      (podeProntuario && (p === "/pacientes" || p.startsWith("/pacientes/") || p === "/prontuario" || p.startsWith("/prontuario/")) && hasAccess);
+    if (liberada) {
       return (
-        <main id="conteudo" className="min-h-dvh bg-background">
-          <div className="mx-auto max-w-5xl px-4 pt-4">
-            <Link to="/dashboard" className="text-sm underline underline-offset-2 text-muted-foreground hover:text-foreground">
-              Voltar
-            </Link>
-          </div>
-          <Outlet />
-        </main>
+        <div className="flex h-dvh w-full flex-col overflow-hidden">
+          <AssinaturaBloqueadaBarra ehAdmin={ehAdmin} podeProntuario={podeProntuario} onSair={logout} />
+          <main id="conteudo" className="flex-1 min-w-0 overflow-y-auto bg-background">
+            <Outlet />
+          </main>
+        </div>
       );
     }
-    return <AssinaturaBloqueadaTela assinatura={assinatura} ehAdmin={ehAdmin} onSair={logout} />;
+    return <AssinaturaBloqueadaTela assinatura={assinatura} ehAdmin={ehAdmin} podeProntuario={podeProntuario} onSair={logout} />;
   }
 
   // Authenticated — show sidebar + content (or unauthorized)
@@ -176,7 +179,8 @@ function AuthGate() {
       <AppSidebar />
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         <MobileTopBar />
-        {assinatura?.situacao === "carencia" && <AssinaturaCarenciaBanner assinatura={assinatura} ehAdmin={ehAdmin} />}
+        {assinatura?.situacao === "carencia" && ehAdmin && <AssinaturaCarenciaBanner assinatura={assinatura} />}
+        {assinatura?.situacao === "somente_leitura" && <AssinaturaSomenteLeituraBanner assinatura={assinatura} ehAdmin={ehAdmin} />}
         <WhatsAppConnectionBanner />
         <main id="conteudo" className="flex-1 min-w-0 overflow-y-auto">
           {hasAccess ? <Outlet /> : <UnauthorizedComponent />}

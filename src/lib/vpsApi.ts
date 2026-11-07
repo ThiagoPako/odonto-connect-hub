@@ -116,7 +116,7 @@ export function friendlyApiError(raw: unknown, status: number): string {
   return msg;
 }
 
-/** Evento global disparado quando a API recusa por assinatura vencida (402 ASSINATURA_BLOQUEADA). */
+/** Evento global quando a API recusa por assinatura vencida (402 ASSINATURA_BLOQUEADA / _SOMENTE_LEITURA). */
 export const ASSINATURA_BLOQUEADA_EVENT = 'odonto:assinatura-bloqueada';
 
 export async function vpsApiFetch<T = unknown>(
@@ -152,7 +152,7 @@ export async function vpsApiFetch<T = unknown>(
         handleAuthFailure(!!options?.background);
         return { data: null, error: data?.error || 'Sessão expirada. Faça login novamente.' };
       }
-      if (response.status === 402 && data?.code === 'ASSINATURA_BLOQUEADA') {
+      if (response.status === 402 && (data?.code === 'ASSINATURA_BLOQUEADA' || data?.code === 'ASSINATURA_SOMENTE_LEITURA')) {
         if (typeof window !== 'undefined') window.dispatchEvent(new Event(ASSINATURA_BLOQUEADA_EVENT));
         return { data: null, error: data.error };
       }

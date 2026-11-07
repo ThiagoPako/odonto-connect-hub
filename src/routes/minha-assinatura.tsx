@@ -121,7 +121,9 @@ function MinhaAssinaturaPage() {
     iso ? new Date(iso).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "";
   // O vencimento que vale para o bloqueio é o da clínica (tenants.current_period_end)
   const fimPeriodo = tenant.current_period_end ?? sub?.current_period_end ?? null;
-  const bloqueada = assinatura?.situacao === "bloqueado";
+  const etapa = assinatura?.situacao ?? "ok";
+  const bloqueada = etapa === "bloqueado" || etapa === "cancelado";
+  const oQue = assinatura?.motivo === "teste_vencido" ? "O teste" : "A assinatura";
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -149,28 +151,41 @@ function MinhaAssinaturaPage() {
               <p className="flex items-start gap-2 text-destructive">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
                 <span>
-                  {assinatura?.motivo === "suspensa" || assinatura?.motivo === "cancelada"
-                    ? "O acesso da clínica está suspenso."
-                    : `Venceu em ${dataBr(assinatura?.vence_em)} e o prazo de 5 dias terminou em ${dataBr(assinatura?.bloqueio_em)}.`}{" "}
-                  Os dados estão guardados. Fale com o suporte do Odonto Connect para regularizar.
+                  {assinatura?.motivo === "suspensa" ? "O acesso da clínica foi suspenso."
+                    : assinatura?.motivo === "cancelada" ? "A assinatura da clínica foi cancelada."
+                    : etapa === "cancelado"
+                      ? `Cancelada em ${dataBr(assinatura?.cancelamento_em)} por falta de pagamento. Exporte os dados até ${dataBr(assinatura?.exclusao_em)}; depois dessa data eles são excluídos.`
+                      : `${oQue} venceu em ${dataBr(assinatura?.vence_em)} e o acesso foi bloqueado em ${dataBr(assinatura?.bloqueio_em)}. Sem regularizar, a assinatura é cancelada em ${dataBr(assinatura?.cancelamento_em)}.`}{" "}
+                  Nenhum dado foi apagado: o prontuário segue disponível para consulta e os dados podem ser exportados.
+                  Fale com o suporte do Odonto Connect para regularizar.
                 </span>
               </p>
-            ) : assinatura?.situacao === "carencia" ? (
+            ) : etapa === "somente_leitura" && assinatura ? (
+              <p className="flex items-start gap-2 text-destructive">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+                <span>
+                  {oQue} venceu em {dataBr(assinatura.vence_em)}: o sistema está em <strong>modo consulta</strong> (ver, exportar,
+                  responder pacientes, remarcar e cancelar consultas). O acesso será bloqueado em {dataBr(assinatura.bloqueio_em)}.
+                  Fale com o suporte do Odonto Connect para regularizar.
+                </span>
+              </p>
+            ) : etapa === "carencia" && assinatura ? (
               <p className="flex items-start gap-2 text-warning-ink">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
                 <span>
-                  {assinatura.motivo === "teste_vencido" ? "O teste" : "A assinatura"} venceu em {dataBr(assinatura.vence_em)}.
-                  O acesso será bloqueado em <strong>{assinatura.dias_para_bloqueio} dia{assinatura.dias_para_bloqueio !== 1 ? "s" : ""}</strong>{" "}
-                  ({dataBr(assinatura.bloqueio_em)}). Fale com o suporte do Odonto Connect para regularizar.
+                  {oQue} venceu em {dataBr(assinatura.vence_em)}. Em{" "}
+                  <strong>{assinatura.dias_para_proxima} dia{assinatura.dias_para_proxima !== 1 ? "s" : ""}</strong>{" "}
+                  ({dataBr(assinatura.proxima_etapa_em)}) o sistema passa a funcionar só para consulta.
+                  Fale com o suporte do Odonto Connect para regularizar.
                 </span>
               </p>
             ) : tenant.status === "trial" ? (
               <p>
                 Seu teste termina em <strong>{trialDaysLeft} dia{trialDaysLeft !== 1 ? "s" : ""}</strong>.
-                Escolha um plano abaixo para continuar usando após o trial.
+                Depois disso o sistema fica em modo consulta por 30 dias antes do bloqueio.
               </p>
             ) : fimPeriodo ? (
-              <p>Assinatura válida até {dataBr(fimPeriodo)}. Depois disso há 5 dias de tolerância antes do bloqueio.</p>
+              <p>Assinatura válida até {dataBr(fimPeriodo)}. Depois disso há 7 dias de tolerância antes do modo consulta.</p>
             ) : null}
             <p className="mt-3">
               <Link to="/exportar-dados" className="inline-flex items-center gap-1.5 font-medium text-primary underline underline-offset-2">
