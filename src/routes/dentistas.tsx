@@ -66,7 +66,7 @@ function DentistasPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFiltro, setStatusFiltro] = useFiltroUrl("status", ["ativo", "inativo"]);
-  const [especialidadeFiltro, setEspecialidadeFiltro] = useFiltroUrl("especialidade");
+  const [especialidadeUrl, setEspecialidadeFiltro] = useFiltroUrl("especialidade");
   const [showForm, setShowForm] = useState(false);
   const [editingDentista, setEditingDentista] = useState<Dentista | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -90,6 +90,8 @@ function DentistasPage() {
 
   const termo = searchTerm.trim().toLowerCase();
   const especialidades = [...new Set(dentistas.map((d) => d.especialidade).filter(Boolean))].sort();
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const especialidadeFiltro = especialidades.includes(especialidadeUrl) ? especialidadeUrl : "";
   const filtered = dentistas.filter(
     (d) =>
       (!statusFiltro || d.status === statusFiltro) &&
@@ -187,7 +189,7 @@ function DentistasPage() {
           busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Nome, CRO ou especialidade", rotulo: "Buscar dentista por nome, CRO ou especialidade" }}
           filtros={[
             { id: "status", rotulo: "Status", valor: statusFiltro, onChange: setStatusFiltro, opcoes: [{ valor: "ativo", rotulo: "Ativo" }, { valor: "inativo", rotulo: "Inativo" }] },
-            ...(especialidades.length > 1
+            ...(especialidades.length > 1 || especialidadeFiltro
               ? [{ id: "especialidade", rotulo: "Especialidade", valor: especialidadeFiltro, onChange: setEspecialidadeFiltro, rotuloTodos: "Todas", opcoes: especialidades.map((e) => ({ valor: e, rotulo: e })) }]
               : []),
           ]}

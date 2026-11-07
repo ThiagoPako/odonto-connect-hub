@@ -165,7 +165,7 @@ function PacientesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [selectedPaciente, setSelectedPaciente] = useState<PacienteAPI | null>(null);
-  const [filterConvenio, setFilterConvenio] = useFiltroUrl("convenio");
+  const [convenioUrl, setFilterConvenio] = useFiltroUrl("convenio");
   const [filterSexo, setFilterSexo] = useFiltroUrl("sexo", ["masculino", "feminino", "outro"]);
   const [filterIdadeMin, setFilterIdadeMin] = useState("");
   const [filterIdadeMax, setFilterIdadeMax] = useState("");
@@ -210,6 +210,8 @@ function PacientesPage() {
 
   // Unique convenios for filter dropdown
   const convenios = [...new Set(pacientes.map((p) => p.convenio).filter(Boolean))] as string[];
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const filterConvenio = convenioUrl === "__particular" || convenios.includes(convenioUrl) ? convenioUrl : "";
 
   const termo = searchTerm.trim().toLowerCase();
   const termoDigitos = termo.replace(/\D/g, "");

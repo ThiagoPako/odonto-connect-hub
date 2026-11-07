@@ -116,6 +116,8 @@ function GenericKanbanBoard<T extends string>({
 
   const allLeadsList = Object.values(leads).flat() as KanbanLead[];
   const assignees = Array.from(new Set(allLeadsList.map((l) => l.assignedTo).filter(Boolean))).sort() as string[];
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const responsavelEfetivo = assignees.includes(assignedFilter) ? assignedFilter : "";
 
   const handleDragStart = (lead: KanbanLead, fromStage: T) => setDraggedLead({ lead, fromStage });
   const handleDragOver = (e: React.DragEvent) => e.preventDefault();
@@ -167,11 +169,11 @@ function GenericKanbanBoard<T extends string>({
   const termoFunil = buscaFunil.trim().toLowerCase();
   const termoFunilDig = termoFunil.replace(/\D/g, "");
   const filtraLead = (l: KanbanLead) =>
-    (!assignedFilter || l.assignedTo === assignedFilter) &&
+    (!responsavelEfetivo || l.assignedTo === responsavelEfetivo) &&
     (!termoFunil ||
       (l.name || "").toLowerCase().includes(termoFunil) ||
       (termoFunilDig.length >= 3 && (l.phone || "").replace(/\D/g, "").includes(termoFunilDig)));
-  const filteredLeads = !assignedFilter && !termoFunil
+  const filteredLeads = !responsavelEfetivo && !termoFunil
     ? leads
     : Object.fromEntries(
         Object.entries(leads).map(([stage, list]) => [stage, (list as KanbanLead[]).filter(filtraLead)])
@@ -197,7 +199,7 @@ function GenericKanbanBoard<T extends string>({
           <BarraFiltros
             className="flex-1 min-w-[min(100%,18rem)]"
             busca={{ valor: buscaFunil, onChange: setBuscaFunil, placeholder: "Nome ou telefone", rotulo: "Buscar lead no funil por nome ou telefone" }}
-            filtros={assignees.length > 0 ? [{ id: `responsavel-${title}`, rotulo: "Responsável", valor: assignedFilter, onChange: setAssignedFilter, opcoes: assignees.map((a) => ({ valor: a, rotulo: a })) }] : []}
+            filtros={assignees.length > 0 ? [{ id: `responsavel-${title}`, rotulo: "Responsável", valor: responsavelEfetivo, onChange: setAssignedFilter, opcoes: assignees.map((a) => ({ valor: a, rotulo: a })) }] : []}
             onLimpar={() => { setAssignedFilter(""); setBuscaFunil(""); }}
             resultado={`${visibleList.length} lead${visibleList.length !== 1 ? "s" : ""}`}
           />

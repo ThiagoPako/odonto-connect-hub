@@ -69,10 +69,21 @@ function contarFiltrosAtivos(filtros: FiltroSelect[] = [], extras = 0) {
   return filtros.filter((f) => f.valor !== "").length + extras;
 }
 
-function CampoBusca({ busca }: { busca: NonNullable<BarraFiltrosProps["busca"]> }) {
+function CampoBusca({ busca, limparToken }: { busca: NonNullable<BarraFiltrosProps["busca"]>; limparToken: number }) {
   const [local, setLocal] = useState(busca.valor);
   const ultimoEnviado = useRef(busca.valor);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { onChange, debounce = 250 } = busca;
+
+  // "Limpar filtros" clicado com texto ainda no debounce: cancela o envio pendente e zera o campo.
+  // (Sem isso, o pai já estava em "" e o texto digitado voltava depois do timer.)
+  useEffect(() => {
+    if (limparToken === 0) return;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    ultimoEnviado.current = "";
+    setLocal("");
+  }, [limparToken]);
 
   // O pai zerou/alterou o valor (ex.: "Limpar filtros"): reflete no campo.
   useEffect(() => {
@@ -85,9 +96,11 @@ function CampoBusca({ busca }: { busca: NonNullable<BarraFiltrosProps["busca"]> 
   useEffect(() => {
     if (local === ultimoEnviado.current) return;
     const t = setTimeout(() => {
+      timer.current = null;
       ultimoEnviado.current = local;
       onChange(local);
     }, debounce);
+    timer.current = t;
     return () => clearTimeout(t);
   }, [local, debounce, onChange]);
 
@@ -166,12 +179,19 @@ export function BarraFiltros({
   const telaPequena = useIsMobile();
   const isMobile = modo === "sheet" || telaPequena;
   const [sheetAberto, setSheetAberto] = useState(false);
+  const [limparToken, setLimparToken] = useState(0);
+  const limpar = onLimpar
+    ? () => {
+        setLimparToken((n) => n + 1);
+        onLimpar();
+      }
+    : undefined;
   const ativos = contarFiltrosAtivos(filtros, extrasAtivos);
   const temFiltros = filtros.length > 0 || !!extras;
   const algoAtivo = ativos > 0 || !!busca?.valor;
 
   const botaoLimpar = onLimpar && algoAtivo && (
-    <Button type="button" variant="ghost" size="sm" onClick={onLimpar} className="h-10 gap-1.5 text-muted-foreground hover:text-foreground">
+    <Button type="button" variant="ghost" size="sm" onClick={limpar} className="h-10 gap-1.5 text-muted-foreground hover:text-foreground">
       <RotateCcw className="h-3.5 w-3.5" aria-hidden />
       Limpar filtros
     </Button>
@@ -180,7 +200,7 @@ export function BarraFiltros({
   return (
     <div className={cn("space-y-2", className)} role="search">
       <div className="flex flex-wrap items-end gap-3">
-        {busca && <CampoBusca busca={busca} />}
+        {busca && <CampoBusca busca={busca} limparToken={limparToken} />}
 
         {temFiltros && isMobile && (
           <Button
@@ -213,7 +233,7 @@ export function BarraFiltros({
         <p className="text-xs text-muted-foreground" aria-live="polite">
           {resultado}
           {isMobile && onLimpar && (
-            <button type="button" onClick={onLimpar} className="ml-2 font-medium text-primary underline-offset-2 hover:underline">
+            <button type="button" onClick={limpar} className="ml-2 font-medium text-primary underline-offset-2 hover:underline">
               Limpar filtros
             </button>
           )}
@@ -235,7 +255,7 @@ export function BarraFiltros({
             </div>
             <div className="mt-6 flex flex-wrap gap-2">
               {onLimpar && (
-                <Button type="button" variant="outline" className="flex-1" onClick={onLimpar} disabled={ativos === 0}>
+                <Button type="button" variant="outline" className="flex-1" onClick={limpar} disabled={ativos === 0}>
                   Limpar filtros
                 </Button>
               )}

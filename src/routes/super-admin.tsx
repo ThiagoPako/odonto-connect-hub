@@ -29,7 +29,7 @@ function SuperAdminPage() {
   const [activeTab, setActiveTab] = useState("clinicas");
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [isPlanDialogOpen, setIsPlanDialogOpen] = useState(false);
-  const [planoFiltro, setPlanoFiltro] = useFiltroUrl("plano");
+  const [planoUrl, setPlanoFiltro] = useFiltroUrl("plano");
   const [statusFiltro, setStatusFiltro] = useFiltroUrl("status", ["trial", "active", "past_due", "suspended", "canceled"]);
   const [stats, setStats] = useState({
     mrr: 0,
@@ -97,6 +97,8 @@ function SuperAdminPage() {
     reload();
   };
 
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const planoFiltro = plans.some(p => p.id === planoUrl) ? planoUrl : "";
   const termo = searchTerm.trim().toLowerCase();
   const filteredTenants = tenants.filter(t =>
     (!planoFiltro || t.plan_id === planoFiltro) &&

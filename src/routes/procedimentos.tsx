@@ -29,7 +29,7 @@ function ProcedimentosCatalogoPage() {
   const [items, setItems] = useState<ProcedimentoCatalogo[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [categoria, setCategoria] = useFiltroUrl("categoria");
+  const [categoriaUrl, setCategoria] = useFiltroUrl("categoria");
   const [editing, setEditing] = useState<ProcedimentoCatalogo | null>(null);
   const [open, setOpen] = useState(false);
   const [motivoVersao, setMotivoVersao] = useState("");
@@ -99,6 +99,8 @@ function ProcedimentosCatalogoPage() {
 
   const termo = search.trim().toLowerCase();
   const categorias = [...new Set(items.map(p => p.categoria).filter(Boolean))].sort() as string[];
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const categoria = categorias.includes(categoriaUrl) ? categoriaUrl : "";
   const filtered = items.filter(p =>
     (!categoria || p.categoria === categoria) &&
     (!termo || (p.nome || "").toLowerCase().includes(termo) || (p.codigo || "").toLowerCase().includes(termo))

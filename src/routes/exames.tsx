@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, FileText, Loader2, Trash2, FileSignature, Paperclip } from "lucide-react";
 import { BarraFiltros } from "@/components/filtros/BarraFiltros";
 import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
@@ -50,17 +50,28 @@ function ExamesPage() {
     fornecedor_terc: "",
   });
 
-  async function load() {
+  // Cada busca/filtro dispara uma requisição; só a mais recente pode gravar na tela
+  // (uma resposta antiga que chega depois não sobrescreve a nova).
+  const reqRef = useRef(0);
+  async function load(opts: { stats?: boolean } = {}) {
+    const comStats = opts.stats ?? true;
+    const id = ++reqRef.current;
     setLoading(true);
     try {
       const [list, st] = await Promise.all([
         examesApi.list({ status: statusFilter || undefined, q: q || undefined }),
-        examesApi.stats(),
+        comStats ? examesApi.stats() : Promise.resolve(null),
       ]);
-      setExames(list); setStats(st);
-    } catch (e) { toast.error("Erro ao carregar exames"); }
-    finally { setLoading(false); }
+      if (id !== reqRef.current) return;
+      setExames(list);
+      if (st) setStats(st);
+    } catch {
+      if (id === reqRef.current) toast.error("Erro ao carregar exames");
+    } finally {
+      if (id === reqRef.current) setLoading(false);
+    }
   }
+  const recarregar = () => load({ stats: true });
 
   async function carregarTipos() {
     setTiposErro(null);
@@ -87,8 +98,14 @@ function ExamesPage() {
     })();
   }, []);
 
-  // A busca já chega com debounce da BarraFiltros; recarrega no servidor a cada mudança.
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter, q]);
+  // Os números do topo (stats) só mudam com o status ou com uma alteração; a busca recarrega só a lista.
+  const statusAnterior = useRef<string | null>(null);
+  useEffect(() => {
+    const statusMudou = statusAnterior.current !== statusFilter;
+    statusAnterior.current = statusFilter;
+    load({ stats: statusMudou });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, q]);
 
   async function handleCreate() {
     if (!form.tipo_nome.trim()) {
@@ -120,7 +137,7 @@ function ExamesPage() {
 
   async function remove(id: string) {
     if (!confirm("Excluir este exame?")) return;
-    try { await examesApi.remove(id); toast.success("Excluído"); load(); }
+    try { await examesApi.remove(id); toast.success("Excluído"); recarregar(); }
     catch { toast.error("Erro ao excluir"); }
   }
 
@@ -215,7 +232,7 @@ function ExamesPage() {
       <ExameLaudoDialog
         exame={laudoExame}
         onOpenChange={(o) => { if (!o) setLaudoExame(null); }}
-        onSaved={load}
+        onSaved={recarregar}
       />
 
       {/* New Exame Dialog */}

@@ -57,7 +57,6 @@ function ComissoesPage() {
   const [comissoes, setComissoes] = useState<ComissaoRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [dentistaUrl, setDentistaUrl] = useFiltroUrl("profissional");
-  const selectedDentista = dentistaUrl || null;
   const setSelectedDentista = (id: string | null) => setDentistaUrl(id ?? "");
   const [statusFilter, setStatusFilter] = useFiltroUrl("status", Object.keys(statusCfg));
   const [showAddModal, setShowAddModal] = useState(false);
@@ -125,6 +124,9 @@ function ComissoesPage() {
     setDeleteTarget(null);
     loadAll();
   };
+
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const selectedDentista = dentistas.some(d => d.id === dentistaUrl) ? dentistaUrl : null;
 
   const profComissoes = (dId: string) => comissoes.filter(c => c.dentista_id === dId);
 
@@ -203,7 +205,7 @@ function ComissoesPage() {
             </h3>
             <BarraFiltros
               filtros={[
-                { id: "profissional", rotulo: "Profissional", valor: dentistaUrl, onChange: setDentistaUrl, opcoes: dentistas.map(d => ({ valor: d.id, rotulo: d.nome })), className: "min-w-[12rem]" },
+                { id: "profissional", rotulo: "Profissional", valor: selectedDentista ?? "", onChange: setDentistaUrl, opcoes: dentistas.map(d => ({ valor: d.id, rotulo: d.nome })), className: "min-w-[12rem]" },
                 { id: "status", rotulo: "Status", valor: statusFilter, onChange: setStatusFilter, opcoes: Object.entries(statusCfg).map(([valor, c]) => ({ valor, rotulo: c.label })) },
               ]}
               onLimpar={() => { setDentistaUrl(""); setStatusFilter(""); }}
