@@ -19,6 +19,8 @@ type Step = "riscos" | "gerando" | "qr" | "expirou" | "pronto" | "erro";
 /** Busca o QR a cada 10 s; depois de 5 min sem leitura para (evita sessão girando sozinha). */
 const QR_POLL_MS = 10_000;
 const QR_GIVE_UP_MS = 5 * 60_000;
+/** Falhas seguidas da rota do QR (servidor do número reserva fora) antes de mostrar o erro. */
+const QR_MAX_FAILURES = 3;
 
 interface ReservaQrDialogProps {
   open: boolean;
@@ -41,6 +43,7 @@ export function ReservaQrDialog({ open, onOpenChange, channel, liveEvent, onChan
   const [qr, setQr] = useState<string | null>(null);
   const [connected, setConnected] = useState<WhatsAppChannel | null>(null);
   const startedAt = useRef(0);
+  const failures = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const stepRef = useRef<Step>(step);
   stepRef.current = step;
@@ -65,7 +68,15 @@ export function ReservaQrDialog({ open, onOpenChange, channel, liveEvent, onChan
     const { data, error: err } = await whatsappChannelsApi.qr(id);
     if (!openRef.current) return;
     if (stepRef.current === "pronto" || stepRef.current === "expirou" || stepRef.current === "riscos") return;
-    if (err) { setError(err); setStep("erro"); return; }
+    if (err) {
+      // Uma falha isolada pode ser passageira: tenta de novo; na 3ª seguida para de girar
+      // e mostra o erro do servidor (ex.: "O servidor do número reserva não respondeu…").
+      failures.current += 1;
+      if (failures.current >= QR_MAX_FAILURES) { setError(err); setStep("erro"); return; }
+      timer.current = setTimeout(() => void poll(id), 3_000);
+      return;
+    }
+    failures.current = 0;
     if (data?.state === "open") { await finish(id); return; }
     const src = qrImageSrc(data?.qr);
     if (src) { setQr(src); setStep("qr"); }
@@ -79,6 +90,7 @@ export function ReservaQrDialog({ open, onOpenChange, channel, liveEvent, onChan
     setError(null);
     setStep("gerando");
     startedAt.current = Date.now();
+    failures.current = 0;
     void poll(id);
   }, [poll]);
 
@@ -99,9 +111,10 @@ export function ReservaQrDialog({ open, onOpenChange, channel, liveEvent, onChan
   useEffect(() => {
     if (!open || !liveEvent || !channelId || liveEvent.channelId !== channelId) return;
     if (liveEvent.state === "open") { void finish(channelId); return; }
-    const src = qrImageSrc(liveEvent.qr);
-    if (src && (stepRef.current === "gerando" || stepRef.current === "qr")) { setQr(src); setStep("qr"); }
-  }, [liveEvent, open, channelId, finish]);
+    // O SSE só avisa que há QR novo (a imagem não vai para toda a clínica): busca pela rota
+    // do administrador na hora, sem esperar a próxima volta da consulta.
+    if (liveEvent.qrAvailable && (stepRef.current === "gerando" || stepRef.current === "qr")) void poll(channelId);
+  }, [liveEvent, open, channelId, finish, poll]);
 
   const handleCreate = async () => {
     setCreating(true);

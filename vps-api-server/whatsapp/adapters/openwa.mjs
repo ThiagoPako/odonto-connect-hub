@@ -132,12 +132,39 @@ export function parseOpenWaWebhook(body) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Teto padrão da mídia baixada do OpenWA (~64 MB, o mesmo do parser antigo do webhook).
+// OPENWA_MEDIA_MAX_BYTES muda o teto (testes usam um valor pequeno).
+export const OPENWA_MEDIA_MAX_BYTES = 64 * 1024 * 1024;
+
+// Lê o corpo até maxBytes. Passou do teto → null (e cancela a leitura). maxBytes <= 0: sem teto.
+async function readBodyCapped(res, maxBytes) {
+  const reader = maxBytes > 0 && res.body && typeof res.body.getReader === 'function' ? res.body.getReader() : null;
+  if (!reader) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    return maxBytes > 0 && buf.length > maxBytes ? null : buf;
+  }
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+  }
+  return Buffer.concat(chunks, total);
+}
+
 export function createOpenWaAdapter({ baseUrl, adminKey, env = process.env } = {}) {
   const BASE = String(baseUrl || '').replace(/\/$/, '');
   const doFetch = (...args) => globalThis.fetch(...args);
   const configured = () => !!BASE;
+  const mediaMaxBytes = Number(env.OPENWA_MEDIA_MAX_BYTES) > 0 ? Number(env.OPENWA_MEDIA_MAX_BYTES) : OPENWA_MEDIA_MAX_BYTES;
 
-  async function request(path, { method = 'GET', body, apiKey, timeoutMs, headers = {}, binary = false } = {}) {
+  async function request(path, { method = 'GET', body, apiKey, timeoutMs, headers = {}, binary = false, maxBytes = 0 } = {}) {
     if (!BASE) return { ok: false, status: 503, data: { error: 'OPENWA_URL não configurada' } };
     if (!apiKey) return { ok: false, status: 503, data: { error: 'Chave do OpenWA ausente' } };
     if (!isSafeProviderPath(path)) return { ok: false, status: 400, data: { error: 'Caminho inválido' } };
@@ -151,7 +178,21 @@ export function createOpenWaAdapter({ baseUrl, adminKey, env = process.env } = {
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
       if (binary && res.ok) {
-        const buf = Buffer.from(await res.arrayBuffer());
+        // Teto de tamanho (revisão F1.1, N3): um arquivo enorme ficaria ~3x na memória
+        // (buffer + base64 + cópia) e derrubaria o processo. Recusa pelo content-length antes
+        // de ler; sem content-length (chunked), conta os bytes e corta ao passar do teto.
+        const len = Number(res.headers?.get?.('content-length'));
+        if (maxBytes > 0 && Number.isFinite(len) && len > maxBytes) {
+          controller.abort();
+          console.warn(`⚠️ OpenWA: mídia de ${len} bytes acima do teto (${maxBytes}) em ${maskWaIdentifiers(path)}`);
+          return { ok: false, status: 413, data: { error: 'Mídia acima do limite' } };
+        }
+        const buf = await readBodyCapped(res, maxBytes);
+        if (!buf) {
+          controller.abort();
+          console.warn(`⚠️ OpenWA: mídia acima do teto (${maxBytes}) em ${maskWaIdentifiers(path)}`);
+          return { ok: false, status: 413, data: { error: 'Mídia acima do limite' } };
+        }
         return { ok: true, status: res.status, data: buf, mimetype: res.headers?.get?.('content-type') || null };
       }
       const data = await res.json().catch(() => ({}));
@@ -290,7 +331,7 @@ export function createOpenWaAdapter({ baseUrl, adminKey, env = process.env } = {
       if (media?.inlineBase64) return { ok: true, base64: media.inlineBase64, mimetype: media.mimetype || null };
       if (!media?.ref || !media?.chatId) return { ok: false };
       const r = await request(`${sessionPath(channel)}/messages/${encodeURIComponent(media.chatId)}/${encodeURIComponent(media.ref)}/media`, {
-        apiKey: keyOf(channel), binary: true, timeoutMs: 30_000,
+        apiKey: keyOf(channel), binary: true, timeoutMs: 30_000, maxBytes: mediaMaxBytes,
       });
       if (!r.ok || !Buffer.isBuffer(r.data)) return { ok: false, status: r.status };
       return { ok: true, base64: r.data.toString('base64'), mimetype: media.mimetype || r.mimetype || null };
