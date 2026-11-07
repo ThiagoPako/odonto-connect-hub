@@ -74,8 +74,10 @@ describe('rotas que estavam fora da matriz', () => {
       else {
         expect(res.status).toBe(403);
         expect(res.body.error).toBe('Seu perfil não tem acesso a esta função');
-        // Barrado antes de qualquer leitura/escrita na tabela da rota.
-        expect(sqlLog.filter(q => !/FROM profiles p/.test(q.text))).toEqual([]);
+        // Barrado antes de qualquer leitura/escrita na tabela da rota. DDL da auto-migração do
+        // boot (assíncrona, ao importar o server) pode cair no meio do 1º teste: não conta.
+        const ddlDoBoot = /^\s*(ALTER|CREATE|DROP|COMMENT|DO)\b/i;
+        expect(sqlLog.filter(q => !/FROM profiles p/.test(q.text) && !ddlDoBoot.test(q.text))).toEqual([]);
       }
     });
 });
