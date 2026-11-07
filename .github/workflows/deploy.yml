@@ -206,6 +206,9 @@ jobs:
             # Integridade do prontuário (cria prontuario_versoes: antes do dono-tabelas-deploy)
             cat /root/odonto-connect/vps-api-server/migration-prontuario-integridade.sql | sudo -u postgres psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
               || echo "::warning::migration-prontuario-integridade.sql falhou: confira as colunas de autoria/inativação de prontuarios e a tabela prontuario_versoes"
+            # Matriz de papéis (#86): 'user' → 'recepcionista' e clínica nas linhas antigas de user_roles
+            cat /root/odonto-connect/vps-api-server/migration-papel-user-recepcionista.sql | sudo -u postgres env PGOPTIONS='-c lock_timeout=5s' psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
+              || echo "::warning::migration-papel-user-recepcionista.sql falhou: perfis com papel 'user' ficam sem acesso a pacientes; confira profiles.role e user_roles"
             # Dono das tabelas criadas acima pelo deploy (postgres) → dono das tabelas da API; senão a
             # RLS vale para o odonto_app e jobs sem contexto de clínica são bloqueados em silêncio.
             # Só de deploy (bloco DO; o boot não roda). Fica DEPOIS de lista de espera e saúde do WhatsApp.

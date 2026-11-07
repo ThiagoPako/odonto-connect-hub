@@ -45,6 +45,8 @@ export async function papelAtual(pool, user) {
     `SELECT ur.role::text AS papel_ur, p.role::text AS papel_perfil, COALESCE(p.active, true) AS ativo
        FROM profiles p
        LEFT JOIN user_roles ur ON ur.user_id = p.id
+                               -- papel de OUTRA clínica não vale aqui; NULL = linha antiga (sem clínica gravada)
+                               AND (ur.tenant_id IS NULL OR ur.tenant_id = p.tenant_id)
       WHERE p.id = $1 AND p.tenant_id = $2`,
     [user.id, user.tenant_id]
   );

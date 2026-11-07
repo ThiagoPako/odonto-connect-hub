@@ -151,13 +151,24 @@ function RelatoriosClinicosPage() {
     });
   };
 
-  const exportarCsv = () => {
+  const exportarCsv = async () => {
     if (reports.length === 0) {
       toast.error("Nenhum relatório para exportar");
       return;
     }
-    const url = aiApi.exportReportsCsvUrl(buildFilters());
-    window.open(url, '_blank');
+    const { data, error } = await aiApi.exportReportsCsv(buildFilters());
+    if (error || !data) {
+      toast.error(error || "Não foi possível exportar");
+      return;
+    }
+    const url = URL.createObjectURL(data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `relatorios-clinicos-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
   return (

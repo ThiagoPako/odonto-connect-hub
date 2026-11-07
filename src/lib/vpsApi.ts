@@ -1378,10 +1378,11 @@ export const aiApi = {
     }>('/ai/reports', { params });
   },
 
-  exportReportsCsvUrl: (filters?: {
+  // Baixa o CSV com o token no cabeçalho (nunca na URL: ia para histórico e log de acesso).
+  exportReportsCsv: async (filters?: {
     from?: string; to?: string; status?: 'todos' | 'com_prescricao' | 'sem_prescricao';
     patientId?: string; attendantId?: string; q?: string;
-  }) => {
+  }): Promise<{ data: Blob | null; error: string | null }> => {
     const params = new URLSearchParams();
     if (filters?.from) params.set('from', filters.from);
     if (filters?.to) params.set('to', filters.to);
@@ -1390,8 +1391,18 @@ export const aiApi = {
     if (filters?.attendantId) params.set('attendantId', filters.attendantId);
     if (filters?.q) params.set('q', filters.q);
     const token = getToken();
-    if (token) params.set('token', token);
-    return `${VPS_API_BASE}/ai/reports/export.csv?${params.toString()}`;
+    try {
+      const res = await fetch(`${VPS_API_BASE}/ai/reports/export.csv?${params.toString()}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null;
+        return { data: null, error: body?.error || `Erro ${res.status} ao exportar` };
+      }
+      return { data: await res.blob(), error: null };
+    } catch {
+      return { data: null, error: 'Sem conexão com o servidor' };
+    }
   },
 
   generateFollowupMessages: (body: { reportId: string; patientName?: string; patientPhone?: string }) =>

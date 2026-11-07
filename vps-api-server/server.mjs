@@ -1381,8 +1381,8 @@ app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
     const profile = pRows[0];
 
     await client.query(
-      `INSERT INTO user_roles (user_id, role) VALUES ($1,'admin') ON CONFLICT DO NOTHING`,
-      [profile.id]
+      `INSERT INTO user_roles (user_id, role, tenant_id) VALUES ($1,'admin',$2) ON CONFLICT DO NOTHING`,
+      [profile.id, tenant.id]
     );
 
     await client.query(
@@ -1474,7 +1474,7 @@ app.post('/api/my-tenant/users', async (req, res) => {
     if (password.length < 8) return res.status(400).json({ error: 'Senha mínima de 8 caracteres' });
 
     if (role && !TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: PERFIL_INVALIDO_MSG });
-    const userRole = role || 'user';
+    const userRole = role || 'recepcionista'; // padrão: 'user' não acessa paciente/agenda clínica
 
     const normalizedEmail = email.toLowerCase().trim();
     const { rows: existing } = await pool.query('SELECT id FROM profiles WHERE email = $1', [normalizedEmail]);
@@ -1503,7 +1503,7 @@ app.post('/api/my-tenant/users', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,true,$6,false)`,
       [id, name.trim(), normalizedEmail, userRole, hash, user.tenant_id]
     );
-    await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, userRole]);
+    await pool.query('INSERT INTO user_roles (user_id, role, tenant_id) VALUES ($1, $2, (SELECT tenant_id FROM profiles WHERE id = $1)) ON CONFLICT DO NOTHING', [id, userRole]);
     res.json({ success: true, user: { id, name: name.trim(), email: normalizedEmail, role: userRole, active: true } });
   } catch (e) {
     console.error('Tenant create user error:', e.message);
@@ -1551,7 +1551,7 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
     if (role !== undefined) {
       if (!TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: PERFIL_INVALIDO_MSG });
       await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
-      await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
+      await pool.query('INSERT INTO user_roles (user_id, role, tenant_id) VALUES ($1, $2, (SELECT tenant_id FROM profiles WHERE id = $1))', [id, role]);
       await pool.query('UPDATE profiles SET role = $1, updated_at = NOW() WHERE id = $2', [role, id]);
     }
     limparCachePapel(id);
@@ -2298,10 +2298,10 @@ app.post('/api/auth/create-user', async (req, res) => {
     if (role !== undefined && role !== null && role !== '' && !TENANT_ASSIGNABLE_ROLES.includes(role)) {
       return res.status(400).json({ error: PERFIL_INVALIDO_MSG });
     }
-    const userRole = role || 'user';
+    const userRole = role || 'recepcionista'; // padrão: 'user' não acessa paciente/agenda clínica
 
     await pool.query('INSERT INTO profiles (id, name, email, role, password_hash, tenant_id) VALUES ($1, $2, $3, $4, $5, $6)', [id, name, email.toLowerCase().trim(), userRole, hash, actor.tenant_id]);
-    await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, userRole]);
+    await pool.query('INSERT INTO user_roles (user_id, role, tenant_id) VALUES ($1, $2, (SELECT tenant_id FROM profiles WHERE id = $1))', [id, userRole]);
 
     res.json({ success: true, user: { id, name, email: email.toLowerCase().trim(), role: userRole } });
   } catch (error) {
@@ -2553,7 +2553,7 @@ app.put('/api/auth/users/:id', async (req, res) => {
 
     if (role !== undefined) {
       await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
-      await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
+      await pool.query('INSERT INTO user_roles (user_id, role, tenant_id) VALUES ($1, $2, (SELECT tenant_id FROM profiles WHERE id = $1))', [id, role]);
       await pool.query('UPDATE profiles SET role = $1 WHERE id = $2', [role, id]);
     }
 
@@ -6033,7 +6033,7 @@ async function findWaitlistCandidates(tenantId, slot) {
   return rows;
 }
 
-app.get('/api/lista-espera', async (req, res) => {
+app.get('/api/lista-espera', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6056,7 +6056,7 @@ app.get('/api/lista-espera', async (req, res) => {
   }
 });
 
-app.post('/api/lista-espera', async (req, res) => {
+app.post('/api/lista-espera', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6085,7 +6085,7 @@ app.post('/api/lista-espera', async (req, res) => {
   }
 });
 
-app.delete('/api/lista-espera/:id', async (req, res) => {
+app.delete('/api/lista-espera/:id', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6103,7 +6103,7 @@ app.delete('/api/lista-espera/:id', async (req, res) => {
 });
 
 // Recepção libera o horário de quem pediu para remarcar, depois de falar com o paciente.
-app.post('/api/agenda/:id/liberar-horario', async (req, res) => {
+app.post('/api/agenda/:id/liberar-horario', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6124,7 +6124,7 @@ app.post('/api/agenda/:id/liberar-horario', async (req, res) => {
 });
 
 // Sugestão de encaixe para um horário liberado.
-app.get('/api/agenda/:id/encaixe', async (req, res) => {
+app.get('/api/agenda/:id/encaixe', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6165,7 +6165,7 @@ function buildWaitlistOfferMessage({ clinica, firstName, profissional, weekday, 
 }
 
 // Clique da recepção: oferta para UM paciente (o primeiro da lista que serve).
-app.post('/api/agenda/:id/oferecer-horario', async (req, res) => {
+app.post('/api/agenda/:id/oferecer-horario', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -7477,7 +7477,7 @@ app.delete('/api/prontuarios/:id', so(PERMISSOES.CLINICO), async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Prontuário não encontrado' });
-    const motivo = String(req.body?.motivo || req.query?.motivo || '').trim();
+    const motivo = String(req.body?.motivo || '').trim(); // só body: texto clínico livre não vai para URL/log
     if (motivo.length < 5) return res.status(400).json({ error: 'Informe o motivo da inativação (mínimo 5 caracteres)' });
     const { rows: [reg] } = await pool.query(
       'SELECT criado_por, inativo_em FROM prontuarios WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]
@@ -8985,11 +8985,13 @@ app.get('/api/reativacao/kpis', async (req, res) => {
 // GENERIC TABLE (for CRM, estoque, etc.)
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/generic/:tableName', async (req, res) => {
+// Sem prontuarios (dado de saúde: só pelas rotas de prontuário, com papel clínico, autoria e
+// inativação) e sem comissoes (financeiro: só admin/dentista pelas rotas próprias).
+app.get('/api/generic/:tableName', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const allowedTables = ['crm_leads', 'estoque', 'tratamentos', 'orcamentos', 'comissoes', 'prontuarios'];
+    const allowedTables = ['crm_leads', 'estoque', 'tratamentos', 'orcamentos'];
     const table = req.params.tableName;
     if (!allowedTables.includes(table)) return res.status(403).json({ error: 'Tabela não permitida' });
     const { rows } = await pool.query(`SELECT * FROM ${table} WHERE tenant_id = $1 ORDER BY created_at DESC`, [user.tenant_id]);
@@ -13558,7 +13560,7 @@ async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, ex
 }
 
 // Execute campaign — resolve contacts by audience, enqueue jobs
-app.post('/api/campaigns/:id/execute', async (req, res) => {
+app.post('/api/campaigns/:id/execute', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -16888,13 +16890,9 @@ app.get('/api/ai/reports', so(PERMISSOES.CLINICO), async (req, res) => {
 });
 
 // ─── Export clinical reports as CSV ─────────────────────────
-// GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=&token=<JWT>
+// GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId= (token só no cabeçalho)
 app.get('/api/ai/reports/export.csv', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
-    // Allow token via query string for direct browser download links
-    if (req.query.token && !req.headers.authorization) {
-      req.headers.authorization = `Bearer ${req.query.token}`;
-    }
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { from, to, status, patientId, attendantId, q } = req.query;
@@ -18085,7 +18083,7 @@ app.patch('/api/exames/:id', so(PERMISSOES.EQUIPE), async (req, res) => {
   }
 });
 
-app.delete('/api/exames/:id', async (req, res) => {
+app.delete('/api/exames/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
