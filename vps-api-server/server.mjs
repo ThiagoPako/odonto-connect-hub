@@ -24,6 +24,7 @@ import { promisify } from 'util';
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
+import { sqlFoneIgual, foneIndexado, candidatosFone } from './telefone-sql.mjs';
 import { createLimiter, rateLimitMiddleware, sendTooMany, clientIp, ipKey, sleep } from './rate-limit.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
@@ -9180,7 +9181,9 @@ async function findMessageStatusContext({ tenantId, lookupIds = [], phone = '', 
     const phoneSuffixes = getWhatsappPhoneSuffixVariants(phone);
     params.push(phoneSuffixes.length ? phoneSuffixes : [phoneSuffix]);
     const phoneParam = params.length;
-    matchers.push(`RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = ANY($${phoneParam}::text[])`);
+    // Mesma expressão do índice parcial idx_chat_messages_tenant_fone11 (sem COALESCE + IS NOT NULL),
+    // senão o planner não usa o índice. NULL nunca casava com um sufixo não vazio: resultado igual.
+    matchers.push(`(cm.phone IS NOT NULL AND ${foneIndexado('cm.phone')} = ANY($${phoneParam}::text[]))`);
   }
 
   if (instance) {
@@ -10933,7 +10936,8 @@ app.post('/api/sessions/assign', async (req, res) => {
               OR cm.id::text = $2
               OR (
                 REGEXP_REPLACE($2, '\\D', '', 'g') <> ''
-                AND RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($2, '\\D', '', 'g'), 11)
+                AND cm.phone IS NOT NULL
+                AND RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($2, '\\D', '', 'g'), 11)
               )
             )
           ORDER BY cm.timestamp DESC
@@ -13447,10 +13451,14 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
 
     // Check if patient already exists with same phone
     if (lead.telefone) {
-      const clean = lead.telefone.replace(/\D/g, '');
-      const { rows: existing } = await pool.query(
-        "SELECT id, nome, telefone FROM pacientes WHERE REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1 AND tenant_id = $2", [clean.slice(-8), user.tenant_id]
-      );
+      // Mesmo telefone pelos 11 últimos dígitos (com ou sem 55, com máscara), ou
+      // cadastro salvo sem DDD.
+      const candidatos = candidatosFone(lead.telefone, { semDdd: true });
+      const { rows: existing } = candidatos.length ? await pool.query(
+        `SELECT id, nome, telefone FROM pacientes
+          WHERE tenant_id = $2 AND ${foneIndexado("COALESCE(telefone, '')")} = ANY($1::text[])`,
+        [candidatos, user.tenant_id]
+      ) : { rows: [] };
       if (existing.length > 0) {
         return res.json({
           success: false,
@@ -13529,18 +13537,18 @@ app.get('/api/crm/leads/:id/history', async (req, res) => {
       );
       appointments = rows;
     } else if (telefone) {
-      // Try matching by phone
-      const clean = telefone.replace(/\D/g, '');
-      const { rows } = await pool.query(
+      // Pelo telefone: 11 últimos dígitos (com ou sem 55, com máscara), ou cadastro sem DDD.
+      const candidatos = candidatosFone(telefone, { semDdd: true });
+      const { rows } = candidatos.length ? await pool.query(
         `SELECT a.id, a.data, a.hora, a.procedimento, a.status, d.nome as dentista_nome
          FROM agendamentos a
          LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id
          LEFT JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
-         WHERE REPLACE(REPLACE(REPLACE(p.telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1
+         WHERE ${foneIndexado("COALESCE(p.telefone, '')")} = ANY($1::text[])
            AND a.tenant_id = $2
          ORDER BY a.data DESC, a.hora DESC LIMIT 10`,
-        [clean.slice(-8), user.tenant_id]
-      );
+        [candidatos, user.tenant_id]
+      ) : { rows: [] };
       appointments = rows;
     }
 
@@ -15108,7 +15116,7 @@ app.get('/api/queue/leads', async (req, res) => {
               AND cm_unread.sender = 'lead'
               AND (
                 cm_unread.lead_id = s.lead_id
-                OR (s.lead_phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm_unread.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+                OR (s.lead_phone IS NOT NULL AND cm_unread.phone IS NOT NULL AND ${sqlFoneIgual('cm_unread.phone', 's.lead_phone')})
               )
               AND cm_unread.timestamp > COALESCE(
                 (SELECT last_read_at FROM chat_read_status WHERE lead_id = s.lead_id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
@@ -15123,7 +15131,7 @@ app.get('/api/queue/leads', async (req, res) => {
            WHERE cm.tenant_id = $2
              AND (
                cm.lead_id = s.lead_id
-               OR (s.lead_phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+               OR (s.lead_phone IS NOT NULL AND cm.phone IS NOT NULL AND ${sqlFoneIgual('cm.phone', 's.lead_phone')})
              )
            ORDER BY cm.timestamp DESC
            LIMIT 1
@@ -15156,7 +15164,7 @@ app.get('/api/queue/leads', async (req, res) => {
            l.id::text = cm.lead_id
            OR (
              cm.phone IS NOT NULL
-             AND REGEXP_REPLACE(COALESCE(l.telefone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11)
+             AND ${sqlFoneIgual("COALESCE(l.telefone, '')", 'cm.phone')}
            )
          )
         WHERE cm.tenant_id = $2
@@ -15185,7 +15193,7 @@ app.get('/api/queue/leads', async (req, res) => {
               AND cm_unread.sender = 'lead'
               AND (
                 cm_unread.lead_id = mc.id
-                OR (mc.phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm_unread.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+                OR (mc.phone IS NOT NULL AND cm_unread.phone IS NOT NULL AND ${sqlFoneIgual('cm_unread.phone', 'mc.phone')})
               )
               AND cm_unread.timestamp > COALESCE(
                 (SELECT last_read_at FROM chat_read_status WHERE lead_id = mc.id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
@@ -15203,14 +15211,14 @@ app.get('/api/queue/leads', async (req, res) => {
                AND closed_s.closed_at >= mc.last_message_time
                AND (
                  closed_s.lead_id = mc.id
-                 OR (closed_s.lead_phone IS NOT NULL AND mc.phone IS NOT NULL AND REGEXP_REPLACE(closed_s.lead_phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+                 OR (closed_s.lead_phone IS NOT NULL AND mc.phone IS NOT NULL AND ${sqlFoneIgual('closed_s.lead_phone', 'mc.phone')})
                )
           )
           AND NOT EXISTS (
             SELECT 1
               FROM open_sessions os
              WHERE os.id = mc.id
-                OR (os.phone IS NOT NULL AND mc.phone IS NOT NULL AND REGEXP_REPLACE(os.phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+                OR (os.phone IS NOT NULL AND mc.phone IS NOT NULL AND ${sqlFoneIgual('os.phone', 'mc.phone')})
           )
       )
       SELECT * FROM open_sessions
