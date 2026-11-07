@@ -9,3 +9,8 @@ export function cn(...inputs: ClassValue[]) {
 export function localDateISO(d: Date = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 }
+
+/** Minúsculas e sem acento, para busca por nome ("lucia" acha "Lúcia"). */
+export function semAcento(s: string | null | undefined): string {
+  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}

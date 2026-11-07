@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Send, Play, Pause, Plus, Eye, Clock,
-  CalendarDays, Users, CheckCircle2, AlertCircle, Trash2,
+  CalendarDays, Users, AlertCircle, Trash2,
   MessageSquare, RefreshCcw, Copy, Pencil, BarChart3, Loader2,
-  Rocket, X,
+  Rocket, X, AlertTriangle,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { publicoOptions, type DisparoProgramado } from "@/data/disparosMockData";
@@ -114,10 +114,10 @@ function DisparosPage() {
     setWizardOpen(true);
   };
 
-  const totalEnviadas = disparos.reduce((a, d) => a + d.stats.enviadas, 0);
-  const totalEntregues = disparos.reduce((a, d) => a + d.stats.entregues, 0);
-  const totalRespondidas = disparos.reduce((a, d) => a + d.stats.respondidas, 0);
-  const taxaEntrega = totalEnviadas > 0 ? ((totalEntregues / totalEnviadas) * 100).toFixed(1) : "0";
+  // Só o que o servidor mede de verdade (enviadas e falhas, contadas no envio).
+  // Entrega, leitura e resposta não são medidas: antes apareciam sempre como 0%.
+  const totalEnviadas = disparos.reduce((a, d) => a + (d.stats?.enviadas || 0), 0);
+  const totalErros = disparos.reduce((a, d) => a + (d.stats?.erros || 0), 0);
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -126,8 +126,8 @@ function DisparosPage() {
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <MiniKpi icon={Send} label="Total Enviadas" value={totalEnviadas.toString()} />
-          <MiniKpi icon={CheckCircle2} label="Taxa de Entrega" value={`${taxaEntrega}%`} />
-          <MiniKpi icon={MessageSquare} label="Respondidas" value={totalRespondidas.toString()} />
+          <MiniKpi icon={AlertTriangle} label="Falhas no envio" value={totalErros.toString()} />
+          <MiniKpi icon={MessageSquare} label="Disparos criados" value={disparos.length.toString()} />
           <MiniKpi icon={RefreshCcw} label="Disparos Ativos" value={disparos.filter((d) => d.ativo).length.toString()} />
         </div>
 
@@ -255,7 +255,8 @@ function DisparoCard({
   onViewJobs: () => void;
 }) {
   const publicoLabel = publicoOptions.find((p) => p.id === disparo.publico)?.label || disparo.publico;
-  const taxaLeitura = disparo.stats.enviadas > 0 ? ((disparo.stats.lidas / disparo.stats.enviadas) * 100).toFixed(0) : "0";
+  const enviadas = disparo.stats?.enviadas || 0;
+  const erros = disparo.stats?.erros || 0;
 
   return (
     <div className="bg-card rounded-xl border border-border p-5 transition-all hover:shadow-sm">
@@ -277,7 +278,7 @@ function DisparoCard({
 
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground mb-3">
             <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {publicoLabel}</span>
-            <span className="flex items-center gap-1"><Eye className="h-3 w-3" /> {disparo.contatosAlcancaveis} contatos</span>
+            <span className="flex items-center gap-1"><Eye className="h-3 w-3" /> {disparo.contatosAlcancaveis > 0 ? `${disparo.contatosAlcancaveis} contatos no último envio` : "Contatos calculados no envio"}</span>
             {disparo.tipo === "recorrente" && disparo.diasSemana && (
               <span className="flex items-center gap-1"><CalendarDays className="h-3 w-3" /> {disparo.diasSemana.join(", ")}</span>
             )}
@@ -287,15 +288,9 @@ function DisparoCard({
           </div>
 
           <div className="flex items-center gap-4 text-[11px]">
-            <StatPill label="Enviadas" value={disparo.stats.enviadas} />
-            <StatPill label="Entregues" value={disparo.stats.entregues} />
-            <StatPill label="Lidas" value={disparo.stats.lidas} />
-            <StatPill label="Respondidas" value={disparo.stats.respondidas} />
-            {disparo.stats.erros > 0 && (
-              <span className="text-destructive font-medium">{disparo.stats.erros} erros</span>
-            )}
-            {disparo.stats.enviadas > 0 && (
-              <span className="text-muted-foreground ml-auto">Taxa de leitura: <span className="font-bold text-foreground">{taxaLeitura}%</span></span>
+            <StatPill label="Enviadas" value={enviadas} />
+            {erros > 0 && (
+              <span className="text-destructive font-medium">{erros} {erros === 1 ? "falha" : "falhas"}</span>
             )}
           </div>
         </div>
