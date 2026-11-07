@@ -150,7 +150,8 @@ function AuthGate() {
   const assinatura = user?.is_super_admin ? null : user?.assinatura ?? null;
   const ehAdmin = userRole === "admin";
   if (assinatura?.situacao === "bloqueado") {
-    if (ehAdmin && location.pathname === "/minha-assinatura") {
+    // Liberadas no bloqueio: pagar/ver a assinatura e exportar os dados (LGPD art. 18; prontuário)
+    if (ehAdmin && (location.pathname === "/minha-assinatura" || location.pathname === "/exportar-dados")) {
       return (
         <main id="conteudo" className="min-h-dvh bg-background">
           <div className="mx-auto max-w-5xl px-4 pt-4">

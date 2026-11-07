@@ -54,6 +54,9 @@ const LIBERADAS_NO_BLOQUEIO = [
   /^\/api\/(health|version)\/?$/,
   /^\/api\/push\/(vapid-key|unsubscribe)\/?$/,
   /^\/api\/super-admin(\/|$)/,
+  // Exportação dos dados da clínica: prontuário tem guarda obrigatória e o titular não pode
+  // ficar sem acesso (LGPD art. 18; Lei 13.787/2018) — vale mesmo bloqueada.
+  /^\/api\/exportacao(\/|$)/,
 ];
 export function rotaLiberadaNoBloqueio(caminho) {
   const p = String(caminho || '').split('?')[0];
@@ -61,3 +64,27 @@ export function rotaLiberadaNoBloqueio(caminho) {
 }
 
 export const ERRO_ASSINATURA_BLOQUEADA = 'ASSINATURA_BLOQUEADA';
+
+// Tabelas da exportação da clínica, por grupo. Só tabelas com tenant_id (conferido em runtime).
+export const EXPORTACAO_GRUPOS = [
+  { grupo: 'Pacientes', tabelas: [['pacientes', 'Pacientes'], ['anamneses', 'Anamneses'], ['odontogramas', 'Odontogramas']] },
+  { grupo: 'Prontuário', tabelas: [['prontuarios', 'Prontuários'], ['tratamentos', 'Tratamentos'], ['clinical_reports', 'Relatórios clínicos'], ['consultations', 'Consultas gravadas'], ['exames', 'Exames']] },
+  { grupo: 'Agenda', tabelas: [['agendamentos', 'Agendamentos']] },
+  { grupo: 'Financeiro', tabelas: [['orcamentos', 'Orçamentos'], ['comissoes', 'Comissões'], ['fin_movements', 'Movimentações'], ['fin_bills', 'Contas a pagar'], ['fin_bank_accounts', 'Contas bancárias'], ['fin_employees', 'Funcionários'], ['fin_payrolls', 'Folha de pagamento']] },
+  { grupo: 'Cadastros', tabelas: [['dentistas', 'Dentistas'], ['contatos', 'Contatos'], ['crm_leads', 'Leads do CRM']] },
+];
+export const EXPORTACAO_TABELAS = new Map(EXPORTACAO_GRUPOS.flatMap((g) => g.tabelas.map(([t, nome]) => [t, { nome, grupo: g.grupo }])));
+
+// CSV (separador vírgula, UTF-8 com BOM para o Excel abrir acentos). Célula que começa com
+// = + - @ ganha ' na frente (injeção de fórmula). Objetos/arrays viram JSON.
+export function celulaCsv(v) {
+  if (v === null || v === undefined) return '';
+  let s = v instanceof Date ? v.toISOString() : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+  s = s.replace(/"/g, '""').replace(/\r?\n/g, ' ');
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return `"${s}"`;
+}
+export function linhasParaCsv(colunas, linhas) {
+  const cab = colunas.map(celulaCsv).join(',');
+  return '\uFEFF' + [cab, ...linhas.map((r) => colunas.map((c) => celulaCsv(r[c])).join(','))].join('\n') + '\n';
+}

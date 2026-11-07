@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, Lock, LogOut } from "lucide-react";
+import { AlertTriangle, Download, Lock, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AssinaturaSituacao } from "@/hooks/useAuth";
 
@@ -59,9 +59,14 @@ export function AssinaturaBloqueadaTela({
         </p>
         <div className="flex flex-col sm:flex-row gap-2 justify-center pt-2">
           {ehAdmin && (
-            <Button asChild>
-              <Link to="/minha-assinatura">Ver minha assinatura</Link>
-            </Button>
+            <>
+              <Button asChild>
+                <Link to="/minha-assinatura">Ver minha assinatura</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link to="/exportar-dados"><Download className="h-4 w-4 mr-2" aria-hidden /> Exportar dados</Link>
+              </Button>
+            </>
           )}
           <Button variant="outline" onClick={onSair}>
             <LogOut className="h-4 w-4 mr-2" aria-hidden /> Sair

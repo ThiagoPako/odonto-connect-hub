@@ -36,7 +36,7 @@ import {
   extractEvolutionMessages, normalizeEvolutionAckStatus, maskWaIdentifiers,
 } from './whatsapp/adapters/evolution.mjs';
 import { createOpenWaAdapter } from './whatsapp/adapters/openwa.mjs';
-import { situacaoAssinatura, sqlTenantBloqueado, rotaLiberadaNoBloqueio, ERRO_ASSINATURA_BLOQUEADA, CARENCIA_VENCIMENTO_DIAS } from './assinatura.mjs';
+import { situacaoAssinatura, sqlTenantBloqueado, rotaLiberadaNoBloqueio, ERRO_ASSINATURA_BLOQUEADA, CARENCIA_VENCIMENTO_DIAS, EXPORTACAO_GRUPOS, EXPORTACAO_TABELAS, linhasParaCsv } from './assinatura.mjs';
 import { validarPaciente, CAMPOS_PACIENTE, quantidadeEstoque, TIPOS_MOVIMENTO_ESTOQUE } from './cadastros-validacao.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
@@ -17325,6 +17325,63 @@ app.get('/api/ai/reports', async (req, res) => {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     console.error('❌ List clinical reports error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Exportação dos dados da clínica (CSV por tabela) ──────────
+// Só admin. Liberada também com a clínica bloqueada por assinatura vencida (assinatura.mjs).
+// Tabela fora da lista ou sem tenant_id não é exportada; toda leitura filtra pela clínica.
+async function tabelasExportaveis() {
+  const nomes = [...EXPORTACAO_TABELAS.keys()];
+  const { rows } = await pool.query(
+    `SELECT table_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND column_name = 'tenant_id' AND table_name = ANY($1::text[])`,
+    [nomes]
+  );
+  return new Set(rows.map((r) => r.table_name));
+}
+
+app.get('/api/exportacao', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const existentes = await tabelasExportaveis();
+    const grupos = [];
+    for (const g of EXPORTACAO_GRUPOS) {
+      const tabelas = [];
+      for (const [tabela, nome] of g.tabelas) {
+        if (!existentes.has(tabela)) continue;
+        const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM ${tabela} WHERE tenant_id = $1`, [user.tenant_id]);
+        tabelas.push({ tabela, nome, registros: rows[0]?.c ?? 0 });
+      }
+      if (tabelas.length) grupos.push({ grupo: g.grupo, tabelas });
+    }
+    res.json({ grupos });
+  } catch (error) {
+    const status = httpStatusOf(error);
+    res.status(status).json({ error: status === 500 ? 'Erro ao listar os dados para exportação' : error.message });
+  }
+});
+
+app.get('/api/exportacao/:tabela.csv', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const tabela = String(req.params.tabela || '');
+    // Nome de tabela só da lista fixa (nunca do usuário direto no SQL)
+    if (!EXPORTACAO_TABELAS.has(tabela) || !(await tabelasExportaveis()).has(tabela)) {
+      return res.status(404).json({ error: 'Conjunto de dados não encontrado' });
+    }
+    const { rows, fields } = await pool.query(`SELECT * FROM ${tabela} WHERE tenant_id = $1`, [user.tenant_id]);
+    const colunas = (fields || []).map((f) => f.name);
+    console.log(`[AUDIT exportacao] user=${user.id} clinica=${user.tenant_id} tabela=${tabela} registros=${rows.length}`);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${tabela}-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(linhasParaCsv(colunas.length ? colunas : Object.keys(rows[0] || {}), rows));
+  } catch (error) {
+    const status = httpStatusOf(error);
+    if (status === 500) console.error('[exportacao]', error?.message);
+    res.status(status).json({ error: status === 500 ? 'Erro ao exportar' : error.message });
   }
 });
 

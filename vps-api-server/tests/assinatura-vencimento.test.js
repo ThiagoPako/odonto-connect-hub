@@ -6,7 +6,7 @@ import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { situacaoAssinatura, rotaLiberadaNoBloqueio, sqlTenantBloqueado } from '../assinatura.mjs';
+import { situacaoAssinatura, rotaLiberadaNoBloqueio, sqlTenantBloqueado, celulaCsv, linhasParaCsv, EXPORTACAO_TABELAS } from '../assinatura.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -135,5 +135,77 @@ describe('mensagem do 402 por motivo', () => {
     expect(r.status).toBe(402);
     expect(r.body.error).toMatch(/foi suspenso/);
     expect(r.body.error).not.toMatch(/venceu/);
+  });
+});
+
+describe('exportação dos dados (liberada em todas as etapas, só admin)', () => {
+  const ADMIN = '44444444-4444-4444-4444-444444444444';
+  const T = { ok: '66666666-6666-6666-6666-666666666666', carencia: '77777777-7777-7777-7777-777777777777', bloq: '88888888-8888-8888-8888-888888888888' };
+  const tenants = {
+    [T.ok]: { status: 'active', trial_ends_at: null, current_period_end: new Date(Date.now() + 10 * DIA).toISOString() },
+    [T.carencia]: { status: 'active', trial_ends_at: null, current_period_end: new Date(Date.now() - 2 * DIA).toISOString() },
+    [T.bloq]: { status: 'canceled', trial_ends_at: null, current_period_end: null },
+  };
+  const tok = (tenant, role = 'admin') => jwt.sign({ sub: ADMIN, email: 'a@x.com', role, tenant_id: tenant, is_super_admin: false }, JWT_SECRET);
+  let spy, sqlLog;
+  beforeEach(() => {
+    sqlLog = [];
+    spy = jest.spyOn(pool, 'query').mockImplementation(async (sql, params = []) => {
+      const t = String(sql);
+      sqlLog.push({ t, params });
+      if (/SELECT status, trial_ends_at, current_period_end FROM tenants/.test(t)) return { rows: tenants[params[0]] ? [tenants[params[0]]] : [] };
+      if (/FROM information_schema\.columns/.test(t)) return { rows: params[0].filter((n) => n !== 'consultations').map((table_name) => ({ table_name })) };
+      if (/SELECT COUNT\(\*\)::int AS c FROM pacientes WHERE tenant_id = \$1/.test(t)) return { rows: [{ c: 2 }] };
+      if (/SELECT COUNT\(\*\)::int AS c FROM \w+ WHERE tenant_id = \$1/.test(t)) return { rows: [{ c: 0 }] };
+      if (/SELECT \* FROM pacientes WHERE tenant_id = \$1/.test(t)) {
+        return { rows: [{ id: 'p1', nome: 'Ana', telefone: '=1+1', tenant_id: params[0] }], fields: [{ name: 'id' }, { name: 'nome' }, { name: 'telefone' }, { name: 'tenant_id' }] };
+      }
+      if (/FROM user_roles WHERE user_id = \$1 AND role = \$2/.test(t)) return { rows: [] };
+      return { rows: [], rowCount: 0 };
+    });
+  });
+  afterEach(() => spy.mockRestore());
+
+  test.each(['ok', 'carencia', 'bloq'])('etapa "%s": lista e baixa o CSV de pacientes da própria clínica', async (etapa) => {
+    const lista = await request(app).get('/api/exportacao').set('Authorization', `Bearer ${tok(T[etapa])}`);
+    expect(lista.status).toBe(200);
+    const pac = lista.body.grupos.find((g) => g.grupo === 'Pacientes').tabelas.find((x) => x.tabela === 'pacientes');
+    expect(pac.registros).toBe(2);
+    expect(lista.body.grupos.flatMap((g) => g.tabelas).some((x) => x.tabela === 'consultations')).toBe(false);
+    const csv = await request(app).get('/api/exportacao/pacientes.csv').set('Authorization', `Bearer ${tok(T[etapa])}`);
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-type']).toMatch(/text\/csv/);
+    expect(csv.text).toContain('"nome"');
+    expect(csv.text).toContain(`"'=1+1"`);
+    const sel = sqlLog.find((q) => /SELECT \* FROM pacientes/.test(q.t));
+    expect(sel.params).toEqual([T[etapa]]);
+  });
+
+  test('bloqueada: o resto da API continua 402', async () => {
+    const r = await request(app).get('/api/pacientes').set('Authorization', `Bearer ${tok(T.bloq)}`);
+    expect(r.status).toBe(402);
+  });
+
+  test('não-admin não exporta (403)', async () => {
+    const r = await request(app).get('/api/exportacao/pacientes.csv').set('Authorization', `Bearer ${tok(T.ok, 'recepcionista')}`);
+    expect(r.status).toBe(403);
+    expect(sqlLog.some((q) => /SELECT \* FROM pacientes/.test(q.t))).toBe(false);
+  });
+
+  test('tabela fora da lista → 404 sem consultar (nome nunca vai do usuário para o SQL)', async () => {
+    for (const nome of ['profiles', 'pacientes;DROP', 'consultations']) {
+      const r = await request(app).get(`/api/exportacao/${encodeURIComponent(nome)}.csv`).set('Authorization', `Bearer ${tok(T.ok)}`);
+      expect(r.status).toBe(404);
+    }
+    expect(sqlLog.some((q) => /SELECT \* FROM/.test(q.t))).toBe(false);
+  });
+
+  test('CSV: BOM, aspas, quebra de linha, JSON e fórmula', () => {
+    expect(celulaCsv('a"b\nc')).toBe('"a""b c"');
+    expect(celulaCsv({ x: 1 })).toBe('"{""x"":1}"');
+    expect(celulaCsv('@SOMA')).toBe(`"'@SOMA"`);
+    expect(celulaCsv(null)).toBe('');
+    expect(linhasParaCsv(['a'], [{ a: 1 }]).startsWith('\uFEFF"a"\n"1"')).toBe(true);
+    expect(EXPORTACAO_TABELAS.has('profiles')).toBe(false);
   });
 });

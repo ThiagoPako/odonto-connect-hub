@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { saasApi, type Tenant, type Subscription, type Invoice, type Plan } from "@/lib/saasApi";
 import { DashboardHeader } from "@/components/DashboardHeader";
@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { AlertTriangle, CreditCard, Crown, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, CreditCard, Crown, Download, Loader2, RefreshCw } from "lucide-react";
 
 export const Route = createFileRoute("/minha-assinatura")({
   ssr: false,
@@ -172,6 +172,12 @@ function MinhaAssinaturaPage() {
             ) : fimPeriodo ? (
               <p>Assinatura válida até {dataBr(fimPeriodo)}. Depois disso há 5 dias de tolerância antes do bloqueio.</p>
             ) : null}
+            <p className="mt-3">
+              <Link to="/exportar-dados" className="inline-flex items-center gap-1.5 font-medium text-primary underline underline-offset-2">
+                <Download className="h-4 w-4" aria-hidden /> Exportar os dados da clínica
+              </Link>{" "}
+              (disponível sempre, inclusive com a assinatura vencida)
+            </p>
           </CardContent>
         </Card>
 
