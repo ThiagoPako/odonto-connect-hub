@@ -170,6 +170,8 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-seguranca-p0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            cat /root/odonto-connect/vps-api-server/migration-clinicorp-segredo.sql | sudo -u postgres psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
+              || echo "::warning::migration-clinicorp-segredo.sql falhou: confira as colunas e o índice único do segredo do webhook da Clinicorp"
             # Colunas usadas por agendamentos (idempotente; ausentes em produção)
             sudo -u postgres psql -p 5433 -d odonto_db -c "SET lock_timeout = '5s'; ALTER TABLE IF EXISTS agendamentos ADD COLUMN IF NOT EXISTS paciente_nome TEXT, ADD COLUMN IF NOT EXISTS dentista_nome TEXT;" 2>&1 || true
             # Colunas/tabelas que o código usa e faltam no banco (docs/banco/drift-schema-2026-11-05.md).

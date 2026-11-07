@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { clinicorpApi, type ClinicorpUserSettings, type ClinicorpConnectionTest, generateWebhookSecret, buildWebhookUrl } from "@/lib/clinicorpApi";
+import { clinicorpApi, type ClinicorpUserSettings, type ClinicorpConnectionTest, CLINICORP_WEBHOOK_URL, buildWebhookUrlWithSecret } from "@/lib/clinicorpApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,9 +21,10 @@ export function ClinicorpUserCredentials() {
   const [subscriberId, setSubscriberId] = useState("");
   const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE);
   const [apiToken, setApiToken] = useState("");
-  const [webhookSecret, setWebhookSecret] = useState("");
   const [showToken, setShowToken] = useState(false);
-  const [showSecret, setShowSecret] = useState(false);
+  // Segredo recém-gerado: fica só na memória desta tela e some ao recarregar.
+  const [newSecret, setNewSecret] = useState<string | null>(null);
+  const [rotating, setRotating] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ClinicorpConnectionTest | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -72,7 +73,6 @@ export function ClinicorpUserCredentials() {
     }
     if (apiToken && (apiToken.startsWith('http://') || apiToken.startsWith('https://'))) return "O campo API Token deve conter apenas o Token (chave), não o link completo do Webhook.";
     if (apiToken && (apiToken.length < 8 || apiToken.length > 2048)) return "API token deve ter entre 8 e 2048 caracteres";
-    if (webhookSecret && (webhookSecret.length < 8 || webhookSecret.length > 256)) return "Webhook secret deve ter entre 8 e 256 caracteres";
 
     return null;
   }
@@ -92,10 +92,8 @@ export function ClinicorpUserCredentials() {
         subscriber_id: subscriberId,
         base_url: baseUrl,
         api_token: apiToken,
-        webhook_secret: webhookSecret,
       });
       setApiToken("");
-      setWebhookSecret("");
       toast.success("Credenciais salvas com segurança");
       await load();
     } catch (e) {
@@ -206,6 +204,21 @@ export function ClinicorpUserCredentials() {
       toast.error(msg);
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function rotateSecret() {
+    if (settings?.has_webhook_secret && !confirm("Gerar um novo segredo? O atual continua valendo por 24 horas; depois disso, só o novo funciona.")) return;
+    setRotating(true);
+    try {
+      const r = await clinicorpApi.rotateWebhookSecret();
+      setNewSecret(r.webhook_secret);
+      toast.success("Novo segredo gerado. Copie agora: ele não aparece de novo.");
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao gerar o segredo");
+    } finally {
+      setRotating(false);
     }
   }
 
@@ -330,34 +343,69 @@ export function ClinicorpUserCredentials() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="cc-secret" className="text-xs">Chave de Segurança do Webhook (Secret)</Label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Input
-                      id="cc-secret"
-                      type={showSecret ? "text" : "password"}
-                      className="h-8 text-xs"
-                      value={webhookSecret}
-                      onChange={(e) => setWebhookSecret(e.target.value)}
-                      placeholder={settings?.has_webhook_secret ? `Atual: ${settings.webhook_secret_preview}` : "Gere um secret"}
-                      autoComplete="off"
-                    />
-                    <button type="button" onClick={() => setShowSecret((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Mostrar secret">
-                      {showSecret ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                    </button>
+                <Label className="text-xs">Webhook da Clinicorp</Label>
+                <div className="p-2 rounded border border-border/60 bg-background flex items-center justify-between gap-2">
+                  <div className="flex-1 overflow-hidden">
+                    <p className="text-[9px] text-muted-foreground font-medium uppercase mb-0.5">URL do webhook</p>
+                    <code className="text-[10px] truncate block font-mono">{CLINICORP_WEBHOOK_URL}</code>
                   </div>
-                  <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-[10px]" onClick={() => setWebhookSecret(generateWebhookSecret(40))}>
-                    <RefreshCw className="h-3 w-3 mr-1" /> Gerar
+                  <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => copy(CLINICORP_WEBHOOK_URL, "URL")} aria-label="Copiar URL do webhook">
+                    <Copy className="h-3 w-3" />
                   </Button>
                 </div>
-                {webhookSecret && (
-                  <div className="mt-2 p-2 rounded border border-border/60 bg-background flex items-center justify-between gap-2">
-                    <div className="flex-1 overflow-hidden">
-                      <p className="text-[9px] text-muted-foreground font-medium uppercase mb-0.5">Link para Webhook na Clinicorp:</p>
-                      <code className="text-[10px] truncate block font-mono">{buildWebhookUrl(webhookSecret)}</code>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[11px]">
+                    <span className="text-muted-foreground">Segredo (cabeçalho <code className="font-mono">x-user-api</code>): </span>
+                    <span className="font-mono">{settings?.has_webhook_secret ? settings.webhook_secret_preview || "••••••••" : "não gerado"}</span>
+                  </div>
+                  {settings?.can_manage && (
+                    <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-[10px]" onClick={rotateSecret} disabled={rotating}>
+                      {rotating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />} Gerar novo segredo
+                    </Button>
+                  )}
+                </div>
+                {settings?.legacy_secret_deadline && (
+                  <p className="text-[11px] text-warning font-medium flex items-start gap-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    {new Date(settings.legacy_secret_deadline).getTime() > Date.now()
+                      ? `Este segredo é do formato antigo: gere um segredo novo até ${new Date(settings.legacy_secret_deadline).toLocaleDateString("pt-BR")}.`
+                      : `O segredo antigo deixou de valer em ${new Date(settings.legacy_secret_deadline).toLocaleDateString("pt-BR")}: gere um segredo novo.`}
+                  </p>
+                )}
+                {settings?.previous_secret_expires_at && (
+                  <p className="text-[10px] text-muted-foreground">
+                    O segredo anterior ainda funciona até {new Date(settings.previous_secret_expires_at).toLocaleString("pt-BR")}.
+                  </p>
+                )}
+                {newSecret && (
+                  <div className="mt-2 p-2 rounded border border-warning/40 bg-warning/10 space-y-1.5" role="status">
+                    <p className="text-[11px] font-medium text-foreground flex items-start gap-1.5">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-warning" />
+                      Copie agora e cadastre na Clinicorp. A URL completa e o segredo não aparecem de novo: se perder, gere outro.
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      O painel da Clinicorp pede a URL do webhook: cole a URL completa abaixo, que já leva o segredo.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[9px] text-muted-foreground font-medium uppercase mb-0.5">URL completa para a Clinicorp</p>
+                        <code className="text-[10px] font-mono break-all">{buildWebhookUrlWithSecret(newSecret)}</code>
+                      </div>
+                      <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => copy(buildWebhookUrlWithSecret(newSecret), "URL")} aria-label="Copiar URL completa">
+                        <Copy className="h-3 w-3" />
+                      </Button>
                     </div>
-                    <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => copy(buildWebhookUrl(webhookSecret), "URL")}>
-                      <Copy className="h-3 w-3" />
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[9px] text-muted-foreground font-medium uppercase mb-0.5">Só o segredo (cabeçalho x-user-api)</p>
+                        <code className="text-[10px] font-mono break-all">{newSecret}</code>
+                      </div>
+                      <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => copy(newSecret, "Segredo")} aria-label="Copiar segredo">
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-[10px]" onClick={() => setNewSecret(null)}>
+                      Já copiei, esconder
                     </Button>
                   </div>
                 )}
@@ -478,7 +526,7 @@ export function ClinicorpUserCredentials() {
         )}
 
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/60">
-          <Button variant="ghost" size="sm" onClick={remove} className="text-destructive hover:text-destructive" disabled={!settings?.has_api_token && !settings?.enabled}>
+          <Button variant="ghost" size="sm" onClick={remove} className="text-destructive hover:text-destructive" disabled={!settings?.can_manage || (!settings?.has_api_token && !settings?.enabled)}>
             <Trash2 className="h-4 w-4 mr-1" /> Remover credenciais
           </Button>
           <div className="flex flex-wrap items-center gap-2">
@@ -501,7 +549,8 @@ export function ClinicorpUserCredentials() {
             </Button>
             <Button 
               onClick={save} 
-              disabled={saving || testing || cooldown > 0}
+              disabled={saving || testing || cooldown > 0 || !settings?.can_manage}
+              title={settings?.can_manage ? undefined : "Apenas o administrador da clínica pode salvar"}
             >
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Salvar credenciais
             </Button>

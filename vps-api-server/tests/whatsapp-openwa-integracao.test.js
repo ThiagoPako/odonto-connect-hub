@@ -11,6 +11,7 @@ import { jest } from '@jest/globals';
 import { randomBytes, randomUUID } from 'crypto';
 import { mkdir, writeFile, rm, readFile } from 'fs/promises';
 import path from 'path';
+import http from 'http';
 import { startFakeOpenWa } from './helpers/fake-openwa.mjs';
 
 const fake = await startFakeOpenWa();
@@ -177,12 +178,67 @@ describe('Canal OpenWA: criação e QR', () => {
     expect(r.status).toBe(403);
   });
 
-  test('consulta de estado pela tela não troca o principal (revisão F1, I1)', async () => {
+  test('consulta de estado pela tela não troca o principal (revisão F1, I1; teste refeito no N2)', async () => {
+    // Cenário em que a promoção aconteceria: o canal OpenWA é RESERVA, acabou de conectar, e o
+    // principal (Evolution) está fora do ar. Só o webhook pode promover; a consulta da tela não.
+    const evoPrimary = { id: '66666666-6666-6666-6666-666666666666', tenant_id: tenantA, provider: 'evolution', role: 'primary', status: 'active', external_id: 'evo-fora-a', instance_name: 'evo-fora-a', connection_state: 'close' };
+    channels.push(evoPrimary);
+    chA.role = 'backup';
+    chA.connection_state = 'connecting';
     fake.connect(chA.external_id);
-    const before = sqlLog.length;
-    const r = await request(app).get(`/api/whatsapp/channels/${chA.id}/state`).set(authRole(tenantA, 'recepcao'));
-    expect(r.status).toBe(200);
-    expect(sqlLog.slice(before).some(q => /SET role = 'primary'|SET role = 'backup'/.test(q.text))).toBe(false);
+    try {
+      const before = sqlLog.length;
+      const r = await request(app).get(`/api/whatsapp/channels/${chA.id}/state`).set(authRole(tenantA, 'recepcao'));
+      expect(r.status).toBe(200);
+      expect(r.body.channel.state).toBe('open');
+      expect(chA.connection_state).toBe('open');
+      expect(sqlLog.slice(before).some(q => /SET role = 'primary'|SET role = 'backup'/.test(q.text))).toBe(false);
+
+      // Controle: o mesmo cenário pelo webhook (allowPromote padrão) promove — prova que o
+      // teste acima pega a regressão se a rota voltar a permitir a promoção.
+      chA.connection_state = 'connecting';
+      const mid = sqlLog.length;
+      expect((await deliver('session.status', { status: 'ready' })).status).toBe(200);
+      await sleep(50);
+      expect(sqlLog.slice(mid).some(q => /SET role = 'primary'/.test(q.text) && q.params.includes(chA.id))).toBe(true);
+    } finally {
+      channels.splice(channels.indexOf(evoPrimary), 1);
+      chA.role = 'primary';
+    }
+  });
+
+  test('QR com o OpenWA fora do ar: 502 com mensagem clara e live:false (revisão F1.1, C1)', async () => {
+    fetchSpy.mockImplementation(async (url, init) => {
+      if (String(url).startsWith(fake.baseUrl)) throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+      return { ok: true, status: 200, json: async () => [] };
+    });
+    const r = await request(app).get(`/api/whatsapp/channels/${chA.id}/qr`).set(auth(tenantA));
+    expect(r.status).toBe(502);
+    expect(r.body.live).toBe(false);
+    expect(r.body.error).toMatch(/não respondeu/);
+    expect(r.body.qr).toBeUndefined();
+  });
+
+  test('QR com a chave do canal recusada pelo OpenWA: 502 pedindo para reconectar (C1)', async () => {
+    const tenantE = '77777777-7777-7777-7777-777777777777';
+    const created = await request(app).post('/api/whatsapp/openwa/channels').set(auth(tenantE)).send({});
+    expect(created.status).toBe(201);
+    const ch = channels.find(c => c.id === created.body.channel.id);
+    for (const rec of fake.keys.values()) if (rec.allowedSessions?.includes(ch.external_id)) rec.revoked = true;
+    const r = await request(app).get(`/api/whatsapp/channels/${ch.id}/qr`).set(auth(tenantE));
+    expect(r.status).toBe(502);
+    expect(r.body).toMatchObject({ live: false, error: expect.stringMatching(/recusou/) });
+  });
+
+  test('QR com o OpenWA no ar mas sem código ainda: 200 qr:null e live:true (C1)', async () => {
+    const s = fake.sessions.get(chA.external_id);
+    const prev = s.status;
+    s.status = 'initializing';
+    try {
+      const r = await request(app).get(`/api/whatsapp/channels/${chA.id}/qr`).set(auth(tenantA));
+      expect(r.status).toBe(200);
+      expect(r.body).toMatchObject({ qr: null, state: 'connecting', live: true });
+    } finally { s.status = prev; }
   });
 
   test('lista de canais: só os da clínica, sem credenciais', async () => {
@@ -223,6 +279,48 @@ describe('Webhook OpenWA', () => {
     expect((await request(app).post(`/api/webhook/openwa/${chA.id}`).set(replay).send(d1.body)).body).toEqual({ duplicate: true });
     const key = [...webhookEvents].find(k => k.endsWith('replay_1'));
     expect(key).toBe(`openwa:${chA.id}:replay_1`);
+  });
+
+  test('corpo sem idempotencyKey: dedupe pelo hash do corpo assinado (revisão F1.1, N4)', async () => {
+    const ts = new Date().toISOString();
+    const d1 = fake.signedDelivery(chA.external_id, 'session.status', { status: 'ready' }, { withoutIdempotencyKey: true, timestamp: ts });
+    expect(JSON.parse(d1.body).idempotencyKey).toBeUndefined();
+    expect((await request(app).post(`/api/webhook/openwa/${chA.id}`).set(d1.headers).send(d1.body)).body).toMatchObject({ accepted: true });
+    expect((await request(app).post(`/api/webhook/openwa/${chA.id}`).set(d1.headers).send(d1.body)).body).toEqual({ duplicate: true });
+    expect([...webhookEvents].some(k => k.startsWith(`openwa:${chA.id}:sha256:`))).toBe(true);
+    // Outro evento (corpo diferente) sem chave é processado normalmente.
+    const d2 = fake.signedDelivery(chA.external_id, 'session.status', { status: 'ready' }, { withoutIdempotencyKey: true, timestamp: new Date(Date.now() + 1000).toISOString() });
+    expect((await request(app).post(`/api/webhook/openwa/${chA.id}`).set(d2.headers).send(d2.body)).body).toMatchObject({ accepted: true });
+  });
+
+  test('session.qr: o SSE da clínica recebe só o aviso (qrAvailable), nunca a imagem do QR (revisão F1.1, N1)', async () => {
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise(r => server.once('listening', r));
+    const token = auth(tenantA).Authorization.replace('Bearer ', '');
+    // A recepção também está conectada ao SSE da clínica: é ela que não pode ver o QR.
+    const recepcao = authRole(tenantA, 'recepcao').Authorization.replace('Bearer ', '');
+    const received = [];
+    const reqs = [token, recepcao].map(t => http.get(`http://127.0.0.1:${server.address().port}/api/events?token=${encodeURIComponent(t)}`, (res) => {
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => received.push(chunk));
+    }));
+    try {
+      await sleep(150);
+      const r = await deliver('session.qr', { qr: 'data:image/png;base64,QRDOWEBHOOK' });
+      expect(r.status).toBe(200);
+      await sleep(150);
+      const stream = received.join('');
+      const events = stream.split('\n\n').filter(e => e.includes('event: whatsapp_channel_state'));
+      expect(events).toHaveLength(2);
+      for (const e of events) {
+        const data = JSON.parse(e.split('data: ')[1]);
+        expect(data).toEqual({ channelId: chA.id, state: 'connecting', qrAvailable: true });
+      }
+      expect(stream).not.toContain('QRDOWEBHOOK');
+    } finally {
+      reqs.forEach(r => r.destroy());
+      await new Promise(r => server.close(r));
+    }
   });
 
   test('mensagem recebida entra no chat da clínica do canal (A), nunca de B', async () => {
@@ -615,6 +713,18 @@ describe('Webhook da Evolution: contrato dos eventos internos', () => {
 });
 
 describe('Desconectar e remover', () => {
+  test('remover com credenciais ilegíveis: a sessão é apagada no OpenWA mesmo assim (revisão F1, I3)', async () => {
+    const tenantF = '88888888-8888-8888-8888-888888888888';
+    const created = await request(app).post('/api/whatsapp/openwa/channels').set(auth(tenantF)).send({});
+    expect(created.status).toBe(201);
+    const ch = channels.find(c => c.id === created.body.channel.id);
+    expect(fake.sessions.has(ch.external_id)).toBe(true);
+    ch.credentials_enc = 'v1:ilegivel';
+    const del = await request(app).delete(`/api/whatsapp/channels/${ch.id}`).set(auth(tenantF));
+    expect(del.status).toBe(200);
+    expect(fake.sessions.has(ch.external_id)).toBe(false);
+  });
+
   test('B não desconecta nem remove o canal da A; A remove e a sessão some do OpenWA', async () => {
     expect((await request(app).post(`/api/whatsapp/channels/${chA.id}/disconnect`).set(auth(tenantB))).status).toBe(404);
     expect((await request(app).delete(`/api/whatsapp/channels/${chA.id}`).set(auth(tenantB))).status).toBe(404);
