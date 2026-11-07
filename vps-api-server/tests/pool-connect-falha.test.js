@@ -12,6 +12,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
 const { app, pool } = await import('../server.mjs');
+// Papel lido do banco (papeis.mjs, #86): fixa no cache para o pool mockado.
+const { limparCachePapel, _definirPapelParaTestes } = await import('../papeis.mjs');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const tenantA = '11111111-1111-1111-1111-111111111111';
@@ -30,6 +32,8 @@ beforeAll(() => {
   jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
 beforeEach(() => {
+  limparCachePapel();
+  _definirPapelParaTestes('44444444-4444-4444-4444-444444444444', 'admin');
   querySpy = jest.spyOn(pool, 'query').mockImplementation((sql) => {
     const text = String(sql);
     if (/FROM unnest\(\$1::text\[\]\) AS l\(lead_id\)/.test(text)) return Promise.resolve({ rows: [{ lead_id: leadA }] });

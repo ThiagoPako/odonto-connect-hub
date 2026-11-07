@@ -11,13 +11,15 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 dotenv.config({ path: path.join(path.dirname(__filename), '../.env') });
 const { app, pool } = await import('../server.mjs');
+// Papel lido do banco (papeis.mjs, #86): fixa no cache para o pool mockado.
+const { limparCachePapel, _definirPapelParaTestes } = await import('../papeis.mjs');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const tenantA = '11111111-1111-1111-1111-111111111111';
 const tenantB = '22222222-2222-2222-2222-222222222222';
 const leadA = '88888888-8888-8888-8888-888888888888';
 const adminId = '44444444-4444-4444-4444-444444444444';
-const token = (extra = {}) => jwt.sign({ sub: adminId, email: 'admin@clinica-a.com', role: 'admin', tenant_id: tenantA, is_super_admin: false, ...extra }, JWT_SECRET);
+const token = (extra = {}) => (_definirPapelParaTestes(adminId, extra.role || 'admin'), jwt.sign({ sub: adminId, email: 'admin@clinica-a.com', role: 'admin', tenant_id: tenantA, is_super_admin: false, ...extra }, JWT_SECRET));
 const auth = (extra) => ({ Authorization: `Bearer ${token(extra)}` });
 
 describe('Opt-out: ver e desfazer a pedido do paciente', () => {
@@ -28,6 +30,8 @@ describe('Opt-out: ver e desfazer a pedido do paciente', () => {
     jest.spyOn(console, 'warn').mockImplementation(() => {});
   });
   beforeEach(() => {
+    limparCachePapel();
+    _definirPapelParaTestes('44444444-4444-4444-4444-444444444444', 'admin');
     sqlLog = []; optedOut = true; failInsert = false; released = 0;
     const handler = (via) => (sql, params = []) => {
       const text = String(sql);

@@ -5,6 +5,7 @@
 // pool.query e fetch mockados.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -22,7 +23,7 @@ const tenantA = '11111111-1111-1111-1111-111111111111';
 const instA = '11111111-clinica-a';
 const userId = '44444444-4444-4444-4444-444444444444';
 const auth = (role = 'admin') => ({
-  Authorization: `Bearer ${jwt.sign({ sub: userId, email: 'a@a.com', role, tenant_id: tenantA, is_super_admin: false }, JWT_SECRET)}`,
+  Authorization: `Bearer ${assinarComPapel({ sub: userId, email: 'a@a.com', role, tenant_id: tenantA, is_super_admin: false }, JWT_SECRET)}`,
 });
 
 const camp = (extra = {}) => ({

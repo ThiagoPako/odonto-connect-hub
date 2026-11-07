@@ -2,6 +2,7 @@
  * SaaS API — Tenants, Plans, Subscriptions, Signup
  */
 import { vpsApiFetch, setToken } from "./vpsApi";
+import type { AssinaturaSituacao } from "@/hooks/useAuth";
 
 export interface Plan {
   id: string;
@@ -37,6 +38,8 @@ export interface Tenant {
   features?: Record<string, unknown>;
   users_count?: number;
   created_at: string;
+  /** Calculado no servidor (assinatura.mjs): vencimento + 5 dias de carência. */
+  assinatura?: AssinaturaSituacao;
 }
 
 export interface Subscription {

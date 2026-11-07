@@ -19,9 +19,13 @@ interface Props {
   height?: number;
   /** chame esse ref via parent para recuperar a assinatura final */
   signatureRef?: React.MutableRefObject<(() => SignatureResult | null) | null>;
+  /** false: não pede nem grava localização (ex.: consentimento de gravação, LGPD 6º III). */
+  coletarLocalizacao?: boolean;
+  /** Rótulo acessível da área de assinatura. */
+  ariaLabel?: string;
 }
 
-export function SignaturePad({ onChange, height = 180, signatureRef }: Props) {
+export function SignaturePad({ onChange, height = 180, signatureRef, coletarLocalizacao = true, ariaLabel = "Área de assinatura" }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawing = useRef(false);
   const last = useRef<{ x: number; y: number } | null>(null);
@@ -49,6 +53,7 @@ export function SignaturePad({ onChange, height = 180, signatureRef }: Props) {
 
   // Pede geolocalização ao montar
   useEffect(() => {
+    if (!coletarLocalizacao) return;
     if (!navigator.geolocation) {
       setGeoError("Geolocalização não suportada pelo navegador");
       return;
@@ -69,7 +74,7 @@ export function SignaturePad({ onChange, height = 180, signatureRef }: Props) {
       },
       { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 }
     );
-  }, []);
+  }, [coletarLocalizacao]);
 
   // Expõe getter
   useEffect(() => {
@@ -134,6 +139,8 @@ export function SignaturePad({ onChange, height = 180, signatureRef }: Props) {
       >
         <canvas
           ref={canvasRef}
+          role="img"
+          aria-label={hasInk ? `${ariaLabel}: assinado` : `${ariaLabel}: vazia`}
           className="w-full h-full touch-none cursor-crosshair"
           onPointerDown={startDraw}
           onPointerMove={draw}
@@ -160,7 +167,7 @@ export function SignaturePad({ onChange, height = 180, signatureRef }: Props) {
       </div>
 
       {/* Geo status */}
-      <div className="flex items-center gap-2 text-[11px]">
+      {coletarLocalizacao && <div className="flex items-center gap-2 text-[11px]">
         {geoLoading && (
           <span className="flex items-center gap-1 text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin" /> Obtendo localização...
@@ -177,7 +184,7 @@ export function SignaturePad({ onChange, height = 180, signatureRef }: Props) {
             <AlertTriangle className="h-3 w-3" /> {geoError}
           </span>
         )}
-      </div>
+      </div>}
 
       <p className="text-[10px] text-muted-foreground">
         Esta assinatura é registrada eletronicamente conforme MP 2200-2/2001

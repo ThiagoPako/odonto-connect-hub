@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { rm, readdir } from 'fs/promises';
+import { _definirPapelParaTestes } from '../papeis.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -39,6 +40,8 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  // Matriz de papéis (#86): o admin de teste precisa do papel no cache, já que pool.query é mockado.
+  _definirPapelParaTestes('44444444-4444-4444-4444-444444444444', 'admin');
   sqlLog = [];
   arquivos = [];
   querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {

@@ -22,7 +22,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { dentistasApi } from "@/lib/vpsApi";
+import { adminListUsers, dentistasApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,6 +58,7 @@ function mapDentista(r: any): Dentista {
     comissao: Number(r.comissao_percentual ?? r.comissao ?? 35),
     status: r.ativo === false ? 'inativo' : 'ativo',
     criadoEm: r.created_at ? new Date(r.created_at) : new Date(),
+    userId: r.user_id ?? null,
   };
 }
 
@@ -109,6 +110,7 @@ function DentistasPage() {
       cro: data.cro, especialidade: data.especialidade,
       comissao_percentual: data.comissao,
       ativo: data.status === 'ativo',
+      user_id: data.userId || null,
     };
     const { error } = editingDentista
       ? await dentistasApi.update(editingDentista.id, payload)
@@ -370,12 +372,22 @@ function DentistaFormModal({
   const [especialidade, setEspecialidade] = useState(dentista?.especialidade ?? especialidades[0]);
   const [comissao, setComissao] = useState(dentista?.comissao ?? 35);
   const [status, setStatus] = useState<"ativo" | "inativo">(dentista?.status ?? "ativo");
+  const [userId, setUserId] = useState(dentista?.userId ?? "");
+  const [usuarios, setUsuarios] = useState<Array<{ id: string; name: string; email: string }>>([]);
+  const [usuariosErro, setUsuariosErro] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    adminListUsers().then(({ data, error }) => {
+      if (error) setUsuariosErro(error);
+      else setUsuarios(Array.isArray(data) ? data : []);
+    });
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    await onSave({ nome, email, telefone, cro, especialidade, comissao, status });
+    await onSave({ nome, email, telefone, cro, especialidade, comissao, status, userId: userId || null });
     setSaving(false);
   };
 
@@ -431,6 +443,21 @@ function DentistaFormModal({
                 <option value="ativo">Ativo</option>
                 <option value="inativo">Inativo</option>
               </select>
+            </div>
+            <div className="col-span-2">
+              <label htmlFor="dentista-usuario" className="text-xs font-medium text-muted-foreground mb-1 block">Usuário de acesso</label>
+              <select id="dentista-usuario" value={userId} onChange={(e) => setUserId(e.target.value)} disabled={!!usuariosErro}
+                aria-describedby="dentista-usuario-ajuda"
+                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60">
+                <option value="">Nenhum (não aprova relatórios clínicos)</option>
+                {usuarios.map((u) => <option key={u.id} value={u.id}>{u.name} — {u.email}</option>)}
+                {userId && !usuarios.some((u) => u.id === userId) && <option value={userId}>Usuário vinculado</option>}
+              </select>
+              <p id="dentista-usuario-ajuda" className="text-[11px] text-muted-foreground mt-1">
+                {usuariosErro
+                  ? "Não foi possível carregar os usuários da clínica; o vínculo atual não será alterado."
+                  : "Quem entra no sistema com este usuário é reconhecido como este dentista (por exemplo, para aprovar relatórios clínicos)."}
+              </p>
             </div>
           </div>
           <div className="flex justify-end gap-3 pt-2">

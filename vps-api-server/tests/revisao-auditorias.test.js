@@ -4,6 +4,7 @@
 // pool.query e pool.connect mockados: nenhuma query chega ao Postgres.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -20,7 +21,7 @@ const OUTRO = '55555555-5555-5555-5555-555555555555';
 const REBAIXADO = '66666666-6666-6666-6666-666666666666';
 const DESATIVADO = '77777777-7777-7777-7777-777777777777';
 const TRAT_BETA = '88888888-8888-8888-8888-888888888888';
-const tok = (extra = {}) => jwt.sign({ sub: ADMIN, email: 'a@x.com', role: 'admin', tenant_id: TENANT, is_super_admin: false, ...extra }, JWT_SECRET);
+const tok = (extra = {}) => assinarComPapel({ sub: ADMIN, email: 'a@x.com', role: 'admin', tenant_id: TENANT, is_super_admin: false, ...extra }, JWT_SECRET);
 
 let querySpy, connectSpy, sqlLog;
 beforeAll(() => {
@@ -66,7 +67,7 @@ test.each([
 });
 
 test('admin rebaixado no banco perde o admin mesmo com token antigo de admin', async () => {
-  const r = await request(app).post('/api/auth/create-user').set('Authorization', `Bearer ${tok({ sub: REBAIXADO, role: 'admin' })}`)
+  const r = await request(app).post('/api/auth/create-user').set('Authorization', `Bearer ${jwt.sign({ sub: REBAIXADO, email: 'a@x.com', role: 'admin', tenant_id: TENANT, is_super_admin: false }, JWT_SECRET)}`) // JWT puro: o papel vem do banco mockado
     .send({ name: 'X', email: 'x@x.com', password: 'Senha1234', role: 'user' });
   expect(r.status).toBe(403);
   expect(sqlDe(/INSERT INTO profiles/)).toHaveLength(0);

@@ -1,5 +1,20 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
-import { getToken, clearToken, getMe, login as loginVps, setCachedTenantId } from "@/lib/vpsApi";
+import { getToken, clearToken, getMe, login as loginVps, setCachedTenantId, ASSINATURA_BLOQUEADA_EVENT } from "@/lib/vpsApi";
+
+/** Situação da assinatura da clínica (vps-api-server/assinatura.mjs). */
+export interface AssinaturaSituacao {
+  situacao: "ok" | "carencia" | "somente_leitura" | "bloqueado" | "cancelado";
+  status: string;
+  vence_em: string | null;
+  somente_leitura_em: string | null;
+  bloqueio_em: string | null;
+  cancelamento_em: string | null;
+  exclusao_em: string | null;
+  proxima_etapa: AssinaturaSituacao["situacao"] | null;
+  proxima_etapa_em: string | null;
+  dias_para_proxima: number | null;
+  motivo: "teste_vencido" | "pagamento_vencido" | "suspensa" | "cancelada" | null;
+}
 
 export interface AuthUser {
   id: string;
@@ -10,6 +25,7 @@ export interface AuthUser {
   tenant_id: string | null;
   is_super_admin: boolean;
   tenant_features?: Record<string, boolean>;
+  assinatura?: AssinaturaSituacao | null;
 }
 
 interface AuthState {
@@ -62,9 +78,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
     document.addEventListener("visibilitychange", refreshOnVisibility);
+    // A API respondeu 402 (assinatura bloqueada no meio da sessão): recarrega para mostrar a tela de bloqueio.
+    // Várias chamadas recebem 402 ao mesmo tempo: só um /auth/me por vez.
+    let recarregando: Promise<void> | null = null;
+    const onAssinaturaBloqueada = () => {
+      if (recarregando) return;
+      recarregando = fetchCurrentUser()
+        .then((u) => { if (mounted && u) setUser(u); })
+        .catch(() => undefined)
+        .finally(() => { recarregando = null; });
+    };
+    window.addEventListener(ASSINATURA_BLOQUEADA_EVENT, onAssinaturaBloqueada);
     return () => {
       mounted = false;
       document.removeEventListener("visibilitychange", refreshOnVisibility);
+      window.removeEventListener(ASSINATURA_BLOQUEADA_EVENT, onAssinaturaBloqueada);
     };
   }, []);
 

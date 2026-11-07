@@ -9,6 +9,8 @@ export interface Dentista {
   avatar?: string;
   status: "ativo" | "inativo";
   criadoEm: Date;
+  /** Usuário (login) vinculado: é por ele que o sistema reconhece o dentista (não pelo e-mail). */
+  userId?: string | null;
 }
 
 export interface Atendimento {

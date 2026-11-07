@@ -3,6 +3,7 @@
 // clínica. pool.query e fetch mockados; o relógio (Date) é fixado.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -20,7 +21,7 @@ const tenantA = '11111111-1111-1111-1111-111111111111';
 const tenantB = '22222222-2222-2222-2222-222222222222';
 const instA = '11111111-clinica-a';
 const auth = (tenant = tenantA) => ({
-  Authorization: `Bearer ${jwt.sign({ sub: '44444444-4444-4444-4444-444444444444', email: 'a@a.com', role: 'admin', tenant_id: tenant, is_super_admin: false }, JWT_SECRET)}`,
+  Authorization: `Bearer ${assinarComPapel({ sub: '44444444-4444-4444-4444-444444444444', email: 'a@a.com', role: 'admin', tenant_id: tenant, is_super_admin: false }, JWT_SECRET)}`,
 });
 // Quarta, 05/11/2026, 10h em São Paulo.
 const HOJE = '2026-11-05';
