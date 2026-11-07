@@ -18333,6 +18333,38 @@ const clinicorpProbeSleep = (ms) => new Promise(resolve => setTimeout(resolve, m
 // ═══════════════════════════════════════════════════════════════
 
 // Listar tipos de exame do tenant
+const EXAME_STATUS = ['novo', 'em_andamento', 'aguardando_laudo', 'concluido', 'entregue', 'cancelado'];
+const EXAME_PRIORIDADE = ['baixa', 'normal', 'alta', 'urgente'];
+const EXAME_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Resposta de erro do módulo de exames: 401 para sessão inválida, 500 genérico
+// (sem repassar a mensagem do banco) para o resto. Nada de dado do paciente no log.
+function responderErroExame(res, err, tag) {
+  if (err?.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+  console.error(`[${tag}]`, err?.message);
+  return res.status(500).json({ error: 'Erro interno ao processar o exame' });
+}
+
+// Confere status/prioridade/tipo enviados pelo cliente antes de gravar.
+// Devolve a mensagem para 400 ou null.
+async function validarCamposExame(tenantId, body) {
+  if (body.status !== undefined && body.status !== null && !EXAME_STATUS.includes(body.status)) return 'Status inválido';
+  if (body.prioridade !== undefined && body.prioridade !== null && !EXAME_PRIORIDADE.includes(body.prioridade)) return 'Prioridade inválida';
+  if (body.tipo_exame_id) {
+    if (!EXAME_UUID_RE.test(String(body.tipo_exame_id))) return 'Tipo de exame não encontrado';
+    const { rows } = await pool.query('SELECT 1 FROM exame_tipos WHERE id = $1 AND tenant_id = $2', [body.tipo_exame_id, tenantId]);
+    if (!rows.length) return 'Tipo de exame não encontrado';
+  }
+  if (body.valor !== undefined && body.valor !== null && body.valor !== '' && !(Number.isFinite(Number(body.valor)) && Number(body.valor) >= 0)) return 'Valor inválido';
+  for (const campo of ['data_realizacao', 'data_entrega']) {
+    const v = body[campo];
+    if (v !== undefined && v !== null && v !== '' && Number.isNaN(Date.parse(String(v)))) return 'Data inválida';
+  }
+  return validarReferenciasDoTenant(tenantId, {
+    pacienteId: body.paciente_id, dentistaId: body.dentista_solicitante_id,
+  });
+}
+
 app.get('/api/exame-tipos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -18346,7 +18378,7 @@ app.get('/api/exame-tipos', async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(401).json({ error: err.message });
+    responderErroExame(res, err, 'exame-tipos:list');
   }
 });
 
@@ -18356,6 +18388,9 @@ app.post('/api/exame-tipos', async (req, res) => {
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
     const { nome, categoria, codigo_tiss, preco, ativo } = req.body || {};
     if (!nome?.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
+    if (preco !== undefined && preco !== null && preco !== '' && !(Number.isFinite(Number(preco)) && Number(preco) >= 0)) {
+      return res.status(400).json({ error: 'Preço inválido' });
+    }
     const { rows } = await pool.query(
       `INSERT INTO exame_tipos (tenant_id, nome, categoria, codigo_tiss, preco, ativo)
        VALUES ($1,$2,$3,$4,$5,COALESCE($6,true))
@@ -18365,12 +18400,11 @@ app.post('/api/exame-tipos', async (req, res) => {
              preco=EXCLUDED.preco,
              ativo=EXCLUDED.ativo
        RETURNING *`,
-      [user.tenant_id, nome.trim(), categoria || null, codigo_tiss || null, preco ?? 0, ativo]
+      [user.tenant_id, nome.trim(), categoria || null, codigo_tiss || null, preco || 0, ativo]
     );
     res.json(rows[0]);
   } catch (err) {
-    console.error('[exame-tipos:post]', err.message);
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exame-tipos:post');
   }
 });
 
@@ -18378,13 +18412,16 @@ app.delete('/api/exame-tipos/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
-    await pool.query(
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Tipo de exame não encontrado' });
+    // Os exames já pedidos guardam o nome (tipo_nome) e ficam com tipo_exame_id NULL (FK SET NULL).
+    const { rowCount } = await pool.query(
       `DELETE FROM exame_tipos WHERE id=$1 AND tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
+    if (!rowCount) return res.status(404).json({ error: 'Tipo de exame não encontrado' });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exame-tipos:delete');
   }
 });
 
@@ -18394,6 +18431,11 @@ app.get('/api/exames', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json([]);
     const { status, paciente_id, q, from, to, terceirizado } = req.query;
+    if (paciente_id && !EXAME_UUID_RE.test(String(paciente_id))) return res.json([]);
+    if (status && !EXAME_STATUS.includes(String(status))) return res.status(400).json({ error: 'Status inválido' });
+    if ((from && Number.isNaN(Date.parse(String(from)))) || (to && Number.isNaN(Date.parse(String(to))))) {
+      return res.status(400).json({ error: 'Data inválida' });
+    }
     const params = [user.tenant_id];
     const where = ['e.tenant_id = $1'];
     if (status)       { params.push(status);       where.push(`e.status = $${params.length}`); }
@@ -18419,8 +18461,7 @@ app.get('/api/exames', async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    console.error('[exames:list]', err.message);
-    res.status(401).json({ error: err.message });
+    responderErroExame(res, err, 'exames:list');
   }
 });
 
@@ -18437,7 +18478,7 @@ app.get('/api/exames/stats', async (req, res) => {
     for (const r of rows) { stats[r.status] = r.total; stats.total += r.total; }
     res.json(stats);
   } catch (err) {
-    res.status(401).json({ error: err.message });
+    responderErroExame(res, err, 'exames:stats');
   }
 });
 
@@ -18445,14 +18486,15 @@ app.post('/api/exames', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const body = req.body || {};
     const {
       paciente_id, dentista_solicitante_id, clinica_origem,
       tipo_exame_id, tipo_nome, prioridade, valor, modo_entrega,
       observacoes, terceirizado, fornecedor_terc, status
-    } = req.body || {};
+    } = body;
     if (!tipo_nome?.trim()) return res.status(400).json({ error: 'tipo_nome obrigatório' });
-    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_solicitante_id });
-    if (refErro) return res.status(400).json({ error: refErro });
+    const campoErro = await validarCamposExame(user.tenant_id, body);
+    if (campoErro) return res.status(400).json({ error: campoErro });
 
     // Gera código sequencial simples por tenant
     const { rows: [{ next_code }] } = await pool.query(
@@ -18473,14 +18515,13 @@ app.post('/api/exames', async (req, res) => {
         user.tenant_id, next_code,
         paciente_id || null, dentista_solicitante_id || null, clinica_origem || null,
         tipo_exame_id || null, tipo_nome.trim(),
-        status, prioridade, valor, modo_entrega || null,
+        status || null, prioridade || null, valor === '' ? null : valor, modo_entrega || null,
         observacoes || null, terceirizado, fornecedor_terc || null, user.id
       ]
     );
     res.json(rows[0]);
   } catch (err) {
-    console.error('[exames:create]', err.message);
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exames:create');
   }
 });
 
@@ -18488,18 +18529,30 @@ app.patch('/api/exames/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Exame não encontrado' });
+    const body = req.body || {};
     const allowed = ['status','prioridade','valor','modo_entrega','laudo_texto','arquivo_url',
                      'observacoes','terceirizado','fornecedor_terc','data_realizacao','data_entrega',
                      'paciente_id','dentista_solicitante_id','clinica_origem','tipo_exame_id','tipo_nome'];
+    // tipo_nome é NOT NULL: vazio apagaria o nome do exame (o banco recusaria com erro 500)
+    if (body.tipo_nome !== undefined && !String(body.tipo_nome ?? '').trim()) {
+      return res.status(400).json({ error: 'tipo_nome obrigatório' });
+    }
     const sets = []; const params = [];
     for (const k of allowed) {
-      if (req.body[k] !== undefined) { params.push(req.body[k]); sets.push(`${k}=$${params.length}`); }
+      if (body[k] !== undefined) {
+        // '' vira NULL nos campos opcionais (o banco recusaria '' em uuid/data/número)
+        const v = body[k] === '' ? null : body[k];
+        params.push(k === 'tipo_nome' ? String(v).trim() : v);
+        sets.push(`${k}=$${params.length}`);
+      }
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada a atualizar' });
-    const refErro = await validarReferenciasDoTenant(user.tenant_id, {
-      pacienteId: req.body.paciente_id, dentistaId: req.body.dentista_solicitante_id,
-    });
-    if (refErro) return res.status(400).json({ error: refErro });
+    for (const k of ['status', 'prioridade', 'terceirizado']) {
+      if (body[k] === null || body[k] === '') return res.status(400).json({ error: `${k} não pode ficar vazio` });
+    }
+    const campoErro = await validarCamposExame(user.tenant_id, body);
+    if (campoErro) return res.status(400).json({ error: campoErro });
     params.push(req.params.id, user.tenant_id);
     const { rows } = await pool.query(
       `UPDATE exames SET ${sets.join(', ')}
@@ -18510,8 +18563,7 @@ app.patch('/api/exames/:id', async (req, res) => {
     if (!rows[0]) return res.status(404).json({ error: 'Exame não encontrado' });
     res.json(rows[0]);
   } catch (err) {
-    console.error('[exames:patch]', err.message);
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exames:patch');
   }
 });
 
@@ -18519,15 +18571,31 @@ app.delete('/api/exames/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
-    await pool.query(
-      `DELETE FROM exames WHERE id=$1 AND tenant_id=$2`,
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Exame não encontrado' });
+    // Exame com laudo ou imagem é parte do prontuário (guarda mínima de 20 anos, Lei 13.787/2018):
+    // não é apagado; a clínica cancela o exame. Só pedidos sem resultado podem ser excluídos.
+    const { rows } = await pool.query(
+      `SELECT (COALESCE(btrim(laudo_texto), '') <> '' OR arquivo_url IS NOT NULL) AS tem_resultado
+         FROM exames WHERE id=$1 AND tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
+    if (!rows.length) return res.status(404).json({ error: 'Exame não encontrado' });
+    if (rows[0].tem_resultado) {
+      return res.status(409).json({ error: 'Este exame já tem laudo ou imagem e faz parte do prontuário. Em vez de excluir, mude o status para Cancelado.' });
+    }
+    const { rowCount } = await pool.query(
+      `DELETE FROM exames WHERE id=$1 AND tenant_id=$2
+          AND COALESCE(btrim(laudo_texto), '') = '' AND arquivo_url IS NULL`,
+      [req.params.id, user.tenant_id]
+    );
+    // Recebeu laudo/imagem entre a leitura e a exclusão: nada foi apagado
+    if (!rowCount) return res.status(409).json({ error: 'O exame mudou enquanto você excluía. Atualize a lista e tente de novo.' });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exames:delete');
   }
 });
+
 
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
@@ -18720,6 +18788,66 @@ if (process.env.NODE_ENV !== 'test') {
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
+
+      // ─── Exames (radiologia): tabelas base, depois de pacientes/dentistas (FKs). DDL igual ao de
+      // migration-schema-alinhamento.sql (#39): quem rodar primeiro cria, o outro vira no-op. ───
+      `CREATE TABLE IF NOT EXISTS exame_tipos (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id uuid NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+        nome text NOT NULL,
+        categoria text,
+        codigo_tiss text,
+        preco numeric(10,2) DEFAULT 0,
+        ativo boolean NOT NULL DEFAULT true,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (tenant_id, nome)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exame_tipos_tenant ON exame_tipos (tenant_id)`,
+      `CREATE TABLE IF NOT EXISTS exames (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id uuid NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+        codigo text,
+        paciente_id uuid REFERENCES pacientes(id) ON DELETE SET NULL,
+        dentista_solicitante_id uuid REFERENCES dentistas(id) ON DELETE SET NULL,
+        clinica_origem text,
+        tipo_exame_id uuid REFERENCES exame_tipos(id) ON DELETE SET NULL,
+        tipo_nome text NOT NULL,
+        status text NOT NULL DEFAULT 'novo'
+          CHECK (status IN ('novo','em_andamento','aguardando_laudo','concluido','entregue','cancelado')),
+        prioridade text NOT NULL DEFAULT 'normal'
+          CHECK (prioridade IN ('baixa','normal','alta','urgente')),
+        data_solicitacao timestamptz NOT NULL DEFAULT now(),
+        data_realizacao timestamptz,
+        data_entrega timestamptz,
+        valor numeric(10,2) DEFAULT 0,
+        modo_entrega text,
+        laudo_texto text,
+        arquivo_url text,
+        observacoes text,
+        terceirizado boolean NOT NULL DEFAULT false,
+        fornecedor_terc text,
+        created_by uuid REFERENCES profiles(id) ON DELETE SET NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_tenant ON exames (tenant_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_status ON exames (tenant_id, status)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_paciente ON exames (tenant_id, paciente_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_data_solic ON exames (tenant_id, data_solicitacao DESC)`,
+      // Função só é criada se faltar: se o deploy (postgres) já a criou, CREATE OR REPLACE
+      // pela API falharia ("must be owner") e geraria aviso em todo boot
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'exames_touch_updated_at') THEN
+           EXECUTE 'CREATE FUNCTION exames_touch_updated_at() RETURNS trigger AS $f$ BEGIN NEW.updated_at = now(); RETURN NEW; END; $f$ LANGUAGE plpgsql';
+         END IF;
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exames_updated' AND tgrelid = 'public.exames'::regclass) THEN
+           CREATE TRIGGER trg_exames_updated BEFORE UPDATE ON exames FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
+         END IF;
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exame_tipos_updated' AND tgrelid = 'public.exame_tipos'::regclass) THEN
+           CREATE TRIGGER trg_exame_tipos_updated BEFORE UPDATE ON exame_tipos FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
+         END IF;
+       END $$`,
 
       `CREATE TABLE IF NOT EXISTS agendamentos (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
