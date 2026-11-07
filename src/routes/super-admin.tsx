@@ -6,13 +6,13 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Users, Building2, CreditCard, Search, ExternalLink, Calendar, Plus, Save, TrendingUp, DollarSign, UserMinus, Edit, Crown } from "lucide-react";
+import { ShieldAlert, Loader2, Users, Building2, CreditCard, Search, ExternalLink, Calendar, Plus, Save, TrendingUp, DollarSign, UserMinus, Edit, Crown, RefreshCw } from "lucide-react";
 import { PlanEditorDialog } from "@/components/PlanEditorDialog";
-import SaasFilters, { SaasFilterState } from "@/components/admin-saas/SaasFilters";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import SaasKpiCards from "@/components/admin-saas/SaasKpiCards";
 
 export const Route = createFileRoute("/super-admin")({
@@ -29,7 +29,8 @@ function SuperAdminPage() {
   const [activeTab, setActiveTab] = useState("clinicas");
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [isPlanDialogOpen, setIsPlanDialogOpen] = useState(false);
-  const [filters, setFilters] = useState<SaasFilterState>({ periodo: "mes_atual", plano: "todos", statusAssinatura: "todos" });
+  const [planoUrl, setPlanoFiltro] = useFiltroUrl("plano");
+  const [statusFiltro, setStatusFiltro] = useFiltroUrl("status", ["trial", "active", "past_due", "suspended", "canceled"]);
   const [stats, setStats] = useState({
     mrr: 0,
     arr: 0,
@@ -48,6 +49,9 @@ function SuperAdminPage() {
         saasApi.listAllPlans(),
         saasApi.getStats()
       ]);
+      // vpsApiFetch não lança: o erro vem em .error e precisa aparecer para quem opera o painel
+      const erros = [t.error && "clínicas", p.error && "planos", s.error && "métricas"].filter(Boolean);
+      if (erros.length) toast.error(`Não foi possível carregar: ${erros.join(", ")}. Tente "Atualizar dados".`);
       setTenants(t.data?.data ?? []);
       setPlans(p.data?.data ?? []);
       if (s.data?.data) {
@@ -93,25 +97,28 @@ function SuperAdminPage() {
     reload();
   };
 
-  const filteredTenants = tenants.filter(t => 
-    t.nome.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    t.email_contato?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    t.slug.toLowerCase().includes(searchTerm.toLowerCase())
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const planoFiltro = plans.some(p => p.id === planoUrl) ? planoUrl : "";
+  const termo = searchTerm.trim().toLowerCase();
+  const filteredTenants = tenants.filter(t =>
+    (!planoFiltro || t.plan_id === planoFiltro) &&
+    (!statusFiltro || t.status === statusFiltro) &&
+    (!termo ||
+      (t.nome || "").toLowerCase().includes(termo) ||
+      (t.email_contato || "").toLowerCase().includes(termo) ||
+      (t.slug || "").toLowerCase().includes(termo))
   );
 
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-muted/30">
       <DashboardHeader title="Painel do Super Administrador" icon={Crown} />
       
-      <main className="flex-1 p-6 overflow-auto space-y-6 max-w-7xl mx-auto w-full">
-        {/* Filtros CareFlow Style */}
-        <SaasFilters 
-          filters={filters} 
-          onChange={setFilters} 
-          planos={plans.map(p => ({ id: p.id, nome: p.nome }))} 
-          onRefresh={reload}
-          loading={loading}
-        />
+      <div className="flex-1 p-4 sm:p-6 overflow-auto space-y-6 max-w-7xl mx-auto w-full">
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={reload} disabled={loading} className="h-9 px-4 gap-2">
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Atualizar dados
+          </Button>
+        </div>
 
         {/* Resumo de Métricas CareFlow Style */}
         <SaasKpiCards 
@@ -125,34 +132,41 @@ function SuperAdminPage() {
         />
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-            <TabsList className="bg-background border h-10 p-1">
+          <div className="mb-4 overflow-x-auto">
+            <TabsList className="bg-background border h-auto min-h-10 p-1 flex-wrap justify-start">
               <TabsTrigger value="clinicas" className="px-6 data-[state=active]:bg-muted">Clínicas</TabsTrigger>
               <TabsTrigger value="planos" className="px-6 data-[state=active]:bg-muted">Planos & Assinaturas</TabsTrigger>
               <TabsTrigger value="configuracoes" className="px-6 data-[state=active]:bg-muted">Configurações SaaS</TabsTrigger>
             </TabsList>
             
-            {activeTab === "clinicas" && (
-              <div className="relative w-full sm:w-72">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input 
-                  placeholder="Buscar clínica, e-mail ou slug..." 
-                  className="pl-9 bg-background"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-            )}
           </div>
+          {activeTab === "clinicas" && (
+            <BarraFiltros
+              className="mb-4"
+              busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Clínica, e-mail ou slug", rotulo: "Buscar clínica por nome, e-mail ou slug" }}
+              filtros={[
+                { id: "plano", rotulo: "Plano", valor: planoFiltro, onChange: setPlanoFiltro, rotuloTodos: "Todos os planos", opcoes: plans.map(p => ({ valor: p.id, rotulo: p.nome })) },
+                { id: "status", rotulo: "Status da assinatura", valor: statusFiltro, onChange: setStatusFiltro, opcoes: [
+                  { valor: "active", rotulo: "Ativa" },
+                  { valor: "trial", rotulo: "Em teste" },
+                  { valor: "past_due", rotulo: "Pagamento atrasado" },
+                  { valor: "suspended", rotulo: "Suspensa" },
+                  { valor: "canceled", rotulo: "Cancelada" },
+                ] },
+              ]}
+              onLimpar={() => { setSearchTerm(""); setPlanoFiltro(""); setStatusFiltro(""); }}
+              resultado={`${filteredTenants.length} clínica${filteredTenants.length !== 1 ? "s" : ""}`}
+            />
+          )}
 
           <TabsContent value="clinicas" className="mt-0 border-none p-0 focus-visible:ring-0">
             <Card className="border shadow-sm">
-              <CardHeader className="flex flex-row items-center justify-between border-b bg-muted/20 py-4">
+              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 border-b bg-muted/20 py-4">
                 <CardTitle className="text-base font-semibold flex items-center gap-2">
                   <Building2 size={18} className="text-primary" />
                   Gerenciamento de Tenants
                 </CardTitle>
-                <Badge variant="secondary" className="font-normal">{filteredTenants.length} registros encontrados</Badge>
+                <Badge variant="secondary" className="font-normal whitespace-nowrap">{filteredTenants.length} encontrada{filteredTenants.length !== 1 ? "s" : ""}</Badge>
               </CardHeader>
               <CardContent className="p-0">
                 {loading ? (
@@ -168,8 +182,8 @@ function SuperAdminPage() {
                       filteredTenants.map((t) => (
                         <div key={t.id} className="group flex flex-col md:flex-row md:items-center gap-4 p-5 hover:bg-muted/30 transition-colors">
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <h4 className="font-bold text-foreground text-lg group-hover:text-primary transition-colors">{t.nome}</h4>
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                              <h4 className="font-bold text-foreground text-lg group-hover:text-primary transition-colors break-words min-w-0">{t.nome}</h4>
                               <Badge variant={t.status === "active" ? "default" : t.status === "trial" ? "secondary" : "outline"} className="h-5 px-1.5 text-[10px] uppercase">
                                 {t.status}
                               </Badge>
@@ -236,7 +250,7 @@ function SuperAdminPage() {
           <TabsContent value="planos" className="mt-0 border-none p-0 focus-visible:ring-0">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <Card className="lg:col-span-2 border shadow-sm">
-                <CardHeader className="flex flex-row items-center justify-between border-b bg-muted/20 py-4">
+                <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 border-b bg-muted/20 py-4">
                   <CardTitle className="text-base font-semibold flex items-center gap-2">
                     <CreditCard size={18} className="text-primary" />
                     Catálogo de Planos
@@ -369,7 +383,7 @@ function SuperAdminPage() {
           plan={selectedPlan} 
           onSuccess={reload} 
         />
-      </main>
+      </div>
     </div>
   );
 }

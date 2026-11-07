@@ -4,7 +4,7 @@ import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText,
 import { toast } from "sonner";
 import { AudioRecorder } from "./AudioRecorder";
 import { getClinicLocation } from "@/components/ClinicLocationPanel";
-import { getAttendanceSettings, type QuickReply } from "@/components/AttendanceSettingsPanel";
+import { buildDefaultAttendanceSettings, fetchAttendanceSettings, type AttendanceSettings, type QuickReply } from "@/components/AttendanceSettingsPanel";
 import type { MessageType, ChatMessage, LocationData, ContactData, PollData, ReplyData, ListData } from "@/data/chatMockData";
 
 const CRM_STAGES = [
@@ -53,7 +53,23 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
   const videoInputRef = useRef<HTMLInputElement>(null);
   const presenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const attendanceSettings = useMemo(() => getAttendanceSettings(), []);
+  // Respostas rápidas e assinatura da clínica, lidas do servidor (não do navegador).
+  // A assinatura só vale depois de carregar com sucesso: carregando ou com erro, envia sem
+  // assinatura (o padrão tem assinatura ligada e a clínica pode tê-la desligado).
+  const [attendanceSettings, setAttendanceSettings] = useState<AttendanceSettings>(() => buildDefaultAttendanceSettings());
+  const [attendanceSettingsLoaded, setAttendanceSettingsLoaded] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void fetchAttendanceSettings().then(({ settings, error }) => {
+      if (active && !error) {
+        setAttendanceSettings(settings);
+        setAttendanceSettingsLoaded(true);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   const quickReplies = attendanceSettings.quickReplies;
 
   const filteredQuickReplies = useMemo(() => {
@@ -115,7 +131,7 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
     if (!message.trim()) return;
     let finalMessage = message.trim();
     // Prepend attendant signature (e.g. "Julia:\nmensagem")
-    if (attendanceSettings.signatureEnabled && attendantName) {
+    if (attendanceSettingsLoaded && attendanceSettings.signatureEnabled && attendantName) {
       const sig = attendanceSettings.signatureTemplate.replace("{name}", attendantName);
       finalMessage = `${sig}\n${finalMessage}`;
     }
