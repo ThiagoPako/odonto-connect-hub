@@ -166,8 +166,8 @@ function ProcedimentosCatalogoPage() {
                   </div>
                   <div className="flex gap-1">
                     <button onClick={() => { setHistoricoId(p.id); setHistoricoNome(p.nome); }} aria-label="Ver histórico de versões" className="h-9 w-9 inline-flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-primary"><History className="h-4 w-4" /></button>
-                    <button onClick={() => editar(p)} aria-label="Editar procedimento" className="h-9 w-9 inline-flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-4 w-4" /></button>
-                    <button onClick={() => excluir(p.id)} aria-label="Inativar procedimento" className="h-9 w-9 inline-flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Archive className="h-4 w-4" /></button>
+                    {admin && <button onClick={() => editar(p)} aria-label="Editar procedimento" className="h-9 w-9 inline-flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-4 w-4" /></button>}
+                    {admin && <button onClick={() => excluir(p.id)} aria-label="Inativar procedimento" className="h-9 w-9 inline-flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Archive className="h-4 w-4" /></button>}
                   </div>
                 </div>
               </li>
