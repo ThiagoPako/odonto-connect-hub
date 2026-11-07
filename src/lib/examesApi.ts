@@ -1,4 +1,4 @@
-import { vpsApiFetch } from "./vpsApi";
+import { VPS_API_BASE, getAccessToken, getCachedTenantId, resolveMediaUrl, vpsApiFetch } from "./vpsApi";
 
 export type ExameStatus = "novo" | "em_andamento" | "aguardando_laudo" | "concluido" | "entregue" | "cancelado";
 export type ExamePrioridade = "baixa" | "normal" | "alta" | "urgente";
@@ -34,6 +34,22 @@ export interface Exame {
   observacoes: string | null;
   terceirizado: boolean;
   fornecedor_terc: string | null;
+  arquivos_count?: number;
+}
+
+/** Imagem ou arquivo de um exame. `url` e `url_download` são links assinados de vida curta (1 h). */
+export interface ExameArquivo {
+  id: string;
+  exame_id: string;
+  nome_original: string | null;
+  mime_type: string;
+  tamanho_bytes: number;
+  descricao: string | null;
+  created_at: string;
+  enviado_por_nome: string | null;
+  imagem: boolean;
+  url: string;
+  url_download: string;
 }
 
 export interface ExameStats {
@@ -69,6 +85,53 @@ export const examesApi = {
   remove: (id: string) =>
     unwrap<{ success: boolean }>(vpsApiFetch<{ success: boolean }>(`/exames/${id}`, { method: "DELETE" }), { success: false }),
 };
+
+export const exameArquivosApi = {
+  list: (exameId: string) =>
+    unwrap<ExameArquivo[]>(vpsApiFetch<ExameArquivo[]>(`/exames/${exameId}/arquivos`), []),
+  /** Envia o arquivo como bytes; o nome vai num cabeçalho (nunca na URL: pode ter o nome do paciente). */
+  upload: async (exameId: string, file: File): Promise<ExameArquivo> => {
+    const token = await getAccessToken();
+    const tenantId = getCachedTenantId();
+    let response: Response;
+    try {
+      response = await fetch(`${VPS_API_BASE}/exames/${exameId}/arquivos`, {
+        method: "POST",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(tenantId ? { "X-Tenant-Id": tenantId } : {}),
+          "Content-Type": "application/octet-stream",
+          "X-Nome-Arquivo": encodeURIComponent(file.name),
+        },
+        body: file,
+      });
+    } catch {
+      throw new Error("Sem conexão com o servidor");
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 413) throw new Error("Arquivo maior que 64 MB");
+      throw new Error((data as { error?: string })?.error || `Erro ${response.status}`);
+    }
+    return data as ExameArquivo;
+  },
+  remove: (exameId: string, arquivoId: string) =>
+    unwrap<{ success: boolean }>(
+      vpsApiFetch<{ success: boolean }>(`/exames/${exameId}/arquivos/${arquivoId}`, { method: "DELETE" }),
+      { success: false },
+    ),
+};
+
+/** Endereço absoluto de um link de arquivo devolvido pela API. */
+export function urlArquivoExame(url: string): string {
+  return resolveMediaUrl(url) ?? url;
+}
+
+export function formatarTamanho(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
+}
 
 export const exameTiposApi = {
   list: () => unwrap<ExameTipo[]>(vpsApiFetch<ExameTipo[]>("/exame-tipos"), []),

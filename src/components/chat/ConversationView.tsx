@@ -2,6 +2,8 @@ import type { ChatMessage } from "@/data/chatMockData";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy, Clock, Mic, Download, X, ZoomIn, ZoomOut } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
+import { ChatImagem, ChatVideo, ChatFigurinha, ChatDocumento, ImagemVisualizador, MidiaIndisponivel } from "./MidiaChat";
+import { useMidiaAssinada } from "@/lib/midiaAssinada";
 import { whatsappTextToHtml, createDownloadLink } from "@/lib/safeHtml";
 
 interface ServerSearchResult {
@@ -55,7 +57,12 @@ function generateWaveform(seed: string, barCount: number): number[] {
   return smoothed;
 }
 
-function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; duration?: number; isLead: boolean; status?: string }) {
+function AudioPlayer({ fileUrl: fileUrlOriginal, duration, isLead, status }: { fileUrl?: string; duration?: number; isLead: boolean; status?: string }) {
+  // Link assinado (L7): renova uma vez se o áudio falhar ou estiver perto de vencer.
+  const isData = !!fileUrlOriginal?.startsWith("data:");
+  const midia = useMidiaAssinada(isData ? null : fileUrlOriginal);
+  const fileUrl = isData ? fileUrlOriginal : midia.src;
+  const retomarRef = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -91,6 +98,27 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
     return () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current); };
   }, []);
 
+  // Link renovado: descarta o player antigo; se o erro aconteceu ao dar play, toca de novo.
+  useEffect(() => {
+    if (isData || !audioRef.current) return;
+    audioRef.current.pause();
+    audioRef.current = null;
+    if (retomarRef.current && fileUrl) {
+      retomarRef.current = false;
+      const audio = new Audio(fileUrl);
+      audioRef.current = audio;
+      audio.onloadedmetadata = () => { if (audio.duration && isFinite(audio.duration)) setTotalDuration(audio.duration); };
+      audio.ontimeupdate = () => {
+        setCurrentTime(audio.currentTime);
+        if (audio.duration && isFinite(audio.duration)) setProgress(audio.currentTime / audio.duration);
+      };
+      audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); };
+      audio.onerror = () => { setPlaying(false); midia.onError(); };
+      audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileUrl]);
+
   const togglePlay = () => {
     if (!fileUrl) return;
     if (!audioRef.current) {
@@ -104,7 +132,10 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
         if (audio.duration && isFinite(audio.duration)) setProgress(audio.currentTime / audio.duration);
       };
       audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); };
-      audio.onerror = () => { setPlaying(false); };
+      audio.onerror = () => {
+        setPlaying(false);
+        if (!isData) { retomarRef.current = true; midia.onError(); }
+      };
     }
     if (playing) {
       audioRef.current.pause();
@@ -133,6 +164,10 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
   };
 
   const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+  if (fileUrlOriginal && !isData && midia.indisponivel) {
+    return <MidiaIndisponivel rotulo="🎤 Áudio" />;
+  }
 
   if (!fileUrl) {
     return (
@@ -785,25 +820,16 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                   >
                     {/* Content by type */}
                     {msg.type === "image" && msg.fileUrl && (
-                      <div className="mb-1.5 rounded-xl overflow-hidden cursor-pointer relative group" onClick={() => {
-                        if ((msg as any).status !== "sending") {
-                          setLightbox({ url: msg.fileUrl!, name: msg.fileName || "Imagem" });
-                          setLightboxZoom(1);
-                          setLightboxPos({ x: 0, y: 0 });
-                        }
-                      }}>
-                        <img
-                          src={msg.fileUrl}
-                          alt={msg.fileName || "Imagem"}
-                          className={`max-w-full max-h-[300px] object-contain rounded-xl transition-opacity ${(msg as any).status === "sending" ? "opacity-60" : ""}`}
-                          loading="lazy"
-                          onError={(e) => {
-                            const el = e.currentTarget;
-                            el.style.display = "none";
-                            const fallback = document.createElement("div");
-                            fallback.className = "flex items-center gap-3 p-4 text-xs";
-                            fallback.appendChild(createDownloadLink(msg.fileUrl, msg.fileName || 'imagem', 'Baixar imagem'));
-                            el.parentElement?.appendChild(fallback);
+                      <div className="mb-1.5 rounded-xl overflow-hidden cursor-pointer relative group">
+                        {/* Link assinado: renova uma vez no erro ou perto de vencer (L7) */}
+                        <ChatImagem
+                          url={msg.fileUrl}
+                          nome={msg.fileName}
+                          enviando={(msg as any).status === "sending"}
+                          onAbrir={(src) => {
+                            setLightbox({ url: src, name: msg.fileName || "Imagem" });
+                            setLightboxZoom(1);
+                            setLightboxPos({ x: 0, y: 0 });
                           }}
                         />
                         {(msg as any).status === "sending" && (
@@ -813,7 +839,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                           </div>
                         )}
                         {(msg as any).status !== "sending" && (
-                          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-xl">
+                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-xl">
                             <ZoomIn className="h-8 w-8 text-white drop-shadow-lg" />
                           </div>
                         )}
@@ -832,20 +858,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     )}
                     {msg.type === "video" && msg.fileUrl && (
                       <div className="mb-1.5 rounded-xl overflow-hidden relative">
-                        <video
-                          src={msg.fileUrl}
-                          controls={(msg as any).status !== "sending"}
-                          preload="metadata"
-                          className={`max-w-full max-h-[300px] rounded-xl transition-opacity ${(msg as any).status === "sending" ? "opacity-60" : ""}`}
-                          onError={(e) => {
-                            const el = e.currentTarget;
-                            el.style.display = "none";
-                            const fallback = document.createElement("div");
-                            fallback.className = "flex items-center gap-3 p-4 text-xs";
-                            fallback.appendChild(createDownloadLink(msg.fileUrl, msg.fileName || 'video', 'Baixar vídeo'));
-                            el.parentElement?.appendChild(fallback);
-                          }}
-                        />
+                        <ChatVideo url={msg.fileUrl} enviando={(msg as any).status === "sending"} />
                         {(msg as any).status === "sending" && (
                           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30 rounded-xl backdrop-blur-[1px]">
                             <Loader2 className="h-8 w-8 text-white animate-spin mb-1.5" />
@@ -868,21 +881,13 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                       </div>
                     )}
                     {msg.type === "sticker" && msg.fileUrl && (
-                      <img src={msg.fileUrl} alt="Sticker" className="max-w-[150px] max-h-[150px]" loading="lazy" />
+                      <ChatFigurinha url={msg.fileUrl} />
                     )}
                     {msg.type === "audio" && (
                       <AudioPlayer fileUrl={msg.fileUrl} duration={msg.duration} isLead={isLead} status={(msg as any).status} />
                     )}
                     {msg.type === "document" && (
-                      <div className="flex items-center gap-3 p-2.5 rounded-xl bg-background/15 mb-1.5 border border-border/20 cursor-pointer hover:bg-background/25 transition-colors" onClick={() => (msg as any).status !== "sending" && msg.fileUrl && window.open(msg.fileUrl, "_blank")}>
-                        <div className="h-11 w-11 rounded-xl bg-primary/20 flex items-center justify-center text-lg shrink-0 shadow-sm">
-                          {(msg as any).status === "sending" ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : "📄"}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold truncate">{msg.fileName || "Documento"}</p>
-                          <p className="text-[10px] opacity-60 mt-0.5">{(msg as any).status === "sending" ? "Enviando..." : (msg.mimeType || "application/pdf")}</p>
-                        </div>
-                      </div>
+                      <ChatDocumento url={msg.fileUrl} nome={msg.fileName} mime={msg.mimeType} enviando={(msg as any).status === "sending"} />
                     )}
 
                     {(msg.type === "text" || (msg.content && !["location", "contact", "poll", "sticker", "list", "image", "video", "audio", "document"].includes(msg.type))) && msg.content && (
@@ -1120,11 +1125,10 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
             }}
             style={{ cursor: lightboxZoom > 1 ? "grab" : "zoom-in" }}
           >
-            <img
-              src={lightbox.url}
-              alt={lightbox.name}
+            <ImagemVisualizador
+              url={lightbox.url}
+              nome={lightbox.name}
               className="max-w-[90vw] max-h-[85vh] object-contain select-none"
-              draggable={false}
               style={{
                 transform: `scale(${lightboxZoom}) translate(${lightboxPos.x / lightboxZoom}px, ${lightboxPos.y / lightboxZoom}px)`,
                 transition: lightboxDragging.current ? "none" : "transform 0.2s ease-out",

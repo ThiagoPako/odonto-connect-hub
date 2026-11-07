@@ -18,7 +18,7 @@ import webpush from 'web-push';
 import path from 'path';
 import { randomUUID, randomBytes, createHash, createHmac, timingSafeEqual } from 'crypto';
 import { execFile } from 'child_process';
-import { mkdtemp, writeFile, readFile, rm, mkdir } from 'fs/promises';
+import { mkdtemp, writeFile, readFile, rm, mkdir, open } from 'fs/promises';
 import { tmpdir } from 'os';
 import { promisify } from 'util';
 import { existsSync, readFileSync } from 'fs';
@@ -189,6 +189,19 @@ app.use((req, res, next) => {
   const json = res.json.bind(res);
   res.json = (body) => {
     if (res.statusCode === 500 && body && body.error === 'Unauthorized') res.status(401);
+    // Mídia de paciente: toda URL /uploads/media/... da clínica sai com link assinado (L7)
+    const ctx = tenantContext.getStore();
+    if (MEDIA_AUTH_MODE !== 'public' && body && typeof body === 'object' && (ctx?.tenantId || ctx?.isSuperAdmin)) {
+      let texto = '';
+      try { texto = JSON.stringify(body); } catch { texto = ''; }
+      if (texto.includes('/uploads/media/')) {
+        assinarMidiasNoCorpo(body, ctx).then((assinado) => json(assinado), (err) => {
+          console.warn('[midia] não foi possível assinar links da resposta:', err.message);
+          json(body);
+        });
+        return res;
+      }
+    }
     return json(body);
   };
   next();
@@ -272,17 +285,21 @@ const UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'media');
   }
 })().catch((err) => console.error('Failed to create media uploads directory:', err.message));
 
-// Serve uploaded media files statically
-app.use('/uploads/media', express.static(UPLOADS_DIR, {
-  maxAge: '30d',
-  immutable: true,
-}));
+// Mídia de paciente (chat, avatar): nada é servido sem login. Ver servirMidia().
+// MEDIA_AUTH_MODE=public só para rollback de emergência (volta ao comportamento antigo).
+const MEDIA_AUTH_MODE = process.env.MEDIA_AUTH_MODE === 'public' ? 'public' : 'enforce';
+if (MEDIA_AUTH_MODE === 'public') {
+  console.warn('⚠️ MEDIA_AUTH_MODE=public: /uploads/media servido SEM login (rollback de emergência)');
+  app.use('/uploads/media', express.static(UPLOADS_DIR, { maxAge: '5m' }));
+} else {
+  app.get('/uploads/media/:mes/:arquivo', (req, res) => { servirMidia(req, res); });
+}
 
 /**
  * Save a base64 data URI or raw base64 to disk and return the public URL.
  * Returns null on failure.
  */
-async function saveMediaToDisk(base64OrDataUri, mimeType, originalFileName) {
+async function saveMediaToDisk(base64OrDataUri, mimeType, originalFileName, dono = {}) {
   try {
     let base64Data = base64OrDataUri;
     let resolvedMime = mimeType || 'application/octet-stream';
@@ -304,7 +321,9 @@ async function saveMediaToDisk(base64OrDataUri, mimeType, originalFileName) {
       'application/pdf': 'pdf', 'application/msword': 'doc',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
     };
-    const ext = extMap[resolvedMime.split(';')[0].trim()] || originalFileName?.split('.').pop() || 'bin';
+    const extBruta = extMap[resolvedMime.split(';')[0].trim()] || originalFileName?.split('.').pop() || 'bin';
+    // Extensão em minúsculas e só [a-z0-9] (o caminho vira chave em media_files)
+    const ext = (String(extBruta).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10)) || 'bin';
 
     // Generate unique filename: YYYY-MM/uuid.ext
     const now = new Date();
@@ -321,6 +340,8 @@ async function saveMediaToDisk(base64OrDataUri, mimeType, originalFileName) {
 
     // Return relative URL path
     const publicUrl = `/uploads/media/${subDir}/${fileName}`;
+    // Tipo gravado é o detectado pelo conteúdo; desconhecido vira download (octet-stream)
+    await registrarMidia(`${subDir}/${fileName}`, { ...dono, mimeType: detectarMimeMidia(buffer) || 'application/octet-stream', tamanho: buffer.length });
     // Sem o caminho no log: quem tem o link abre o arquivo (dado de paciente).
     console.log(`💾 Mídia salva (${resolvedMime.split(';')[0]}, ${(buffer.length / 1024).toFixed(1)} KB)`);
     return publicUrl;
@@ -333,10 +354,10 @@ async function saveMediaToDisk(base64OrDataUri, mimeType, originalFileName) {
 /**
  * Save a raw Buffer to disk and return the public URL.
  */
-async function saveBufferToDisk(buffer, mimeType, originalFileName) {
+async function saveBufferToDisk(buffer, mimeType, originalFileName, dono = {}) {
   try {
     const base64 = buffer.toString('base64');
-    return await saveMediaToDisk(base64, mimeType, originalFileName);
+    return await saveMediaToDisk(base64, mimeType, originalFileName, dono);
   } catch (err) {
     console.error('Failed to save buffer to disk:', err.message);
     return null;
@@ -436,6 +457,298 @@ if (!process.env.JWT_SECRET) {
 const JWT_SECRET = process.env.JWT_SECRET;
 const LEGACY_JWT_ENABLED = true;
 const JWT_EXPIRES_IN = '7d';
+
+// ─── Links assinados (helper comum: mídia do chat/avatar e arquivos de exame) ───
+// O <img>/<audio> do navegador e a Evolution não mandam Authorization: o backend,
+// DEPOIS de checar a clínica, devolve um link com validade curta assinado por HMAC.
+const LINK_ASSINADO_SECRET = process.env.MEDIA_SIGNING_SECRET
+  || createHmac('sha256', String(JWT_SECRET)).update('links-assinados-v1').digest('hex');
+// Telas: 1 h por padrão (a tela renova com mediaApi.renovarLinks), teto de 8 h. Evolution: 10 min.
+const MEDIA_LINK_TTL_S = Math.min(8 * 60 * 60, Math.max(300, Number(process.env.MEDIA_LINK_TTL_S) || 60 * 60));
+const MEDIA_EVOLUTION_TTL_S = 10 * 60;
+
+function assinarLink(recurso, escopo, ttlS) {
+  const exp = Math.floor(Date.now() / 1000) + ttlS;
+  const sig = createHmac('sha256', LINK_ASSINADO_SECRET).update(`${recurso}|${escopo}|${exp}`).digest('hex');
+  return { exp, sig };
+}
+
+function linkAssinadoValido(recurso, escopo, exp, sig) {
+  if (!escopo || !/^\d{1,12}$/.test(String(exp || '')) || !/^[0-9a-f]{64}$/.test(String(sig || ''))) return false;
+  if (Number(exp) < Math.floor(Date.now() / 1000)) return false;
+  const esperado = createHmac('sha256', LINK_ASSINADO_SECRET).update(`${recurso}|${escopo}|${exp}`).digest();
+  return timingSafeEqual(esperado, Buffer.from(String(sig), 'hex'));
+}
+
+// Caminho relativo dentro de uploads/media: AAAA-MM/<uuid>.<ext>
+const MEDIA_REL_RE = /^\d{4}-\d{2}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,10}$/i;
+// URL guardada no banco (relativa ou com origem), com ou sem assinatura antiga
+const MEDIA_URL_RE = /^((?:https?:\/\/[^/?#\s]+)?\/uploads\/media\/)(\d{4}-\d{2}\/[0-9a-f-]{36}\.[a-z0-9]{1,10})(?:\?[^#\s]*)?$/i;
+
+/** 'AAAA-MM/uuid.ext' se o valor for uma URL de mídia nossa; senão null. */
+function caminhoDeMidia(valor) {
+  if (typeof valor !== 'string') return null;
+  const m = MEDIA_URL_RE.exec(valor.trim());
+  return m && MEDIA_REL_RE.test(m[2]) ? m[2].toLowerCase() : null;
+}
+
+/** URL limpa para gravar no banco (sem exp/sig). Outros valores voltam iguais. */
+function normalizarUrlMidia(valor) {
+  const rel = caminhoDeMidia(valor);
+  return rel ? `/uploads/media/${rel}` : valor;
+}
+
+function urlMidiaAssinada(rel, tenantId, prefixo = '/uploads/media/') {
+  const { exp, sig } = assinarLink(`media:${rel}`, String(tenantId), MEDIA_LINK_TTL_S);
+  return `${prefixo}${rel}?exp=${exp}&sig=${sig}`;
+}
+
+function coletarCaminhosDeMidia(valor, saida, profundidade = 0) {
+  if (profundidade > 12 || valor == null) return;
+  if (typeof valor === 'string') { const rel = caminhoDeMidia(valor); if (rel) saida.add(rel); return; }
+  if (Array.isArray(valor)) { for (const v of valor) coletarCaminhosDeMidia(v, saida, profundidade + 1); return; }
+  if (typeof valor === 'object' && !(valor instanceof Date) && !Buffer.isBuffer(valor)) {
+    for (const v of Object.values(valor)) coletarCaminhosDeMidia(v, saida, profundidade + 1);
+  }
+}
+
+function trocarStrings(valor, fn, profundidade = 0) {
+  if (profundidade > 12 || valor == null) return valor;
+  if (typeof valor === 'string') return fn(valor);
+  if (Array.isArray(valor)) return valor.map(v => trocarStrings(v, fn, profundidade + 1));
+  if (typeof valor === 'object' && !(valor instanceof Date) && !Buffer.isBuffer(valor)) {
+    const novo = {};
+    for (const [k, v] of Object.entries(valor)) novo[k] = trocarStrings(v, fn, profundidade + 1);
+    return novo;
+  }
+  return valor;
+}
+
+/**
+ * Troca cada URL de mídia do corpo por um link assinado — só se o arquivo for da clínica
+ * do contexto (media_files.tenant_id). Arquivo de outra clínica ou sem dono registrado
+ * fica sem assinatura (e não abre). Devolve uma cópia; o objeto original não muda.
+ */
+async function assinarMidiasNoCorpo(corpo, ctx) {
+  const caminhos = new Set();
+  coletarCaminhosDeMidia(corpo, caminhos);
+  if (!caminhos.size || !(ctx?.tenantId || ctx?.isSuperAdmin)) return corpo;
+  const { rows } = await pool.query('SELECT path, tenant_id FROM media_files WHERE path = ANY($1)', [[...caminhos]]);
+  const dono = new Map(rows.map(r => [r.path, String(r.tenant_id)]));
+  return trocarStrings(corpo, (s) => {
+    const m = MEDIA_URL_RE.exec(s.trim());
+    if (!m) return s;
+    const rel = m[2].toLowerCase();
+    const t = dono.get(rel);
+    if (!t || (!ctx.isSuperAdmin && t !== String(ctx.tenantId))) return s;
+    return urlMidiaAssinada(rel, t, m[1]);
+  });
+}
+
+// Tipos que o navegador pode mostrar na própria aba; o resto sai como download.
+const MEDIA_INLINE_SEGURO = /^(image\/(jpeg|png|webp|gif)|audio\/[a-z0-9.+-]+|video\/(mp4|webm|3gpp|quicktime)|application\/pdf)$/i;
+const MEDIA_MIME_POR_EXT = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',
+  mp4: 'video/mp4', '3gp': 'video/3gpp', mov: 'video/quicktime', webm: 'video/webm',
+  ogg: 'audio/ogg', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', pdf: 'application/pdf',
+};
+
+/** Tipo real pelos primeiros bytes (o que o cliente diz não vale para servir). */
+function detectarMimeMidia(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 4) return null;
+  const hex = buf.subarray(0, 12).toString('hex');
+  const asc = (a, b) => buf.subarray(a, b).toString('latin1');
+  if (hex.startsWith('ffd8ff')) return 'image/jpeg';
+  if (hex.startsWith('89504e470d0a1a0a')) return 'image/png';
+  if (hex.startsWith('47494638')) return 'image/gif';
+  if (asc(0, 4) === 'RIFF' && asc(8, 12) === 'WEBP') return 'image/webp';
+  if (asc(0, 4) === 'RIFF' && asc(8, 12) === 'WAVE') return 'audio/wav';
+  if (hex.startsWith('25504446')) return 'application/pdf';
+  if (asc(0, 4) === 'OggS') return 'audio/ogg';
+  if (asc(0, 3) === 'ID3' || hex.startsWith('fffb') || hex.startsWith('fff3') || hex.startsWith('fff2')) return 'audio/mpeg';
+  if (hex.startsWith('fff1') || hex.startsWith('fff9')) return 'audio/aac';
+  if (hex.startsWith('1a45dfa3')) return 'video/webm';
+  if (buf.length >= 12 && asc(4, 8) === 'ftyp') {
+    const marca = asc(8, 12);
+    if (/^(M4A |M4B )/.test(marca)) return 'audio/mp4';
+    if (marca === 'qt  ') return 'video/quicktime';
+    if (/^3g/.test(marca)) return 'video/3gpp';
+    return 'video/mp4';
+  }
+  return null;
+}
+
+async function lerInicioDoArquivo(abs, n = 512) {
+  const fh = await open(abs, 'r');
+  try {
+    const buf = Buffer.alloc(n);
+    const { bytesRead } = await fh.read(buf, 0, n, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
+}
+
+/** Grava quem é dono do arquivo. Sem clínica conhecida o arquivo fica sem dono e não é servido. */
+async function registrarMidia(rel, { tenantId, mimeType, tamanho, tipo, enviadoPor } = {}) {
+  const ctx = tenantContext.getStore();
+  const tenant = tenantId ?? ctx?.tenantId ?? null;
+  if (!isValidTenantId(tenant)) {
+    console.warn('[midia] arquivo salvo sem clínica no contexto: não será servido até ser vinculado');
+    return;
+  }
+  try {
+    await pool.query(
+      `INSERT INTO media_files (tenant_id, path, mime_type, size_bytes, kind, uploaded_by)
+       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (path) DO NOTHING`,
+      [tenant, rel, mimeType || null, tamanho ?? null, tipo || 'other', isValidTenantId(enviadoPor) ? enviadoPor : null]
+    );
+  } catch (err) {
+    console.warn('[midia] falha ao registrar dono do arquivo:', err.message);
+  }
+}
+
+// Reivindicação de arquivo antigo (sem dono registrado) fica DESLIGADA por padrão: o backfill
+// do deploy já registra o dono de tudo que o banco cita. Ligar só para tratar sobra:
+// MEDIA_REIVINDICAR_LEGADO=1 (e reiniciar). Os conflitos ficam em media_files_conflitos.
+const MEDIA_REIVINDICAR_LEGADO = process.env.MEDIA_REIVINDICAR_LEGADO === '1';
+const MEDIA_REIVINDICACOES_POR_REQ = 20;
+const MEDIA_REIVINDICACOES_POR_HORA = 200;
+const reivindicacoesPorUsuario = new Map(); // userId → { inicio, n }
+
+function permitirReivindicacao(userId) {
+  const agora = Date.now();
+  const atual = reivindicacoesPorUsuario.get(userId);
+  if (!atual || agora - atual.inicio > 60 * 60 * 1000) {
+    reivindicacoesPorUsuario.set(userId, { inicio: agora, n: 1 });
+    return true;
+  }
+  if (atual.n >= MEDIA_REIVINDICACOES_POR_HORA) return false;
+  atual.n++;
+  return true;
+}
+
+/** Caminho absoluto do arquivo (aceita extensão antiga em maiúsculas) ou null. */
+function midiaExisteNoDisco(rel) {
+  for (const r of [rel, rel.replace(/\.([a-z0-9]+)$/, (_, e) => `.${e.toUpperCase()}`)]) {
+    const abs = path.join(UPLOADS_DIR, r);
+    if (abs.startsWith(UPLOADS_DIR + path.sep) && existsSync(abs)) return abs;
+  }
+  return null;
+}
+
+/** Data do backfill do L7 (app_settings 'l7_media_backfill'); null se ainda não rodou. */
+async function dataBackfillMidia() {
+  const { rows } = await pool.query("SELECT value->>'executado_em' AS em FROM app_settings WHERE key = 'l7_media_backfill'");
+  const d = rows[0]?.em ? new Date(rows[0].em) : null;
+  return d && !Number.isNaN(d.getTime()) ? d : null;
+}
+
+/**
+ * Arquivo antigo sem dono registrado: só pode ser reivindicado se TODAS as citações no banco
+ * forem da clínica do usuário, com clínica preenchida (NULL conta como conflito) e anteriores
+ * ao backfill do L7. Qualquer erro de leitura (fora tabela/coluna ausente) → não reivindica.
+ * Roda em contexto de sistema (continua funcionando com FORCE RLS).
+ */
+async function reivindicarMidiaLegada(rel, tenantId, userId) {
+  if (!MEDIA_REIVINDICAR_LEGADO || !isValidTenantId(tenantId) || !MEDIA_REL_RE.test(rel)) return null;
+  if (userId && !permitirReivindicacao(userId)) return null;
+  if (!midiaExisteNoDisco(rel)) return null;
+  return tenantContext.run({ tenantId: null, isSuperAdmin: true }, async () => {
+    const corte = await dataBackfillMidia();
+    if (!corte) return null;
+    const padrao = `%/uploads/media/${rel}%`;
+    const fontes = [
+      ['chat', `SELECT tenant_id, COALESCE(created_at, "timestamp") AS em FROM chat_messages WHERE lower(media_url) LIKE $1`],
+      ['avatar', `SELECT tenant_id, COALESCE(updated_at, created_at) AS em FROM profiles WHERE lower(avatar_url) LIKE $1`],
+      ['exame', `SELECT tenant_id, COALESCE(updated_at, created_at) AS em FROM exames WHERE lower(arquivo_url) LIKE $1`],
+      ['prontuario', `SELECT tenant_id, COALESCE(updated_at, created_at) AS em FROM prontuarios WHERE lower(anexos::text) LIKE $1`],
+    ];
+    const donos = new Set();
+    let tipo = 'other';
+    for (const [k, sql] of fontes) {
+      let rows;
+      try {
+        ({ rows } = await pool.query(sql, [padrao]));
+      } catch (err) {
+        if (err?.code === '42P01' || err?.code === '42703') continue; // tabela/coluna não existe aqui
+        console.warn('[midia] reivindicação abortada (falha ao ler citações):', err?.code || err?.message);
+        return null; // falha fechada: sem certeza, sem dono
+      }
+      for (const r of rows) {
+        if (!r.tenant_id) return null;                    // citação sem clínica = conflito
+        if (!r.em || new Date(r.em) >= corte) return null; // citação depois do L7 não dá posse
+        donos.add(String(r.tenant_id));
+        tipo = k;
+      }
+    }
+    if (donos.size !== 1 || !donos.has(String(tenantId))) return null;
+    let mimeType = null;
+    try { mimeType = detectarMimeMidia(await lerInicioDoArquivo(midiaExisteNoDisco(rel))); } catch { mimeType = null; }
+    await registrarMidia(rel, { tenantId, tipo, mimeType: mimeType || 'application/octet-stream' });
+    const { rows } = await pool.query('SELECT tenant_id, mime_type FROM media_files WHERE path = $1', [rel]);
+    return rows[0] || null;
+  });
+}
+
+// GET /uploads/media/AAAA-MM/arquivo — link assinado OU Bearer da mesma clínica. Nunca público.
+async function servirMidia(req, res) {
+  try {
+    const relPedido = `${req.params.mes}/${req.params.arquivo}`;
+    if (!MEDIA_REL_RE.test(relPedido)) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    const rel = relPedido.toLowerCase();
+    const { rows } = await pool.query('SELECT tenant_id, mime_type FROM media_files WHERE path = $1', [rel]);
+    let registro = rows[0] || null;
+    if (req.query.sig) {
+      const escopo = req.query.e === 'evo' ? 'evolution' : (registro ? String(registro.tenant_id) : null);
+      if (!registro || !linkAssinadoValido(`media:${rel}`, escopo, req.query.exp, req.query.sig)) {
+        return res.status(403).json({ error: 'Link expirado ou inválido. Abra a conversa de novo.' });
+      }
+    } else if (req.headers.authorization) {
+      const { user } = await verifyUser(req);
+      if (!registro) registro = await reivindicarMidiaLegada(rel, user.tenant_id, user.id);
+      if (!registro || (!user.is_super_admin && String(registro.tenant_id) !== String(user.tenant_id))) {
+        return res.status(404).json({ error: 'Arquivo não encontrado' });
+      }
+    } else {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    // Arquivo antigo pode ter extensão em maiúsculas no disco
+    let abs = path.join(UPLOADS_DIR, rel);
+    if (!existsSync(abs)) abs = path.join(UPLOADS_DIR, relPedido);
+    if (!existsSync(abs)) abs = path.join(UPLOADS_DIR, rel.replace(/\.([a-z0-9]+)$/, (_, e) => `.${e.toUpperCase()}`));
+    if (!abs.startsWith(UPLOADS_DIR + path.sep) || !existsSync(abs)) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    let mime = registro.mime_type ? String(registro.mime_type).split(';')[0].trim() : null;
+    if (!mime) {
+      // Registro do backfill sem tipo: detecta pelo conteúdo e guarda
+      try { mime = detectarMimeMidia(await lerInicioDoArquivo(abs)); } catch { mime = null; }
+      mime = mime || 'application/octet-stream';
+      pool.query('UPDATE media_files SET mime_type = $1 WHERE path = $2 AND mime_type IS NULL', [mime, rel]).catch(() => {});
+    }
+    const inline = MEDIA_INLINE_SEGURO.test(mime) && req.query.download !== '1';
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    // A resposta depende de quem pede (Bearer da clínica): cache compartilhado não pode reaproveitar.
+    res.setHeader('Vary', 'Authorization');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    if (!inline) {
+      res.setHeader('Content-Disposition', 'attachment');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    } else if (mime === 'application/pdf') {
+      // Sem "sandbox": o Chrome bloqueia o visualizador de PDF com ele
+      res.setHeader('Content-Security-Policy', "default-src 'none'");
+    } else {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; media-src 'self'; sandbox");
+    }
+    res.sendFile(abs, { headers: { 'Content-Type': mime }, dotfiles: 'deny' }, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'Arquivo não encontrado' });
+    });
+  } catch (err) {
+    if (err?.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[midia:servir]', err?.message);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+}
 
 // Supabase foi desligado: o app roda só na VPS. As rotas que ainda checam
 // SUPABASE_BRIDGE_ENABLED seguem pelo banco local.
@@ -2639,7 +2952,7 @@ app.post('/api/auth/avatar', async (req, res) => {
       return res.status(400).json({ error: 'Imagem deve ter no máximo 5MB' });
     }
 
-    const avatarUrl = await saveMediaToDisk(avatar, null, 'avatar.jpg');
+    const avatarUrl = await saveMediaToDisk(avatar, null, 'avatar.jpg', { tenantId: user.tenant_id, tipo: 'avatar', enviadoPor: user.id });
     if (!avatarUrl) return res.status(500).json({ error: 'Erro ao salvar imagem' });
 
     await pool.query(
@@ -2745,10 +3058,10 @@ app.post('/api/auth/users/:userId/avatar', async (req, res) => {
     if (avatar.length > 7 * 1024 * 1024) return res.status(400).json({ error: 'Imagem deve ter no máximo 5MB' });
 
     // Verify user exists
-    const { rows: users } = await pool.query('SELECT id FROM profiles WHERE id = $1', [userId]);
+    const { rows: users } = await pool.query('SELECT id, tenant_id FROM profiles WHERE id = $1', [userId]);
     if (users.length === 0) return res.status(404).json({ error: 'Usuário não encontrado' });
 
-    const avatarUrl = await saveMediaToDisk(avatar, null, 'avatar.jpg');
+    const avatarUrl = await saveMediaToDisk(avatar, null, 'avatar.jpg', { tenantId: users[0].tenant_id, tipo: 'avatar' });
     if (!avatarUrl) return res.status(500).json({ error: 'Erro ao salvar imagem' });
 
     await pool.query('UPDATE profiles SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [avatarUrl, userId]);
@@ -3692,15 +4005,21 @@ async function transcodeAudioToWhatsAppOgg(base64Audio, mimeType) {
   }
 }
 
+// Link para a Evolution baixar a mídia e enviar ao WhatsApp: assinado, válido por 10 min.
 function toPublicMediaUrl(mediaPath) {
   if (!mediaPath) return null;
-  if (/^https?:\/\//i.test(mediaPath)) return mediaPath;
+  const rel = caminhoDeMidia(mediaPath);
+  if (!rel && /^https?:\/\//i.test(mediaPath)) return mediaPath;
   const backendOrigin = (
     process.env.BACKEND_PUBLIC_URL
     || process.env.API_PUBLIC_URL
     || process.env.VPS_API_PUBLIC_URL
     || 'https://backend.odontoconnect.tech'
   ).replace(/\/$/, '').replace(/\/api$/, '');
+  if (rel) {
+    const { exp, sig } = assinarLink(`media:${rel}`, 'evolution', MEDIA_EVOLUTION_TTL_S);
+    return `${backendOrigin}/uploads/media/${rel}?e=evo&exp=${exp}&sig=${sig}`;
+  }
   return `${backendOrigin}${mediaPath.startsWith('/') ? '' : '/'}${mediaPath}`;
 }
 
@@ -4929,7 +5248,17 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
     if (cleanedBase64 && cleanedBase64.length > 10) {
       payload.media = cleanedBase64;
     } else if (media.url) {
-      payload.media = media.url;
+      const relMidia = caminhoDeMidia(media.url);
+      if (relMidia) {
+        // Arquivo nosso: só da clínica do usuário; a Evolution recebe um link de 10 min
+        const { rows: donoMidia } = await pool.query('SELECT tenant_id FROM media_files WHERE path = $1', [relMidia]);
+        if (!donoMidia.length || (!user.is_super_admin && String(donoMidia[0].tenant_id) !== String(user.tenant_id))) {
+          return res.status(404).json({ error: 'Arquivo não encontrado' });
+        }
+        payload.media = toPublicMediaUrl(`/uploads/media/${relMidia}`);
+      } else {
+        payload.media = media.url;
+      }
     } else {
       console.error('❌ sendMedia: no valid media (base64 or url). base64 length:', cleanedBase64?.length, 'url:', media.url);
       return res.status(400).json({ error: 'Nenhuma mídia válida fornecida (base64 vazio ou URL ausente)' });
@@ -9859,12 +10188,38 @@ function consumePendingMessageStatus(tenantId, messageId) {
   return entry.status;
 }
 
+// Fila por clínica: evento com mídia espera a assinatura do link; os eventos seguintes da
+// mesma clínica esperam ele, para o navegador não receber o status/ACK de uma mensagem
+// antes da própria mensagem. Sem nada pendente, o envio continua síncrono.
+const sseFilaPorClinica = new Map(); // tenantId -> Promise do último envio pendente
+
 function broadcastSSE(event, data, tenantId = null) {
   if (!isValidTenantId(tenantId)) {
     console.warn(`⚠️ SSE broadcast '${event}' bloqueado: tenant_id ausente ou inválido`);
     return;
   }
-  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  const texto = JSON.stringify(data);
+  const assinar = MEDIA_AUTH_MODE !== 'public' && texto && texto.includes('/uploads/media/');
+  const pendente = sseFilaPorClinica.get(tenantId);
+  if (!assinar && !pendente) {
+    enviarSSE(event, texto, tenantId);
+    return;
+  }
+  // Mensagem nova com mídia: o link vai assinado para a clínica do evento (a assinatura
+  // começa já; só o envio respeita a ordem).
+  const corpo = assinar
+    ? assinarMidiasNoCorpo(data, { tenantId, isSuperAdmin: false }).then((a) => JSON.stringify(a)).catch(() => texto)
+    : Promise.resolve(texto);
+  const fim = (pendente || Promise.resolve())
+    .then(() => corpo)
+    .then((t) => enviarSSE(event, t, tenantId))
+    .catch(() => {});
+  sseFilaPorClinica.set(tenantId, fim);
+  fim.then(() => { if (sseFilaPorClinica.get(tenantId) === fim) sseFilaPorClinica.delete(tenantId); });
+}
+
+function enviarSSE(event, texto, tenantId) {
+  const payload = `event: ${event}\ndata: ${texto}\n\n`;
   let sent = 0;
   for (const [client, info] of sseClients.entries()) {
     if (info.tenantId !== tenantId) continue;
@@ -16315,7 +16670,7 @@ app.post('/api/messages', async (req, res) => {
     const attendantName = await getProfileDisplayName(user.id, 'Atendente');
 
     // If fileUrl is a base64 data URI, save to disk for persistent storage
-    let persistedMediaUrl = fileUrl || null;
+    let persistedMediaUrl = normalizarUrlMidia(fileUrl) || null;
     if (fileUrl && fileUrl.startsWith('data:')) {
       const diskUrl = await saveMediaToDisk(fileUrl, mimeType, fileName);
       if (diskUrl) persistedMediaUrl = diskUrl;
@@ -16348,7 +16703,8 @@ app.post('/api/messages', async (req, res) => {
              attendant_name = COALESCE(chat_messages.attendant_name, EXCLUDED.attendant_name),
              instance = COALESCE(chat_messages.instance, EXCLUDED.instance),
              phone = COALESCE(chat_messages.phone, EXCLUDED.phone),
-             tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)`,
+             tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)
+       WHERE chat_messages.tenant_id = EXCLUDED.tenant_id`,
       [
         id, leadId, content || '', type || 'text', initialStatus,
         persistedMediaUrl, fileName || null, mimeType || null,
@@ -16380,10 +16736,41 @@ app.post('/api/messages', async (req, res) => {
   }
 });
 
+// POST /api/media/sign — links novos para mídias da clínica (link vencido, URL antiga gravada
+// em mensagem). Só com sessão válida; arquivo de outra clínica não volta.
+app.post('/api/media/sign', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id && !user.is_super_admin) return res.status(403).json({ error: 'Sem tenant' });
+    const lista = Array.isArray(req.body?.paths) ? req.body.paths.slice(0, 200) : [];
+    const links = {};
+    let reivindicacoes = 0;
+    for (const original of lista) {
+      const rel = caminhoDeMidia(original);
+      if (!rel) continue;
+      if (!midiaExisteNoDisco(rel)) continue; // não existe em disco: nem consulta
+      const { rows } = await pool.query('SELECT tenant_id FROM media_files WHERE path = $1', [rel]);
+      let dono = rows[0]?.tenant_id ? String(rows[0].tenant_id) : null;
+      if (!dono && reivindicacoes < MEDIA_REIVINDICACOES_POR_REQ) {
+        reivindicacoes++;
+        dono = (await reivindicarMidiaLegada(rel, user.tenant_id, user.id))?.tenant_id ?? null;
+      }
+      if (!dono || (!user.is_super_admin && String(dono) !== String(user.tenant_id))) continue;
+      links[original] = urlMidiaAssinada(rel, dono);
+    }
+    // Assinatura já aplicada aqui: o res.json não precisa refazer
+    res.type('application/json').send(JSON.stringify({ links }));
+  } catch (err) {
+    if (err?.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[midia:sign]', err?.message);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
 // POST /api/media/upload — upload media file and return persistent URL
 app.post('/api/media/upload', limiteUpload, express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { fileName, mimeType } = req.query;
     const rawBody = req.body;
 
@@ -16392,7 +16779,7 @@ app.post('/api/media/upload', limiteUpload, express.raw({ type: '*/*', limit: '6
     }
 
     const resolvedMime = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
-    const savedUrl = await saveBufferToDisk(rawBody, resolvedMime, fileName ? String(fileName) : undefined);
+    const savedUrl = await saveBufferToDisk(rawBody, resolvedMime, fileName ? String(fileName) : undefined, { tenantId: user.tenant_id, enviadoPor: user.id, tipo: 'upload' });
 
     if (!savedUrl) {
       return res.status(500).json({ error: 'Falha ao salvar arquivo' });
@@ -19376,6 +19763,22 @@ app.get('/api/exames', so(PERMISSOES.EQUIPE), async (req, res) => {
         LIMIT 500`,
       params
     );
+    // Contagem de imagens por exame em consulta separada: se a tabela ainda não existir
+    // (primeiros segundos do boot, antes da auto-migração), a lista continua funcionando.
+    if (rows.length) {
+      try {
+        const { rows: cont } = await pool.query(
+          `SELECT exame_id, COUNT(*)::int AS total FROM exame_arquivos
+            WHERE tenant_id = $1 AND exame_id = ANY($2::uuid[]) AND removido_em IS NULL
+            GROUP BY exame_id`,
+          [user.tenant_id, rows.map(r => r.id)]
+        );
+        const porExame = new Map(cont.map(c => [c.exame_id, c.total]));
+        for (const r of rows) r.arquivos_count = porExame.get(r.id) || 0;
+      } catch (e) {
+        console.warn('[exames:list] contagem de arquivos indisponível:', e.message);
+      }
+    }
     registrarAcessoProntuario(pool, user, rows.map(r => r.paciente_id), 'exame');
     res.json(rows);
   } catch (err) {
@@ -19466,6 +19869,11 @@ app.patch('/api/exames/:id', so(PERMISSOES.EQUIPE), async (req, res) => {
       }
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada a atualizar' });
+    // arquivo_url é o link antigo (público). Só pode ser desvinculado; arquivo novo vai
+    // por POST /api/exames/:id/arquivos (com dono e acesso autenticado).
+    if (body.arquivo_url !== undefined && body.arquivo_url !== null && body.arquivo_url !== '') {
+      return res.status(400).json({ error: 'Envie a imagem pelo botão de arquivos do exame' });
+    }
     for (const k of ['status', 'prioridade', 'terceirizado']) {
       if (body[k] === null || body[k] === '') return res.status(400).json({ error: `${k} não pode ficar vazio` });
     }
@@ -19493,17 +19901,20 @@ app.delete('/api/exames/:id', so(PERMISSOES.ADMIN), async (req, res) => {
     // Exame com laudo ou imagem é parte do prontuário (guarda mínima de 20 anos, Lei 13.787/2018):
     // não é apagado; a clínica cancela o exame. Só pedidos sem resultado podem ser excluídos.
     const { rows } = await pool.query(
-      `SELECT (COALESCE(btrim(laudo_texto), '') <> '' OR arquivo_url IS NOT NULL) AS tem_resultado
-         FROM exames WHERE id=$1 AND tenant_id=$2`,
+      `SELECT (COALESCE(btrim(e.laudo_texto), '') <> '' OR e.arquivo_url IS NOT NULL
+               OR EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)) AS tem_resultado
+         FROM exames e WHERE e.id=$1 AND e.tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Exame não encontrado' });
     if (rows[0].tem_resultado) {
       return res.status(409).json({ error: 'Este exame já tem laudo ou imagem e faz parte do prontuário. Em vez de excluir, mude o status para Cancelado.' });
     }
+    // Arquivo retirado também conta: o DELETE em cascata apagaria o registro dele (prontuário)
     const { rowCount } = await pool.query(
-      `DELETE FROM exames WHERE id=$1 AND tenant_id=$2
-          AND COALESCE(btrim(laudo_texto), '') = '' AND arquivo_url IS NULL`,
+      `DELETE FROM exames e WHERE e.id=$1 AND e.tenant_id=$2
+          AND COALESCE(btrim(e.laudo_texto), '') = '' AND e.arquivo_url IS NULL
+          AND NOT EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)`,
       [req.params.id, user.tenant_id]
     );
     // Recebeu laudo/imagem entre a leitura e a exclusão: nada foi apagado
@@ -19514,6 +19925,247 @@ app.delete('/api/exames/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   }
 });
 
+
+// ─── Imagens e arquivos do exame (raio-x, tomografia, PDF do laudo) ───────────
+// Dado de saúde (LGPD art. 11): ficam FORA de /uploads/media (que é público) e só
+// são entregues a quem é da clínica — por Bearer ou por link assinado de vida curta
+// (o <img> do navegador não manda Authorization). O banco guarda o dono (tenant_id).
+const EXAMES_UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'exames');
+const EXAME_ARQUIVO_MAX_BYTES = 64 * 1024 * 1024;
+const EXAME_ARQUIVO_LINK_TTL_S = 60 * 60; // 1 h
+
+// Tipo real pelo conteúdo (não confia no nome nem no Content-Type do cliente).
+function detectarTipoArquivoExame(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 4) return null;
+  const hex = buf.subarray(0, 12).toString('hex');
+  if (hex.startsWith('ffd8ff')) return { mime: 'image/jpeg', ext: 'jpg', imagem: true };
+  if (hex.startsWith('89504e470d0a1a0a')) return { mime: 'image/png', ext: 'png', imagem: true };
+  if (hex.startsWith('47494638')) return { mime: 'image/gif', ext: 'gif', imagem: true };
+  if (hex.startsWith('52494646') && buf.subarray(8, 12).toString('latin1') === 'WEBP') return { mime: 'image/webp', ext: 'webp', imagem: true };
+  if (hex.startsWith('424d')) return { mime: 'image/bmp', ext: 'bmp', imagem: true };
+  if (hex.startsWith('25504446')) return { mime: 'application/pdf', ext: 'pdf', imagem: false };
+  if (hex.startsWith('504b0304')) return { mime: 'application/zip', ext: 'zip', imagem: false };
+  if (buf.length >= 132 && buf.subarray(128, 132).toString('latin1') === 'DICM') return { mime: 'application/dicom', ext: 'dcm', imagem: false };
+  return null;
+}
+
+function assinarArquivoExame(arquivoId, tenantId, download = false) {
+  const { exp, sig } = assinarLink(`exame-arquivo:${arquivoId}`, String(tenantId), EXAME_ARQUIVO_LINK_TTL_S);
+  const base = `/api/exame-arquivos/${arquivoId}/conteudo?t=${tenantId}&exp=${exp}&sig=${sig}`;
+  return download ? `${base}&download=1` : base;
+}
+
+function assinaturaArquivoExameValida(arquivoId, tenantId, exp, sig) {
+  if (!EXAME_UUID_RE.test(String(tenantId || ''))) return false;
+  return linkAssinadoValido(`exame-arquivo:${arquivoId}`, String(tenantId), exp, sig);
+}
+
+function arquivoExameParaResposta(row) {
+  return {
+    id: row.id,
+    exame_id: row.exame_id,
+    nome_original: row.nome_original,
+    mime_type: row.mime_type,
+    tamanho_bytes: Number(row.tamanho_bytes) || 0,
+    descricao: row.descricao ?? null,
+    created_at: row.created_at,
+    enviado_por_nome: row.enviado_por_nome ?? null,
+    imagem: /^image\//.test(row.mime_type || ''),
+    url: assinarArquivoExame(row.id, row.tenant_id),
+    url_download: assinarArquivoExame(row.id, row.tenant_id, true),
+  };
+}
+
+async function exameDaClinica(exameId, tenantId) {
+  if (!EXAME_UUID_RE.test(String(exameId))) return null;
+  const { rows } = await pool.query('SELECT id, paciente_id, status FROM exames WHERE id = $1 AND tenant_id = $2', [exameId, tenantId]);
+  return rows[0] || null;
+}
+
+// Listar imagens/arquivos de um exame (com links assinados)
+app.get('/api/exames/:id/arquivos', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const exame = await exameDaClinica(req.params.id, user.tenant_id);
+    if (!exame) return res.status(404).json({ error: 'Exame não encontrado' });
+    const { rows } = await pool.query(
+      `SELECT a.*, pr.name AS enviado_por_nome
+         FROM exame_arquivos a
+         LEFT JOIN profiles pr ON pr.id = a.enviado_por AND pr.tenant_id = a.tenant_id
+        WHERE a.exame_id = $1 AND a.tenant_id = $2 AND a.removido_em IS NULL
+        ORDER BY a.created_at`,
+      [exame.id, user.tenant_id]
+    );
+    res.json(rows.map(arquivoExameParaResposta));
+  } catch (err) {
+    responderErroExame(res, err, 'exames:arquivos:list');
+  }
+});
+
+// Enviar imagem/arquivo para o exame. Corpo = bytes do arquivo; nome em X-Nome-Arquivo
+// (codificado, fora da URL: o nome pode conter o nome do paciente).
+app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const exame = await exameDaClinica(req.params.id, user.tenant_id);
+    if (!exame) return res.status(404).json({ error: 'Exame não encontrado' });
+    const buf = req.body;
+    if (!Buffer.isBuffer(buf) || buf.length === 0) return res.status(400).json({ error: 'Arquivo não enviado' });
+    if (buf.length > EXAME_ARQUIVO_MAX_BYTES) return res.status(413).json({ error: 'Arquivo maior que 64 MB' });
+    const tipo = detectarTipoArquivoExame(buf);
+    if (!tipo) return res.status(415).json({ error: 'Formato não aceito. Envie JPG, PNG, WEBP, GIF, BMP, PDF, DICOM (.dcm) ou ZIP.' });
+
+    let nomeOriginal = '';
+    try { nomeOriginal = decodeURIComponent(String(req.headers['x-nome-arquivo'] || '')); } catch { nomeOriginal = ''; }
+    nomeOriginal = nomeOriginal.replace(/[\u0000-\u001f\u007f/\\]/g, '').trim().slice(0, 200) || `arquivo.${tipo.ext}`;
+    const descricao = String(req.headers['x-descricao'] ? decodeURIComponent(String(req.headers['x-descricao'])) : '').trim().slice(0, 300) || null;
+
+    const id = randomUUID();
+    const subDir = user.tenant_id;
+    const caminho = `${subDir}/${id}.${tipo.ext}`;
+    const dir = path.join(EXAMES_UPLOADS_DIR, subDir);
+    if (!existsSync(dir)) await mkdir(dir, { recursive: true });
+    const absArquivo = path.join(EXAMES_UPLOADS_DIR, caminho);
+    await writeFile(absArquivo, buf);
+    let rows;
+    try {
+      ({ rows } = await pool.query(
+        `INSERT INTO exame_arquivos
+           (id, tenant_id, exame_id, paciente_id, caminho, nome_original, mime_type, tamanho_bytes, descricao, enviado_por)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         RETURNING *`,
+        [id, user.tenant_id, exame.id, exame.paciente_id || null, caminho, nomeOriginal, tipo.mime, buf.length, descricao, user.id]
+      ));
+    } catch (insErr) {
+      // Sem registro o arquivo nunca seria servido: não deixa órfão no disco
+      await rm(absArquivo, { force: true }).catch(() => {});
+      throw insErr;
+    }
+    res.json(arquivoExameParaResposta(rows[0]));
+  } catch (err) {
+    responderErroExame(res, err, 'exames:arquivos:upload');
+  }
+});
+
+// Tirar o arquivo do exame. Não apaga do disco nem do banco: é prontuário
+// (guarda de 20 anos); só some da tela. Fica registrado quem tirou e quando.
+app.delete('/api/exames/:id/arquivos/:arquivoId', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!EXAME_UUID_RE.test(String(req.params.id)) || !EXAME_UUID_RE.test(String(req.params.arquivoId))) {
+      return res.status(404).json({ error: 'Arquivo não encontrado' });
+    }
+    const { rowCount } = await pool.query(
+      `UPDATE exame_arquivos SET removido_em = NOW(), removido_por = $4
+        WHERE id = $1 AND exame_id = $2 AND tenant_id = $3 AND removido_em IS NULL`,
+      [req.params.arquivoId, req.params.id, user.tenant_id, user.id]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    res.json({ success: true });
+  } catch (err) {
+    responderErroExame(res, err, 'exames:arquivos:delete');
+  }
+});
+
+// Entregar o conteúdo: link assinado (t/exp/sig) OU Bearer da mesma clínica.
+app.get('/api/exame-arquivos/:arquivoId/conteudo', async (req, res) => {
+  try {
+    const arquivoId = String(req.params.arquivoId);
+    if (!EXAME_UUID_RE.test(arquivoId)) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    let tenantId = null;
+    if (req.query.sig) {
+      if (!assinaturaArquivoExameValida(arquivoId, req.query.t, req.query.exp, req.query.sig)) {
+        return res.status(403).json({ error: 'Link expirado ou inválido. Abra o exame de novo.' });
+      }
+      tenantId = String(req.query.t);
+    } else {
+      const { user } = await verifyUser(req);
+      if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+      tenantId = user.tenant_id;
+    }
+    const { rows } = await pool.query(
+      `SELECT caminho, nome_original, mime_type FROM exame_arquivos
+        WHERE id = $1 AND tenant_id = $2 AND removido_em IS NULL`,
+      [arquivoId, tenantId]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    const { caminho, nome_original, mime_type } = rows[0];
+    if (!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.[a-z0-9]{2,5}$/.test(caminho)) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    const abs = path.join(EXAMES_UPLOADS_DIR, caminho);
+    if (!existsSync(abs)) return res.status(404).json({ error: 'Arquivo não encontrado' });
+
+    const inline = req.query.download !== '1' && (/^image\//.test(mime_type) || mime_type === 'application/pdf');
+    const nomeSeguro = String(nome_original || 'arquivo').replace(/["\\\r\n]/g, '');
+    const nomeAscii = nomeSeguro.normalize('NFD').replace(/[^\x20-\x7e]/g, '') || 'arquivo';
+    res.setHeader('Content-Type', mime_type);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${nomeAscii}"; filename*=UTF-8''${encodeURIComponent(nomeSeguro)}`);
+    res.sendFile(abs, { headers: { 'Content-Type': mime_type } }, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'Arquivo não encontrado' });
+    });
+  } catch (err) {
+    responderErroExame(res, err, 'exames:arquivos:conteudo');
+  }
+});
+
+// Registra o dono (clínica) dos arquivos já citados no banco antes do L7. Roda uma vez (marca e
+// data em app_settings 'l7_media_backfill'; a data é o corte da reivindicação). Caminho citado por
+// mais de uma clínica, ou com citação sem clínica, NÃO é registrado: vai para media_files_conflitos
+// para tratamento manual. Em contexto de sistema (funciona com FORCE RLS).
+const backfillMediaFiles = asSystemJob(async () => {
+  const { rows: feito } = await pool.query("SELECT 1 FROM app_settings WHERE key = 'l7_media_backfill'");
+  if (feito.length) return;
+  const re = `'/uploads/media/([0-9]{4}-[0-9]{2}/[0-9a-fA-F-]{36}\\.[A-Za-z0-9]{1,10})'`;
+  const fontes = [];
+  const existe = async (t, c) => (await pool.query(
+    `SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2`, [t, c])).rows.length > 0;
+  if (await existe('chat_messages', 'media_url')) fontes.push(`SELECT tenant_id, lower(substring(media_url from ${re})) AS path, 'chat' AS kind FROM chat_messages WHERE media_url LIKE '%/uploads/media/%'`);
+  if (await existe('profiles', 'avatar_url')) fontes.push(`SELECT tenant_id, lower(substring(avatar_url from ${re})), 'avatar' FROM profiles WHERE avatar_url LIKE '%/uploads/media/%'`);
+  if (await existe('exames', 'arquivo_url')) fontes.push(`SELECT tenant_id, lower(substring(arquivo_url from ${re})), 'exame' FROM exames WHERE arquivo_url LIKE '%/uploads/media/%'`);
+  if (await existe('prontuarios', 'anexos')) fontes.push(`SELECT tenant_id, lower((regexp_matches(anexos::text, ${re}, 'g'))[1]), 'prontuario' FROM prontuarios WHERE anexos::text LIKE '%/uploads/media/%'`);
+  if (!fontes.length) return;
+  const uniao = fontes.join(' UNION ALL ');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rowCount } = await client.query(
+      `INSERT INTO media_files (tenant_id, path, kind)
+       SELECT (array_agg(DISTINCT tenant_id))[1], path, min(kind)
+         FROM (${uniao}) r
+        WHERE path IS NOT NULL
+        GROUP BY path
+       HAVING count(DISTINCT tenant_id) = 1 AND bool_and(tenant_id IS NOT NULL)
+       ON CONFLICT (path) DO NOTHING`
+    );
+    const conflitos = await client.query(
+      `INSERT INTO media_files_conflitos (path, tenants, tem_sem_clinica, fontes)
+       SELECT path, array_remove(array_agg(DISTINCT tenant_id), NULL), bool_or(tenant_id IS NULL), array_agg(DISTINCT kind)
+         FROM (${uniao}) r
+        WHERE path IS NOT NULL
+        GROUP BY path
+       HAVING count(DISTINCT tenant_id) > 1 OR bool_or(tenant_id IS NULL)
+       ON CONFLICT (path) DO NOTHING`
+    );
+    await client.query(
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES ('l7_media_backfill', jsonb_build_object('executado_em', NOW(), 'registrados', $1::int, 'conflitos', $2::int), NOW())
+       ON CONFLICT (key) DO NOTHING`,
+      [rowCount, conflitos.rowCount]
+    );
+    await client.query('COMMIT');
+    console.log(`[midia] backfill: ${rowCount} arquivo(s) com dono registrado; ${conflitos.rowCount} em conflito (não servidos; ver media_files_conflitos)`);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
@@ -19529,6 +20181,29 @@ if (process.env.NODE_ENV !== 'test') {
   let checkedStatements = 0;
   try {
     const migrations = [
+      // ─── Mídia (chat, avatar): dono de cada arquivo de uploads/media (migration-media-files.sql) ───
+      `CREATE TABLE IF NOT EXISTS media_files (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        path TEXT NOT NULL UNIQUE,
+        mime_type TEXT,
+        size_bytes BIGINT,
+        kind TEXT NOT NULL DEFAULT 'other',
+        uploaded_by UUID,
+        paciente_id UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_media_files_tenant ON media_files (tenant_id, created_at DESC)`,
+      `CREATE TABLE IF NOT EXISTS media_files_conflitos (
+        path TEXT PRIMARY KEY,
+        tenants UUID[] NOT NULL DEFAULT '{}',
+        tem_sem_clinica BOOLEAN NOT NULL DEFAULT false,
+        fontes TEXT[],
+        detectado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        resolvido_em TIMESTAMPTZ,
+        observacao TEXT
+      )`,
+
       // ─── 0. Enable RLS and tenant session support ───
       `CREATE OR REPLACE FUNCTION set_tenant(t_id UUID) RETURNS VOID AS $$
        BEGIN
@@ -19766,6 +20441,25 @@ if (process.env.NODE_ENV !== 'test') {
            CREATE TRIGGER trg_exame_tipos_updated BEFORE UPDATE ON exame_tipos FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
          END IF;
        END $$`,
+
+      // ─── Exames: imagens/arquivos com dono (migration-exame-arquivos.sql) ───
+      `CREATE TABLE IF NOT EXISTS exame_arquivos (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        exame_id UUID NOT NULL REFERENCES exames(id) ON DELETE CASCADE,
+        paciente_id UUID,
+        caminho TEXT NOT NULL UNIQUE,
+        nome_original TEXT,
+        mime_type TEXT NOT NULL,
+        tamanho_bytes BIGINT NOT NULL DEFAULT 0,
+        descricao TEXT,
+        enviado_por UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        removido_em TIMESTAMPTZ,
+        removido_por UUID
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_exame ON exame_arquivos (tenant_id, exame_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_paciente ON exame_arquivos (tenant_id, paciente_id)`,
 
       `CREATE TABLE IF NOT EXISTS agendamentos (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -20077,6 +20771,8 @@ if (process.env.NODE_ENV !== 'test') {
       }
     }
     console.log(`   ✅ Auto-migration: ${checkedStatements}/${migrations.length} statements checked`);
+    // Uma vez: registra o dono dos arquivos antigos de uploads/media (não bloqueia o boot)
+    backfillMediaFiles().catch((e) => console.warn('[midia] backfill não concluído:', e.message));
   } catch (migErr) {
     console.error('❌ Auto-migration failed:', migErr.message);
     console.error(`   ↪ Auto-migration progress before failure: ${checkedStatements} statement(s) executed`);
@@ -20176,3 +20872,4 @@ export function resetWhatsAppQueueStateForTests() {
 export { parseAppointmentReminderReply };
 export { parseWaitlistOfferReply };
 export { isWhatsAppOptOutText };
+export { broadcastSSE as broadcastSSEForTests, sseClients as sseClientsForTests };
