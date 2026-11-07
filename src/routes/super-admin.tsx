@@ -14,6 +14,7 @@ import { PlanEditorDialog } from "@/components/PlanEditorDialog";
 import { BarraFiltros } from "@/components/filtros/BarraFiltros";
 import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import SaasKpiCards from "@/components/admin-saas/SaasKpiCards";
+import BuscadorLeads from "@/components/comercial/BuscadorLeads";
 
 export const Route = createFileRoute("/super-admin")({
   ssr: false,
@@ -136,6 +137,7 @@ function SuperAdminPage() {
             <TabsList className="bg-background border h-auto min-h-10 p-1 flex-wrap justify-start">
               <TabsTrigger value="clinicas" className="px-6 data-[state=active]:bg-muted">Clínicas</TabsTrigger>
               <TabsTrigger value="planos" className="px-6 data-[state=active]:bg-muted">Planos & Assinaturas</TabsTrigger>
+              <TabsTrigger value="leads" className="px-6 data-[state=active]:bg-muted">Leads (comercial)</TabsTrigger>
               <TabsTrigger value="configuracoes" className="px-6 data-[state=active]:bg-muted">Configurações SaaS</TabsTrigger>
             </TabsList>
             
@@ -345,6 +347,10 @@ function SuperAdminPage() {
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          <TabsContent value="leads" className="mt-0 border-none p-0 focus-visible:ring-0">
+            {activeTab === "leads" && <BuscadorLeads />}
           </TabsContent>
 
           <TabsContent value="configuracoes" className="mt-0 border-none p-0 focus-visible:ring-0">
