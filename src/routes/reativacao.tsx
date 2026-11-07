@@ -2,10 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   RefreshCcw, MessageSquare, Send, Clock, Users, Plus, X,
-  Instagram, Facebook, Globe, Phone, Search,
+  Instagram, Facebook, Globe, Phone, 
   CheckCircle2, AlertCircle, Loader2, Trash2, PlayCircle, PauseCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
 import {
   reativacaoApi,
   type ReactivationRule,
@@ -423,15 +424,15 @@ function ReativacaoPage() {
 
                   <div className="grid grid-cols-3 gap-3">
                     <div className="bg-muted/50 rounded-lg p-2.5 text-center">
-                      <p className="text-[9px] text-muted-foreground">Pacientes</p>
+                      <p className="text-[10px] leading-tight text-muted-foreground">Pacientes</p>
                       <p className="text-sm font-bold text-foreground">{selectedRule.matchedPatients}</p>
                     </div>
                     <div className="bg-muted/50 rounded-lg p-2.5 text-center">
-                      <p className="text-[9px] text-muted-foreground">Enviadas</p>
+                      <p className="text-[10px] leading-tight text-muted-foreground">Enviadas</p>
                       <p className="text-sm font-bold text-chart-1">{selectedRule.sentCount}</p>
                     </div>
                     <div className="bg-muted/50 rounded-lg p-2.5 text-center">
-                      <p className="text-[9px] text-muted-foreground">Resposta</p>
+                      <p className="text-[10px] leading-tight text-muted-foreground">Resposta</p>
                       <p className="text-sm font-bold text-success">{selectedRule.responseRate}%</p>
                     </div>
                   </div>
@@ -439,26 +440,23 @@ function ReativacaoPage() {
 
                 {/* Patients list */}
                 <div className="bg-card rounded-xl border border-border p-5">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-sm font-semibold text-foreground">Pacientes Correspondentes</h4>
-                    <div className="flex items-center gap-2">
-                      <div className="relative">
-                        <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
-                        <input
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                          placeholder="Buscar..."
-                          className="h-7 pl-6 pr-2 w-36 rounded-md bg-muted border-0 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                        />
-                      </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <h4 className="text-sm font-semibold text-foreground">Pacientes correspondentes</h4>
+                    <div className="flex flex-wrap items-center gap-2 flex-1 justify-end min-w-[min(100%,16rem)]">
+                      <BarraFiltros
+                        className="flex-1 min-w-[min(100%,12rem)]"
+                        busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Buscar paciente", rotulo: "Buscar paciente na lista de reativação", debounce: 150 }}
+                        onLimpar={() => setSearchTerm("")}
+                        resultado={`${filteredPatients.length} paciente${filteredPatients.length !== 1 ? "s" : ""}`}
+                      />
                       <button
                         onClick={selectAll}
                         disabled={filteredPatients.length === 0}
-                        className="px-2 py-1 rounded-md bg-muted text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+                        className="h-10 px-3 rounded-xl bg-muted text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
                       >
                         {filteredPatients.length > 0 && filteredPatients.every((p) => selectedIds.has(p.id))
-                          ? "Desmarcar"
-                          : "Selecionar"} Todos
+                          ? "Desmarcar todos"
+                          : "Selecionar todos"}
                       </button>
                     </div>
                   </div>
@@ -495,7 +493,7 @@ function ReativacaoPage() {
                             </div>
                             <div className="text-right shrink-0">
                               <p className="text-[10px] text-warning font-medium">{patient.daysSince} dias</p>
-                              <p className="text-[9px] text-muted-foreground">
+                              <p className="text-[10px] leading-tight text-muted-foreground">
                                 {patient.lastVisit
                                   ? new Date(patient.lastVisit).toLocaleDateString("pt-BR")
                                   : "—"}
