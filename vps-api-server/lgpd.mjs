@@ -24,6 +24,7 @@
 // "anonimizar" só com todos os prazos vencidos e apaga também o texto clínico livre (art. 12; senão
 // é pseudonimização). Nada de dado de saúde em log ou resumo.
 import crypto from 'crypto';
+import { novoColetor, avisoBackups } from './lgpd-arquivos.mjs';
 
 export const TIPOS = ['exportar', 'excluir', 'anonimizar'];
 const CODIGO_VALIDADE_MIN = 15;
@@ -339,7 +340,7 @@ export function montarRespostaTitular({ tipo, nome, dataPedido, clinica, retenca
 }
 
 // Exclusão/anonimização dentro da transação do client. Devolve só contagens.
-async function eliminar(client, tenantId, paciente, tipo, prev, confirmados, { optOutKey }) {
+async function eliminar(client, tenantId, paciente, tipo, prev, confirmados, { optOutKey, coletor = null }) {
   const resumo = { eliminados: {}, anonimizados: {}, retidos: {}, possiveis_confirmados: [...confirmados] };
   const r = prev.retencao;
   const soma = (obj, t, n) => { if (n) obj[t] = (obj[t] || 0) + n; };
@@ -351,6 +352,7 @@ async function eliminar(client, tenantId, paciente, tipo, prev, confirmados, { o
   const primeiro = alvos.filter(a => a.classe === 'relacionamento' || (a.classe === 'conversa' && apagarConversas))
     .sort((a, b) => ordem(a.tabela) - ordem(b.tabela));
   for (const a of primeiro) {
+    if (coletor) await coletor.coletar(client, a);
     const { rowCount } = await client.query(`DELETE FROM ${q(a.tabela)} WHERE ${a.where}`, a.params);
     soma(resumo.eliminados, a.tabela, rowCount);
   }
@@ -377,6 +379,7 @@ async function eliminar(client, tenantId, paciente, tipo, prev, confirmados, { o
   if (tipo === 'excluir') {
     // Todos os prazos vencidos: elimina o resto e o cadastro (Lei 13.787 art. 6º § 4º: fica registrado aqui).
     for (const a of resto.slice().reverse()) {
+      if (coletor) await coletor.coletar(client, a);
       const { rowCount } = await client.query(`DELETE FROM ${q(a.tabela)} WHERE ${a.where}`, a.params);
       soma(resumo.eliminados, a.tabela, rowCount);
     }
@@ -387,12 +390,14 @@ async function eliminar(client, tenantId, paciente, tipo, prev, confirmados, { o
   // anonimizar: assinatura sai, texto clínico livre e identificadores do cadastro viram NULL.
   for (const a of resto) {
     if (APAGAR_NA_ANONIMIZACAO.includes(a.tabela)) {
+      if (coletor) await coletor.coletar(client, a);
       const { rowCount } = await client.query(`DELETE FROM ${q(a.tabela)} WHERE ${a.where}`, a.params);
       soma(resumo.eliminados, a.tabela, rowCount);
       continue;
     }
     const cols = (TEXTO_LIVRE[a.tabela] || []).filter(c => a.cols.get(c)?.nullable);
     if (cols.length) {
+      if (coletor) await coletor.coletar(client, a); // arquivo_url, anexos e audio_url viram NULL: o arquivo sai também
       const { rowCount } = await client.query(
         `UPDATE ${q(a.tabela)} SET ${cols.map(c => `${q(c)} = NULL`).join(', ')} WHERE ${a.where}`, a.params);
       soma(resumo.anonimizados, a.tabela, rowCount);
@@ -623,6 +628,7 @@ export function registerLgpd(app, { pool, verifyAdmin, optOutKey }) {
       let resumo;
       let arquivo = null;
       let respostaTitular = null;
+      let coletor = null;
       if (s.tipo === 'exportar') {
         arquivo = await exportar(client, user.tenant_id, paciente, prev, confirmados);
         resumo = {
@@ -636,7 +642,10 @@ export function registerLgpd(app, { pool, verifyAdmin, optOutKey }) {
           return res.status(409).json({ error: 'Guarda obrigatória em vigor: anonimização não permitida', previa: semInternos(prev),
             resposta_titular: montarRespostaTitular({ tipo: 'anonimizar-recusa', retencao: r }) });
         }
-        resumo = await eliminar(client, user.tenant_id, paciente, s.tipo, prev, confirmados, { optOutKey });
+        coletor = novoColetor();
+        resumo = await eliminar(client, user.tenant_id, paciente, s.tipo, prev, confirmados, { optOutKey, coletor });
+        resumo.arquivos = coletor.previa();
+        resumo.backups = avisoBackups();
         resumo.retencao = r;
         resumo.compartilhamento = prev.compartilhamento;
         respostaTitular = montarRespostaTitular({
@@ -651,6 +660,12 @@ export function registerLgpd(app, { pool, verifyAdmin, optOutKey }) {
           WHERE id = $1 AND tenant_id = $2`,
         [s.id, user.tenant_id, user.id || null, user.email || null, JSON.stringify(resumo)]);
       await client.query('COMMIT');
+      // Arquivos só depois do COMMIT (se a transação falhar, nada sai do disco). Resultado no registro.
+      if (coletor) {
+        resumo.arquivos = await coletor.apagar(client);
+        await pool.query(`UPDATE lgpd_solicitacoes SET resumo = $3 WHERE id = $1 AND tenant_id = $2`,
+          [s.id, user.tenant_id, JSON.stringify(resumo)]).catch(e => console.error('[lgpd] registro de arquivos:', e.code || e.message));
+      }
       if (arquivo) {
         res.setHeader('Content-Disposition', `attachment; filename="titular-${s.id}.json"`);
         return res.json(arquivo);
@@ -717,3 +732,6 @@ export function registerLgpd(app, { pool, verifyAdmin, optOutKey }) {
     } catch (err) { erroHttp(res, err, 'acessos'); }
   });
 }
+
+// Usado por lgpd-expurgo.mjs (mesma regra de prazo e de eliminação do pedido do titular).
+export const __interno = { previa, eliminar };

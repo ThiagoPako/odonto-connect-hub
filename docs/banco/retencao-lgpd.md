@@ -36,8 +36,33 @@ estrutura, e os ajustes pedidos estão aplicados. O que ainda depende de advogad
 | Gravação de áudio | não fica no servidor: arquivo temporário, apagado depois da transcrição | 0 no servidor | — | Consentimento e operador (OpenAI) com a Helena, o Marcos e o Davi |
 | Mídia do WhatsApp / Clinicorp | fora do nosso banco | — | LGPD 18 § 6º | A resposta ao titular informa que a exclusão nesses sistemas é pedida à parte |
 
-**Ao fim do prazo:**
-- o expurgo automático, quando existir, **só gera uma lista**, e o dentista responsável aprova cada caso;
+**Ao fim do prazo** (expurgo: `vps-api-server/lgpd-expurgo.mjs`, tela `/lgpd-expurgo`):
+- um job mensal, por clínica, **só gera uma lista** com contagens. As categorias são leads (2 anos sem
+  interação), fila (1 ano), conversas (5 anos), log de acesso (5 anos), pedidos do titular (5 anos) e
+  prontuários com todos os prazos vencidos. Cada item guarda a data-limite do momento da geração;
+- a eliminação só roda depois de três passos:
+  - aprovação item a item: o admin aprova as categorias em massa, e **só um dentista da clínica**
+    aprova cada prontuário — o dentista é o cadastro vinculado ao usuário (`dentistas.user_id`, do #79),
+    nunca o "mesmo e-mail"; sem a coluna, ninguém aprova prontuário;
+  - **duas pessoas no prontuário:** quem aprovou um prontuário não pode executar a eliminação;
+  - **simulação (dry-run) obrigatória**, válida por 1 hora e invalidada se alguma aprovação mudar;
+  - a palavra `ELIMINAR`;
+- o registro fica em `lgpd_expurgo_listas`/`lgpd_expurgo_itens`: quem aprovou (e o papel), quem executou
+  e o resultado só por contagens;
+- **arquivos** (parecer do #76):
+  - os ligados às linhas eliminadas saem do disco depois do COMMIT: exame (`arquivo_url`, `exame_arquivos`
+    quando existir), anexos do prontuário, áudio de relatório e mídia do chat em `uploads/media`;
+  - **arquivo compartilhado fica:** antes de apagar, confere se alguma linha restante (de qualquer clínica:
+    outra mensagem da mesma campanha, outro paciente, avatar) ainda cita o arquivo; se citar, o arquivo fica
+    e o registro conta `arquivos_mantidos_em_uso`. Erro nessa conferência → nada sai do disco
+    (`arquivos_nao_verificados`, com aviso);
+  - o que está fora do sistema (mídia no servidor da Evolution/WhatsApp, link externo) aparece como
+    **não alcançado**, com o host e a ação manual, no dry-run e no registro;
+  - vale também para o pedido de exclusão e de anonimização do titular;
+- **backups:** o registro informa que os dados saem das cópias de segurança na rotação normal, com a data
+  prevista (execução + 6 meses, conforme `docs/operacao/backup.md`);
+- **idade desconhecida:** prontuário de paciente sem data de nascimento vem com alerta, porque a regra dos
+  21 anos não pode ser conferida. O dentista só aprova confirmando que conferiu a idade (`confirmo_idade`);
 - a eliminação fica registrada (Lei 13.787 art. 6º § 4º), e a linha de `lgpd_solicitacoes` serve de registro;
 - o paciente pode pedir a **devolução** do prontuário em vez da eliminação (§ 2º): fica gravado em `ao_fim_do_prazo = 'devolver'`.
 
@@ -84,6 +109,7 @@ O texto para o titular sai em `resposta_titular`, para enviar por e-mail ou impr
 4. O procedimento de verificação de identidade do titular e do representante.
 
 ## Pendências técnicas
-- O job de expurgo por prazo, que deve gerar lista para aprovação.
+- Devolução do prontuário: o item com `devolver` não é eliminado. A clínica exporta (pedido `exportar`),
+  entrega ao paciente, e a eliminação entra numa lista seguinte se o paciente concordar.
 - Apagar a mídia na Evolution e o cadastro no Clinicorp.
 - A tela: os endpoints estão prontos, e o aviso do campo motivo vem em `previa.aviso_motivo`.
