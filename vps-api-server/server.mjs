@@ -653,6 +653,8 @@ async function servirMidia(req, res) {
     const inline = MEDIA_INLINE_SEGURO.test(mime) && req.query.download !== '1';
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'private, max-age=300');
+    // A resposta depende de quem pede (Bearer da clínica): cache compartilhado não pode reaproveitar.
+    res.setHeader('Vary', 'Authorization');
     res.setHeader('Referrer-Policy', 'no-referrer');
     if (!inline) {
       res.setHeader('Content-Disposition', 'attachment');

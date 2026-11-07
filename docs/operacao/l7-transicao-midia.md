@@ -14,7 +14,7 @@ Complementa o plano L7 do Otávio (mídia e laudos só com autorização; o docu
 - `POST /api/media/sign { paths: [...] }`: links novos para quem tem sessão (link vencido ou URL antiga gravada). Front: `mediaApi.renovarLinks(paths)`.
 - Evolution: áudio enviado por URL e `send-media` com `media.url` nosso recebem link assinado de **10 min** (`?e=evo`). Imagem/vídeo/documento já vão em base64/multipart.
 - Tipo do arquivo gravado pelo **conteúdo** (não pelo que o cliente diz); desconhecido vira download.
-- Cabeçalhos: `Cache-Control: private, max-age=300`, `nosniff`, `Referrer-Policy: no-referrer`. Inline: `Content-Security-Policy: default-src 'none'; img-src 'self'; media-src 'self'; sandbox` (PDF: só `default-src 'none'`, porque o Chrome bloqueia o visualizador com `sandbox` — **Caio confirmar no Chrome**). Tipo fora da lista segura sai como `attachment` + `default-src 'none'; sandbox`.
+- Cabeçalhos: `Cache-Control: private, max-age=300`, `Vary: Authorization`, `nosniff`, `Referrer-Policy: no-referrer`. Inline: `Content-Security-Policy: default-src 'none'; img-src 'self'; media-src 'self'; sandbox` (PDF: só `default-src 'none'`, porque o Chrome bloqueia o visualizador com `sandbox` — **Caio confirmar no Chrome**). Tipo fora da lista segura sai como `attachment` + `default-src 'none'; sandbox`.
 - Rollback instantâneo: `MEDIA_AUTH_MODE=public` no `.env` + `pm2 restart odonto-api` volta a servir sem login (só emergência).
 
 ## nginx — bloco proposto (não aplicado)
@@ -49,18 +49,38 @@ location ^~ /uploads/ { return 404; }
 `^~` faz estes prefixos ganharem de qualquer `location ~` que venha a ser criada. Depois: `sudo nginx -t && sudo systemctl reload nginx`. Se houver Cloudflare na frente do backend, **purgar** `/uploads/*` e conferir que não há regra de cache para esse caminho. Navegadores que já baixaram com `immutable` mantêm a cópia local (não há como recolher).
 
 ## Ordem do deploy
+O nginx entra **na mesma janela e antes** do código (revisão do Igor, 07/11). Hoje o nginx força
+`expires 30d` / `Cache-Control: public, immutable` em `/uploads/media/` e **sobrescreve** o
+`private, max-age=300` da API: se o código entrar antes, as respostas autenticadas (Bearer) ficam
+cacheáveis em proxy/CDN até o nginx ser trocado. Aplicar o bloco antes não quebra nada com o
+código antigo (ele continua com proxy para a API; só some o cache público).
+
 1. **Backup** antes: `uploads/media` (hoje ~948 MB), `uploads/exames` e o banco (incluir `media_files`, `exame_arquivos` no dump).
-2. Deploy do código (a pilha de exames antes ou junto). O boot cria `media_files`/`media_files_conflitos` e roda o backfill; conferir no log a linha `[midia] backfill: N arquivo(s) com dono registrado; M em conflito`.
-3. Aplicar o bloco do nginx acima e recarregar.
-4. Teste manual: abrir conversa com imagem/áudio/PDF, foto de perfil, laudo com imagem; enviar áudio pelo chat (a Evolution baixa pelo link de 10 min); abrir a URL antiga direto no navegador sem login → 401.
-5. Opcional, com backup: copiar os arquivos antigos de exame para o armazenamento protegido:
+2. **nginx primeiro**, minutos antes do deploy: aplicar o bloco acima, `sudo nginx -t && sudo systemctl reload nginx`.
+   Conferir: `curl -sI https://backend.odontoconnect.tech/uploads/media/<algum-arquivo>` **não** traz mais
+   `immutable` nem `expires` de 30 dias.
+3. Deploy do código **logo em seguida** (a pilha de exames #33 → #37 antes ou junto; o #88 no mesmo deploy). O boot cria
+   `media_files`/`media_files_conflitos` e roda o backfill; conferir no log a linha
+   `[midia] backfill: N arquivo(s) com dono registrado; M em conflito`.
+4. **Purgar a CDN** (se houver Cloudflare na frente do backend): purge de `/uploads/*` logo após o deploy, e conferir
+   que não há regra de cache para esse caminho. A API manda `Vary: Authorization` + `private`, mas cópia antiga
+   `public, immutable` já guardada só sai com purge.
+5. Teste manual: abrir conversa com imagem/áudio/PDF, foto de perfil, laudo com imagem; enviar áudio pelo chat (a Evolution baixa pelo link de 10 min); abrir a URL antiga direto no navegador sem login → 401; `curl -sI` com Bearer → `Cache-Control: private, max-age=300` e `Vary: Authorization`.
+6. Opcional, com backup: copiar os arquivos antigos de exame para o armazenamento protegido:
    ```bash
    cd /root/odonto-connect/vps-api-server
    node scripts/migrar-exames-legado.mjs            # simulação
    node scripts/migrar-exames-legado.mjs --aplicar  # copia para uploads/exames e registra em exame_arquivos
    ```
+   Só copia arquivo cujo dono em `media_files` é **a clínica do exame**. Pula e conta (no JSON final):
+   `semDono` (sem dono registrado), `conflito` (em `media_files_conflitos` sem `resolvido_em`), `donoDiferente`
+   e `erroDono` (falha ao ler o dono). O `PATCH` antigo de exames aceitava qualquer `arquivo_url`, então o exame
+   citar o arquivo não prova que o arquivo é da clínica. Os pulados ficam como estão (o original continua coberto
+   pela rota autenticada); resolver os conflitos (abaixo) e rodar de novo, se for o caso.
    O script **não apaga** o original; limpa só `exames.arquivo_url` (o caminho antigo fica na descrição do arquivo migrado). Anexos de prontuário em `uploads/media` continuam lá, cobertos pela rota autenticada.
-6. Observar 24 h: 401/403/404 em `/uploads/media` no log da API.
+7. Observar 24 h: 401/403/404 em `/uploads/media` no log da API.
+
+Link assinado **não é revogável** antes de vencer (1 h padrão): não aumentar `MEDIA_LINK_TTL_S` sem necessidade.
 
 ## Conflitos (manual)
 ```sql
@@ -71,7 +91,7 @@ UPDATE media_files_conflitos SET resolvido_em = NOW(), observacao = '<quem decid
 ```
 
 ## Remoção da cópia pública (manual, depois de conferir)
-Só depois de o passo 5 rodar, os exames abrirem pelo laudo e houver backup. Não apagar: mover para **fora de `uploads/`** e guardar por 30 dias.
+Só depois de o passo 6 rodar, os exames abrirem pelo laudo e houver backup. Não apagar: mover para **fora de `uploads/`** e guardar por 30 dias.
 ```bash
 # lista os originais já migrados (caminho está na descrição)
 sudo -u postgres psql -p 5433 -d odonto_db -Atc \
@@ -89,5 +109,5 @@ Apagar `/root/odonto-connect-migrados-publico` só com aprovação (prontuário:
 - Link de tela vale 1 h: imagens antigas param de abrir até a tela renovar. Ligar `mediaApi.renovarLinks` (já em `src/lib/vpsApi.ts`) no `onError` de `<img>/<audio>` fica com o Davi, que está editando as telas de chat. Até lá, dá para subir `MEDIA_LINK_TTL_S` (teto 8 h).
 - **Checklist do FORCE RLS:** `media_files`, `media_files_conflitos` e as rotas `/uploads/media/*` e `/api/exame-arquivos/*/conteudo` rodam **sem contexto de clínica** (link assinado). Antes de ligar FORCE/RLS nelas: a leitura do dono nessas rotas e a reivindicação/backfill precisam de contexto de sistema (o backfill e a reivindicação já usam; `servirMidia` ainda lê sem contexto) ou de política que permita SELECT por `path`.
 - Avatar guardado no `localStorage` com link assinado expira; o `/auth/me` do carregamento renova.
-- Ordem de eventos SSE: evento com mídia é assinado antes de sair e pode chegar depois de um evento posterior sem mídia.
+- Ordem de eventos SSE: resolvida — `broadcastSSE` serializa os eventos por clínica (`tests/sse-ordem-midia.test.js`).
 - Índice em `chat_messages.media_url` não foi criado (tabela grande; o backfill faz uma varredura só uma vez e a reivindicação é por arquivo). Avaliar com a Renata.
