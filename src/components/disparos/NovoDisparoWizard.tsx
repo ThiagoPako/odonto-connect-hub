@@ -81,8 +81,11 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
     }
   }, [open, editData]);
 
-  const contatosAlcancaveis = publico === "todos" ? 255 : publico === "ativos" ? 156 : publico === "inativos" ? 89 : publico === "aniversariantes" ? 12 : 0;
-  const capacidadeDiaria = Math.min(232, contatosAlcancaveis);
+  // O público real é calculado pelo servidor na hora do envio (contatosAlcancaveis é
+  // atualizado lá). Antes eram números fixos (255/156/89/12) que, além de enganar,
+  // limitavam o envio: a capacidade diária virava o mínimo entre 232 e o número fixo.
+  const contatosAlcancaveis = editData?.contatosAlcancaveis ?? 0;
+  const capacidadeDiaria = 232;
 
   if (!open) return null;
 
@@ -103,12 +106,13 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
   };
 
   const handleSave = () => {
-    const tpl = templatesProntos.find((t) => t.id === templateSelecionado) || {
-      id: "custom",
-      nome: nomeDisparo,
-      mensagem,
-      variaveis: (mensagem.match(/\{\{(\w+)\}\}/g) || []).map((m) => m.replace(/[{}]/g, "")),
-    };
+    // O texto que vale é o que está no editor: antes, com um modelo pronto selecionado,
+    // o servidor recebia o texto original do modelo e as edições da clínica se perdiam.
+    const variaveis = (mensagem.match(/\{\{(\w+)\}\}/g) || []).map((m) => m.replace(/[{}]/g, ""));
+    const base = templatesProntos.find((t) => t.id === templateSelecionado);
+    const tpl = base
+      ? { ...base, mensagem, variaveis }
+      : { id: "custom", nome: nomeDisparo, mensagem, variaveis };
     onSave({
       nome: nomeDisparo || "Novo Disparo",
       template: tpl,
@@ -233,7 +237,7 @@ function StepPublico({
       </div>
 
       <div className="grid grid-cols-1 gap-2">
-        {publicoOptions.map((opt) => (
+        {publicoOptions.filter((opt) => opt.id !== "custom").map((opt) => (
           <button
             key={opt.id}
             onClick={() => setPublico(opt.id)}
@@ -257,8 +261,8 @@ function StepPublico({
       </div>
 
       <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 text-primary text-xs font-medium">
-        <Users className="h-3.5 w-3.5" />
-        Contatos Alcançáveis: <span className="font-bold">{contatosAlcancaveis}</span>
+        <Users className="h-3.5 w-3.5 shrink-0" />
+        <span>Recebem só contatos que já conversaram com a clínica no WhatsApp e não pediram para sair. O número exato aparece ao disparar{contatosAlcancaveis > 0 ? ` (último envio: ${contatosAlcancaveis})` : ""}.</span>
       </div>
 
       {/* Spam control */}
@@ -642,7 +646,7 @@ function StepRevisao({
       <div className="bg-muted/50 rounded-xl p-4 space-y-3">
         <ReviewRow label="Nome" value={nomeDisparo || "Sem nome"} />
         <ReviewRow label="Público" value={publicoLabel} />
-        <ReviewRow label="Contatos" value={`${contatosAlcancaveis} alcançáveis`} />
+        <ReviewRow label="Contatos" value="Calculados no envio (só quem já conversou com a clínica)" />
         <ReviewRow label="Tipo" value={tipo === "recorrente" ? "Campanha Recorrente" : "Campanha Única"} />
         {tipo === "recorrente" && <ReviewRow label="Dias" value={diasSemana.join(", ") || "Nenhum"} />}
         <ReviewRow label="Horário" value={`${horarioInicio} — ${horarioFim}`} />
