@@ -164,12 +164,10 @@ describe('dashboard e comissões', () => {
     const res = await chamar('get', '/api/dashboard');
     expect(res.body.receitaMensal).toBe(0);
   });
-  test('dentista vê só as próprias comissões', async () => {
+  test('comissões são só do admin (decisão da auditoria do financeiro no main)', async () => {
     _definirPapelParaTestes(usuario, 'dentista');
-    await chamar('get', '/api/comissoes');
-    const q = sqlLog.find(x => /FROM comissoes c/.test(x.text));
-    expect(q.text).toMatch(/AND LOWER\(d\.email\) = \$2/);
-    expect(q.params).toEqual([tenantA, 'pessoa@clinica.com']);
+    expect((await chamar('get', '/api/comissoes')).status).toBe(403);
+    expect(sqlLog.some(x => /FROM comissoes c/.test(x.text))).toBe(false);
   });
 });
 

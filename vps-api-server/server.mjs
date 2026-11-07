@@ -1713,8 +1713,8 @@ app.post('/api/my-tenant/users/:id/reset-password', async (req, res) => {
 app.post('/api/my-tenant/change-plan', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    if ((await papelAtual(user)) !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
     if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
+    if ((await papelAtual(user)) !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
     const { plan_slug } = req.body || {};
     const { rows } = await pool.query('SELECT * FROM plans WHERE slug = $1 AND ativo = true', [plan_slug]);
     if (!rows[0]) return res.status(400).json({ error: 'Plano inválido' });
@@ -6575,19 +6575,9 @@ async function handleWaitlistOfferReply({ tenantId, phone, msgType, msgContent, 
 // ═══════════════════════════════════════════════════════════════
 
 // Financeiro (bancos, salários, CPF de funcionários, movimentações) e comissões são só do
-// administrador — as telas /financeiro e /comissoes já são só de admin (routeAccess.ts), mas a
-// API aceitava qualquer usuário logado (recepção lia salários e lançava saídas no banco).
-app.use(['/api/fin', '/api/financeiro', '/api/comissoes'], async (req, res, next) => {
-  try {
-    await verifyAdmin(req);
-    next();
-  } catch (err) {
-    if (err.message === 'Admin access required') return res.status(403).json({ error: 'Apenas o administrador da clínica acessa o financeiro.' });
-    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('[financeiro:acesso]', err.message);
-    return res.status(500).json({ error: 'Erro interno' });
-  }
-});
+// administrador, pelo papel do banco (matriz de papéis, #86) — as telas /financeiro e /comissoes
+// já são só de admin (routeAccess.ts).
+app.use(['/api/fin', '/api/financeiro', '/api/comissoes'], so(PERMISSOES.ADMIN));
 
 /** Valor em reais positivo, arredondado a centavos; null se inválido. */
 function valorPositivoEmReais(v) {
@@ -7552,7 +7542,7 @@ app.delete('/api/tratamentos/etapas/:id', so(PERMISSOES.ADMIN), async (req, res)
 // COMISSÕES — FULL CRUD
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/comissoes', so(PERMISSOES.CLINICO), async (req, res) => {
+app.get('/api/comissoes', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });

@@ -5,6 +5,7 @@
 // pool.query é mockado: nenhuma query chega ao Postgres. JWT_SECRET vem do env/.env (CI define).
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import fs from 'fs';
@@ -25,7 +26,7 @@ const adminA = '44444444-4444-4444-4444-444444444444';
 const inativoA = '55555555-5555-5555-5555-555555555555';
 const superAdmin = '77777777-7777-7777-7777-777777777777';
 
-const token = (extra = {}) => jwt.sign({
+const token = (extra = {}) => assinarComPapel({
   sub: adminA, email: 'admin@clinica-a.com', role: 'admin', tenant_id: tenantA, is_super_admin: false, ...extra,
 }, JWT_SECRET);
 const tkAdminA = () => token();

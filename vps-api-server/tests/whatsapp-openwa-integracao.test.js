@@ -6,6 +6,7 @@
 // a Evolution é mockada no fetch; o OpenWA falso responde de verdade.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { jest } from '@jest/globals';
 import { randomBytes, randomUUID } from 'crypto';
 import { mkdir, writeFile, rm, readFile } from 'fs/promises';
@@ -28,10 +29,10 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const tenantA = '11111111-1111-1111-1111-111111111111';
 const tenantB = '22222222-2222-2222-2222-222222222222';
 const auth = (tenant) => ({
-  Authorization: `Bearer ${jwt.sign({ sub: '44444444-4444-4444-4444-444444444444', email: 'a@a.com', role: 'admin', tenant_id: tenant, is_super_admin: false }, JWT_SECRET)}`,
+  Authorization: `Bearer ${assinarComPapel({ sub: '44444444-4444-4444-4444-444444444444', email: 'a@a.com', role: 'admin', tenant_id: tenant, is_super_admin: false }, JWT_SECRET)}`,
 });
 const authRole = (tenant, role) => ({
-  Authorization: `Bearer ${jwt.sign({ sub: '55555555-5555-5555-5555-555555555555', email: 'r@a.com', role, tenant_id: tenant, is_super_admin: false }, JWT_SECRET)}`,
+  Authorization: `Bearer ${assinarComPapel({ sub: '55555555-5555-5555-5555-555555555555', email: 'r@a.com', role, tenant_id: tenant, is_super_admin: false }, JWT_SECRET)}`,
 });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
