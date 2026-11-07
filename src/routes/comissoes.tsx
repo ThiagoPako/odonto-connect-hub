@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback } from "react";
 import { BarraFiltros } from "@/components/filtros/BarraFiltros";
 import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { comissoesApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
+import { centavos } from "@/lib/formatos";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -101,7 +102,7 @@ function ComissoesPage() {
   };
 
   const handleCreateComissao = async (data: { dentista_id: string; paciente_id: string; procedimento: string; valor: number; percentual: number }) => {
-    const comissaoValor = (data.valor * data.percentual) / 100;
+    const comissaoValor = centavos((data.valor * data.percentual) / 100);
     const { error } = await comissoesApi.create({
       dentista_id: data.dentista_id,
       paciente_id: data.paciente_id,
@@ -189,8 +190,8 @@ function ComissoesPage() {
                   </div>
                   <div className="grid grid-cols-3 gap-2">
                     <MiniStat label="Registros" value={comms.length.toString()} />
-                    <MiniStat label="Total" value={`R$ ${earned.toFixed(0)}`} />
-                    <MiniStat label="Pendente" value={`R$ ${pending.toFixed(0)}`} accent />
+                    <MiniStat label="Total" value={brl(earned)} />
+                    <MiniStat label="Pendente" value={brl(pending)} accent />
                   </div>
                 </button>
               );
@@ -447,7 +448,7 @@ function AddComissaoModal({
 
   const valorNum = Number(form.valor) || 0;
   const percNum = Number(form.percentual) || 0;
-  const comissaoValor = (valorNum * percNum) / 100;
+  const comissaoValor = centavos((valorNum * percNum) / 100);
 
   const filteredPacientes = pacientes.filter(p =>
     !pacienteSearch || p.nome.toLowerCase().includes(pacienteSearch.toLowerCase())

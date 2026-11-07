@@ -1,245 +1,124 @@
-import { X, Send, CheckCircle2, Eye, MessageSquare, AlertTriangle, TrendingUp, BarChart3 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { X, Send, Clock, AlertTriangle, Ban, BarChart3, Loader2, Info } from "lucide-react";
 import { type DisparoProgramado } from "@/data/disparosMockData";
-import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
-} from "recharts";
+import { campaignsApi } from "@/lib/vpsApi";
 
 interface DisparoStatsPanelProps {
   disparo: DisparoProgramado;
   onClose: () => void;
 }
 
-// Generate mock time-series data based on disparo stats
-function generateTimeSeriesData(disparo: DisparoProgramado) {
-  const days = 14;
-  const data = [];
-  const totalEnviadas = disparo.stats.enviadas;
-  const totalEntregues = disparo.stats.entregues;
-  const totalLidas = disparo.stats.lidas;
-  const totalRespondidas = disparo.stats.respondidas;
+type JobsData = NonNullable<Awaited<ReturnType<typeof campaignsApi.jobs>>["data"]>;
 
-  for (let i = days; i >= 0; i--) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    const label = `${date.getDate().toString().padStart(2, "0")}/${(date.getMonth() + 1).toString().padStart(2, "0")}`;
-    const factor = Math.random() * 0.15 + 0.03;
-    const enviadas = Math.round(totalEnviadas * factor);
-    const entregues = Math.round(enviadas * (totalEntregues / Math.max(totalEnviadas, 1)));
-    const lidas = Math.round(enviadas * (totalLidas / Math.max(totalEnviadas, 1)));
-    const respondidas = Math.round(enviadas * (totalRespondidas / Math.max(totalEnviadas, 1)));
-
-    data.push({ date: label, enviadas, entregues, lidas, respondidas });
-  }
-  return data;
-}
-
-function generateHourlyData(disparo: DisparoProgramado) {
-  const hours = [];
-  const startH = parseInt(disparo.horarioInicio?.split(":")[0] || "8");
-  const endH = parseInt(disparo.horarioFim?.split(":")[0] || "18");
-  for (let h = startH; h <= endH; h++) {
-    const peak = h >= 10 && h <= 14 ? 1.5 : 1;
-    hours.push({
-      hora: `${h.toString().padStart(2, "0")}:00`,
-      mensagens: Math.round((Math.random() * 15 + 5) * peak),
-    });
-  }
-  return hours;
-}
-
-const COLORS = {
-  enviadas: "hsl(var(--primary))",
-  entregues: "hsl(var(--chart-2))",
-  lidas: "hsl(var(--chart-3))",
-  respondidas: "hsl(var(--chart-4))",
-  erros: "hsl(var(--destructive))",
+const STATUS_LABEL: Record<string, { label: string; className: string }> = {
+  sent: { label: "Enviada", className: "bg-success/15 text-success" },
+  pending: { label: "Na fila", className: "bg-primary/10 text-primary" },
+  failed: { label: "Falhou", className: "bg-destructive/15 text-destructive" },
+  cancelled: { label: "Cancelada", className: "bg-muted text-muted-foreground" },
 };
 
-const PIE_COLORS = [
-  "hsl(var(--chart-2))",
-  "hsl(var(--chart-3))",
-  "hsl(var(--chart-4))",
-  "hsl(var(--destructive))",
-  "hsl(var(--muted-foreground))",
-];
+function formatDateTime(v?: string | null) {
+  if (!v) return "—";
+  const d = new Date(v);
+  return Number.isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
+}
 
+// Números reais da fila de envio desta campanha (GET /api/campaigns/:id/jobs).
+// Antes os gráficos eram gerados com Math.random e entregue/lida/respondida, que o
+// sistema não mede, apareciam como 0%.
 export function DisparoStatsPanel({ disparo, onClose }: DisparoStatsPanelProps) {
-  const timeData = generateTimeSeriesData(disparo);
-  const hourlyData = generateHourlyData(disparo);
+  const [data, setData] = useState<JobsData | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const { enviadas, entregues, lidas, respondidas, erros } = disparo.stats;
-  const taxaEntrega = enviadas > 0 ? ((entregues / enviadas) * 100).toFixed(1) : "0";
-  const taxaLeitura = enviadas > 0 ? ((lidas / enviadas) * 100).toFixed(1) : "0";
-  const taxaResposta = enviadas > 0 ? ((respondidas / enviadas) * 100).toFixed(1) : "0";
-  const taxaErro = enviadas > 0 ? ((erros / enviadas) * 100).toFixed(1) : "0";
+  useEffect(() => {
+    let alive = true;
+    campaignsApi.jobs(disparo.id).then(({ data, error }) => {
+      if (!alive) return;
+      if (error) setError(error);
+      else setData(data ?? { summary: {}, recent: [] });
+    });
+    return () => { alive = false; };
+  }, [disparo.id]);
 
-  const pieData = [
-    { name: "Entregues (não lidas)", value: Math.max(0, entregues - lidas) },
-    { name: "Lidas (sem resposta)", value: Math.max(0, lidas - respondidas) },
-    { name: "Respondidas", value: respondidas },
-    { name: "Erros", value: erros },
-    { name: "Não entregues", value: Math.max(0, enviadas - entregues) },
-  ].filter((d) => d.value > 0);
+  const s = data?.summary ?? {};
+  const enviadas = s.sent || 0;
+  const naFila = s.pending || 0;
+  const falharam = s.failed || 0;
+  const canceladas = Object.entries(s)
+    .filter(([k]) => !["sent", "pending", "failed"].includes(k))
+    .reduce((a, [, v]) => a + (v || 0), 0);
+  const total = enviadas + naFila + falharam + canceladas;
+  const taxaFalha = enviadas + falharam > 0 ? ((falharam / (enviadas + falharam)) * 100).toFixed(1) : "0";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-[1000px] max-h-[90vh] flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="dialog" aria-modal="true" aria-labelledby="disparo-stats-titulo">
+      <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-[860px] max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-border">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="h-8 w-8 shrink-0 rounded-lg bg-primary/10 flex items-center justify-center">
               <BarChart3 className="h-4 w-4 text-primary" />
             </div>
-            <div>
-              <h2 className="text-base font-semibold text-foreground">{disparo.nome}</h2>
-              <p className="text-xs text-muted-foreground">Estatísticas detalhadas · Criado em {disparo.criadoEm}</p>
+            <div className="min-w-0">
+              <h2 id="disparo-stats-titulo" className="text-base font-semibold text-foreground truncate">{disparo.nome}</h2>
+              <p className="text-xs text-muted-foreground">Situação da fila de envio · Criado em {disparo.criadoEm}</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+          <button onClick={onClose} aria-label="Fechar" className="p-1.5 rounded-lg hover:bg-muted transition-colors">
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* KPI cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            <StatsKpi icon={Send} label="Enviadas" value={enviadas} color="text-primary" />
-            <StatsKpi icon={CheckCircle2} label="Entregues" value={entregues} sub={`${taxaEntrega}%`} color="text-chart-2" />
-            <StatsKpi icon={Eye} label="Lidas" value={lidas} sub={`${taxaLeitura}%`} color="text-chart-3" />
-            <StatsKpi icon={MessageSquare} label="Respondidas" value={respondidas} sub={`${taxaResposta}%`} color="text-chart-4" />
-            <StatsKpi icon={AlertTriangle} label="Erros" value={erros} sub={`${taxaErro}%`} color="text-destructive" />
-          </div>
-
-          {enviadas === 0 ? (
-            <div className="bg-muted/50 rounded-xl p-12 flex flex-col items-center text-center">
-              <TrendingUp className="h-10 w-10 text-muted-foreground/30 mb-3" />
-              <p className="text-sm font-medium text-foreground mb-1">Sem dados ainda</p>
-              <p className="text-xs text-muted-foreground">As estatísticas aparecerão quando o disparo começar a enviar mensagens.</p>
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+          {error ? (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+              Não foi possível carregar as estatísticas: {error}
+            </div>
+          ) : !data ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
             </div>
           ) : (
             <>
-              {/* Area chart: time series */}
-              <div className="bg-muted/30 rounded-xl border border-border p-5">
-                <h3 className="text-sm font-semibold text-foreground mb-1">Evolução dos Envios</h3>
-                <p className="text-xs text-muted-foreground mb-4">Últimos 15 dias</p>
-                <ResponsiveContainer width="100%" height={260}>
-                  <AreaChart data={timeData}>
-                    <defs>
-                      <linearGradient id="gradEnviadas" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={COLORS.enviadas} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={COLORS.enviadas} stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="gradLidas" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={COLORS.lidas} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={COLORS.lidas} stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="gradRespondidas" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={COLORS.respondidas} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={COLORS.respondidas} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                    <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "hsl(var(--card))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: "8px",
-                        fontSize: "11px",
-                      }}
-                    />
-                    <Area type="monotone" dataKey="enviadas" stroke={COLORS.enviadas} fill="url(#gradEnviadas)" strokeWidth={2} name="Enviadas" />
-                    <Area type="monotone" dataKey="lidas" stroke={COLORS.lidas} fill="url(#gradLidas)" strokeWidth={2} name="Lidas" />
-                    <Area type="monotone" dataKey="respondidas" stroke={COLORS.respondidas} fill="url(#gradRespondidas)" strokeWidth={2} name="Respondidas" />
-                  </AreaChart>
-                </ResponsiveContainer>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <StatsKpi icon={Send} label="Enviadas" value={enviadas} color="text-success" />
+                <StatsKpi icon={Clock} label="Na fila" value={naFila} color="text-primary" />
+                <StatsKpi icon={AlertTriangle} label="Falharam" value={falharam} sub={`${taxaFalha}% das tentativas`} color="text-destructive" />
+                <StatsKpi icon={Ban} label="Canceladas" value={canceladas} sub="SAIR, pausa ou validade" color="text-muted-foreground" />
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                {/* Bar chart: hourly distribution */}
-                <div className="bg-muted/30 rounded-xl border border-border p-5">
-                  <h3 className="text-sm font-semibold text-foreground mb-1">Distribuição por Horário</h3>
-                  <p className="text-xs text-muted-foreground mb-4">Mensagens por hora do dia</p>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <BarChart data={hourlyData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="hora" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                      <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "hsl(var(--card))",
-                          border: "1px solid hsl(var(--border))",
-                          borderRadius: "8px",
-                          fontSize: "11px",
-                        }}
-                      />
-                      <Bar dataKey="mensagens" fill={COLORS.enviadas} radius={[4, 4, 0, 0]} name="Mensagens" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+              <p className="flex items-start gap-2 rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground">
+                <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                Entrega, leitura e respostas ainda não são medidas pelo sistema. Os números acima são da fila de envio desta campanha.
+              </p>
 
-                {/* Pie chart: breakdown */}
-                <div className="bg-muted/30 rounded-xl border border-border p-5">
-                  <h3 className="text-sm font-semibold text-foreground mb-1">Distribuição de Status</h3>
-                  <p className="text-xs text-muted-foreground mb-4">Proporção de cada resultado</p>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <PieChart>
-                      <Pie
-                        data={pieData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={50}
-                        outerRadius={80}
-                        paddingAngle={3}
-                        dataKey="value"
-                      >
-                        {pieData.map((_, index) => (
-                          <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "hsl(var(--card))",
-                          border: "1px solid hsl(var(--border))",
-                          borderRadius: "8px",
-                          fontSize: "11px",
-                        }}
-                      />
-                      <Legend
-                        formatter={(value) => <span style={{ fontSize: "10px", color: "hsl(var(--muted-foreground))" }}>{value}</span>}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
+              {total === 0 ? (
+                <div className="bg-muted/50 rounded-xl p-10 text-center">
+                  <p className="text-sm font-medium text-foreground mb-1">Sem envios ainda</p>
+                  <p className="text-xs text-muted-foreground">Os números aparecem quando o disparo colocar mensagens na fila.</p>
                 </div>
-              </div>
-
-              {/* Funnel summary */}
-              <div className="bg-muted/30 rounded-xl border border-border p-5">
-                <h3 className="text-sm font-semibold text-foreground mb-4">Funil de Conversão</h3>
-                <div className="flex items-center gap-2">
-                  {[
-                    { label: "Enviadas", value: enviadas, pct: "100%", color: "bg-primary" },
-                    { label: "Entregues", value: entregues, pct: taxaEntrega + "%", color: "bg-chart-2" },
-                    { label: "Lidas", value: lidas, pct: taxaLeitura + "%", color: "bg-chart-3" },
-                    { label: "Respondidas", value: respondidas, pct: taxaResposta + "%", color: "bg-chart-4" },
-                  ].map((step, i, arr) => (
-                    <div key={step.label} className="flex items-center gap-2 flex-1">
-                      <div className="flex-1 text-center">
-                        <div className={`h-2 rounded-full ${step.color} mb-2`} style={{ width: `${(step.value / Math.max(enviadas, 1)) * 100}%`, minWidth: "8px", margin: "0 auto" }} />
-                        <p className="text-lg font-bold text-foreground">{step.value}</p>
-                        <p className="text-[10px] text-muted-foreground">{step.label}</p>
-                        <p className="text-[10px] font-medium text-foreground">{step.pct}</p>
-                      </div>
-                      {i < arr.length - 1 && (
-                        <span className="text-muted-foreground/40 text-lg">→</span>
-                      )}
-                    </div>
-                  ))}
+              ) : (
+                <div className="rounded-xl border border-border overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-border bg-muted/30">
+                    <h3 className="text-sm font-semibold text-foreground">Últimos envios</h3>
+                    <p className="text-[11px] text-muted-foreground">Até 50 mais recentes</p>
+                  </div>
+                  <ul className="divide-y divide-border">
+                    {data.recent.map((j, i) => {
+                      const st = STATUS_LABEL[j.status] ?? { label: j.status, className: "bg-muted text-muted-foreground" };
+                      return (
+                        <li key={i} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-xs">
+                          <span className="font-medium text-foreground min-w-0 flex-1 truncate">{j.patient_name || "Sem nome"}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${st.className}`}>{st.label}</span>
+                          <span className="text-muted-foreground tabular-nums">{formatDateTime(j.sent_at || j.scheduled_at)}</span>
+                          {j.error && <span className="basis-full text-[11px] text-muted-foreground">{j.error}</span>}
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
-              </div>
+              )}
             </>
           )}
         </div>
@@ -259,9 +138,9 @@ function StatsKpi({ icon: Icon, label, value, sub, color }: {
     <div className="bg-muted/30 rounded-xl border border-border p-3.5 space-y-1">
       <div className={`flex items-center gap-1.5 ${color}`}>
         <Icon className="h-3.5 w-3.5" />
-        <span className="text-[10px] font-medium">{label}</span>
+        <span className="text-[11px] font-medium">{label}</span>
       </div>
-      <p className="text-xl font-bold text-foreground">{value.toLocaleString("pt-BR")}</p>
+      <p className="text-xl font-bold text-foreground tabular-nums">{value.toLocaleString("pt-BR")}</p>
       {sub && <p className="text-[10px] text-muted-foreground">{sub}</p>}
     </div>
   );

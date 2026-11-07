@@ -102,9 +102,10 @@ INSERT INTO tenants (id, nome, slug, status, trial_ends_at)
 VALUES ('00000000-0000-0000-0000-000000000001', 'Legado', 'legado', 'active', NOW() + INTERVAL '100 years')
 ON CONFLICT (id) DO NOTHING;
 
--- Atribui todos os profiles sem tenant ao Legado
-UPDATE profiles SET tenant_id = '00000000-0000-0000-0000-000000000001'
-WHERE tenant_id IS NULL;
+-- (Removido em 2026-11-07) Antes: UPDATE profiles SET tenant_id = Legado WHERE tenant_id IS NULL.
+-- Rodava a cada deploy e jogava na clínica placeholder (que o server.mjs trata como inválida)
+-- todo perfil novo sem clínica, inclusive super-admins. A correção de dados antigos é manual
+-- (migration-tenant-m0-legado.sql, PR #14).
 
 -- Adiciona tenant_id nas tabelas operacionais principais (idempotente)
 DO $$
@@ -115,7 +116,7 @@ BEGIN
   ]) LOOP
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = t) THEN
       EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE', t);
-      EXECUTE format('UPDATE %I SET tenant_id = ''00000000-0000-0000-0000-000000000001'' WHERE tenant_id IS NULL', t);
+      -- (Removido em 2026-11-07) UPDATE ... SET tenant_id = Legado WHERE tenant_id IS NULL a cada deploy.
       EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I(tenant_id)', t || '_tenant_idx', t);
     END IF;
   END LOOP;
@@ -132,7 +133,8 @@ VALUES
    '{"clinicorp": true, "meta_ads": true, "ia_avancada": true}'::jsonb, 3)
 ON CONFLICT (slug) DO NOTHING;
 
--- ─── 8. Marca primeiro super-admin (opcional) ─────────────
--- Se houver um profile admin@odontoconnect.tech, vira super_admin.
-UPDATE profiles SET is_super_admin = true
-WHERE email = 'admin@odontoconnect.tech' AND is_super_admin = false;
+-- ─── 8. Super-admin ───────────────────────────────────────
+-- (Removido em 2026-11-07) Antes: UPDATE profiles SET is_super_admin = true WHERE
+-- email = 'admin@odontoconnect.tech' a cada deploy. Com o cadastro aberto e sem confirmação de
+-- e-mail, quem criasse uma clínica com esse e-mail (caso a conta não existisse) virava
+-- super-admin no deploy seguinte. Super-admin só por `node create-super-admin.mjs`.
