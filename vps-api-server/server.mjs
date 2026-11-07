@@ -8244,7 +8244,8 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
 app.get('/api/comercial/painel', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    const today = new Date().toISOString().split('T')[0];
+    // Dia de São Paulo (toISOString é UTC: depois das 21h o "hoje" virava amanhã).
+    const today = spClock().day;
     const requested = (req.query.attendantId || '').toString();
 
     // Admin pode passar attendantId arbitrário; caso contrário usa o próprio.
@@ -8273,7 +8274,7 @@ app.get('/api/comercial/painel', async (req, res) => {
         `SELECT COUNT(*)::int AS total
            FROM attendance_sessions
           WHERE attendant_id = $1
-            AND assigned_at::date = $2
+            AND (assigned_at AT TIME ZONE 'America/Sao_Paulo')::date = $2::date
             AND tenant_id = $3`,
         [attendantId, today, user.tenant_id]
       ),
@@ -8283,17 +8284,18 @@ app.get('/api/comercial/painel', async (req, res) => {
         `SELECT COUNT(DISTINCT a.id)::int AS total
            FROM agendamentos a
            JOIN crm_leads l ON l.paciente_id = a.paciente_id AND l.tenant_id = a.tenant_id
-          WHERE a.created_at::date = $1
+          WHERE (a.created_at AT TIME ZONE 'America/Sao_Paulo')::date = $1::date
             AND l.assigned_to::text = $2
             AND a.tenant_id = $3`,
         [today, attendantId, user.tenant_id]
       ),
-      // Leads pendentes do atendente: sem_resposta ou aguardando ação
+      // Leads pendentes do atendente: novos, em follow-up ou sem resposta.
+      // (Antes usava etapas que não existem no funil — primeiro_contato, em_negociacao.)
       safe(
         `SELECT COUNT(*)::int AS total
            FROM crm_leads
           WHERE assigned_to = $1
-            AND kanban_stage IN ('sem_resposta','primeiro_contato','em_negociacao')
+            AND kanban_stage IN ('lead','followup','followup_2','followup_3','sem_resposta')
             AND tenant_id = $2`,
         [attendantId, user.tenant_id]
       ),
@@ -8301,7 +8303,8 @@ app.get('/api/comercial/painel', async (req, res) => {
       safe(
         `SELECT COALESCE(NULLIF(origem,''), 'Outros') AS origin,
                 COUNT(*)::int AS leads,
-                COUNT(*) FILTER (WHERE kanban_stage IN ('paciente_agendado','em_atendimento','pos_consulta','finalizado'))::int AS convertidos
+                -- Convertido = virou paciente ou teve orçamento aprovado (as etapas antigas não existiam).
+                COUNT(*) FILTER (WHERE paciente_id IS NOT NULL OR status = 'paciente' OR kanban_stage = 'orcamento_aprovado')::int AS convertidos
            FROM crm_leads
           WHERE (assigned_to = $1 OR $1 IS NULL)
             AND tenant_id = $2
@@ -8320,7 +8323,7 @@ app.get('/api/comercial/painel', async (req, res) => {
            ) m ON true
           WHERE l.assigned_to::text = $1
             AND l.tenant_id = $2
-            AND l.kanban_stage IN ('sem_resposta','primeiro_contato')
+            AND l.kanban_stage IN ('followup','followup_2','followup_3','sem_resposta')
           ORDER BY l.updated_at ASC
           LIMIT 12`,
         [attendantId, user.tenant_id]
@@ -8345,8 +8348,9 @@ app.get('/api/comercial/painel', async (req, res) => {
 
     const stageToType = {
       sem_resposta: 'reativacao',
-      primeiro_contato: 'retorno',
-      em_negociacao: 'confirmacao',
+      followup: 'retorno',
+      followup_2: 'retorno',
+      followup_3: 'retorno',
     };
 
     const followUps = followUpsRows.rows.map(r => ({
@@ -8761,6 +8765,7 @@ app.get('/api/reativacao/rules', async (req, res) => {
 app.post('/api/reativacao/rules', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     const { name, inactiveDays, origin, messageTemplate, status } = req.body || {};
     if (!name || !messageTemplate) {
       return res.status(400).json({ error: 'name e messageTemplate são obrigatórios' });
@@ -8787,6 +8792,7 @@ app.post('/api/reativacao/rules', async (req, res) => {
 app.put('/api/reativacao/rules/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     const { name, inactiveDays, origin, messageTemplate, status } = req.body || {};
     const sets = []; const params = [];
     if (name !== undefined) { params.push(String(name).slice(0, 200)); sets.push(`name=$${params.length}`); }
@@ -8830,6 +8836,7 @@ app.put('/api/reativacao/rules/:id', async (req, res) => {
 app.delete('/api/reativacao/rules/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     const r = await pool.query('DELETE FROM reactivation_rules WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id || null]);
     if (r.rowCount === 0) return res.status(404).json({ error: 'Regra não encontrada' });
     res.json({ success: true });
@@ -8871,6 +8878,7 @@ app.get('/api/reativacao/rules/:id/patients', async (req, res) => {
 app.post('/api/reativacao/rules/:id/send', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const tenantId = String(user.tenant_id);
     const { rows: rulRows } = await pool.query(
@@ -11596,6 +11604,7 @@ function marketingFlowHasHealthVars(trigger, steps) {
 app.post('/api/automations/flows', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id, name, description, type, active, trigger, steps, stats } = req.body;
     if (!name) return res.status(400).json({ error: 'name obrigatório' });
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -11618,6 +11627,7 @@ app.post('/api/automations/flows', async (req, res) => {
 app.put('/api/automations/flows/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id } = req.params;
     const { name, description, type, active, trigger, steps } = req.body;
     if (steps !== undefined || trigger !== undefined) {
@@ -11659,6 +11669,7 @@ app.put('/api/automations/flows/:id', async (req, res) => {
 app.delete('/api/automations/flows/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id } = req.params;
     const { rowCount } = await pool.query('DELETE FROM automation_flows WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]);
     if (!rowCount) return res.status(404).json({ error: 'Fluxo não encontrado' });
@@ -11672,6 +11683,7 @@ app.delete('/api/automations/flows/:id', async (req, res) => {
 app.patch('/api/automations/flows/:id/toggle', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id } = req.params;
     const { rows } = await pool.query(
       `UPDATE automation_flows SET active = NOT active, updated_at = NOW() WHERE id = $1 AND tenant_id = $2 RETURNING active`,
@@ -12959,6 +12971,7 @@ async function triggerAutomationFlows(triggerEvent, patientData) {
 app.post('/api/automations/enqueue', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { flowId, patientName, patientPhone, variables, instance } = req.body;
     if (!flowId || !patientPhone) return res.status(400).json({ error: 'flowId e patientPhone obrigatórios' });
 
@@ -12982,7 +12995,11 @@ app.post('/api/automations/enqueue', async (req, res) => {
     if (await isWhatsAppOptedOut(tenantId, phone)) {
       return res.status(409).json({ error: 'Este paciente pediu para não receber mensagens (SAIR).' });
     }
+    // Fluxo de marketing (inativos, aniversário, orçamento, lead novo) sai como marketing:
+    // rodapé SAIR e sem {{procedimento}}/{{valor}}, como no disparo automático do fluxo.
+    const isMarketing = AUTOMATION_MARKETING_TRIGGERS.has(flow.trigger_event);
     const vars = { nome: patientName || '', telefone: phone, ...stripWhatsAppControlVars(variables) };
+    if (isMarketing) { vars.procedimento = ''; vars.valor = ''; }
     const now = new Date();
     const jobIds = [];
 
@@ -12990,20 +13007,19 @@ app.post('/api/automations/enqueue', async (req, res) => {
       const step = steps[i];
       const delayMs = (step.delayMinutes || 0) * 60 * 1000;
       const scheduledAt = new Date(now.getTime() + delayMs);
-      const finalMessage = replaceVariables(step.message, vars);
+      const replaced = replaceVariables(step.message, vars);
+      const finalMessage = isMarketing ? withMarketingOptOutFooter(replaced) : replaced;
 
       const { rows } = await pool.query(
         `INSERT INTO automation_jobs (tenant_id, category, flow_id, flow_name, step_index, patient_name, patient_phone, instance, variables, message, channel, scheduled_at, trigger_event, expires_at)
-         VALUES ($1,'transactional',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'manual', $11::timestamptz + INTERVAL '7 days') RETURNING id`,
-        [tenantId, flow.id, flow.name, i, patientName || '', phone, instanceName, JSON.stringify(vars), finalMessage, step.channel || 'whatsapp', scheduledAt]
+         VALUES ($1,$12,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'manual', $11::timestamptz + INTERVAL '7 days') RETURNING id`,
+        [tenantId, flow.id, flow.name, i, patientName || '', phone, instanceName, JSON.stringify(vars), finalMessage, step.channel || 'whatsapp', scheduledAt,
+          isMarketing ? 'marketing' : 'transactional']
       );
       jobIds.push(rows[0].id);
     }
-
-    await pool.query(
-      `UPDATE automation_flows SET stats = jsonb_set(stats, '{sent}', to_jsonb(COALESCE((stats->>'sent')::int, 0) + $1)) WHERE id = $2`,
-      [steps.length, flow.id]
-    ).catch(() => {});
+    // stats.sent não é somado aqui: o gancho pós-envio já conta cada envio real
+    // (antes contava duas vezes: no enfileiramento e no envio).
 
     console.log(`🤖 Manual enqueue: ${steps.length} jobs for flow "${flow.name}" → ${maskPhone(phone)}`);
     res.json({ success: true, jobsCreated: jobIds.length, jobIds });
@@ -13037,11 +13053,13 @@ app.get('/api/automations/jobs', async (req, res) => {
 app.delete('/api/automations/jobs/cancel', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { flowId, patientPhone } = req.body || {};
     let sql = `UPDATE automation_jobs SET status = 'cancelled' WHERE status = 'pending'`;
     const vals = [];
+    // Sem filtro, cancelaria toda a fila da clínica (lembretes e confirmações inclusive).
+    if (!flowId && !patientPhone) return res.status(400).json({ error: 'Informe flowId ou patientPhone' });
     if (!user.is_super_admin) { vals.push(user.tenant_id || null); sql += ` AND tenant_id = $${vals.length}`; }
-    else if (!flowId && !patientPhone) return res.status(400).json({ error: 'Informe flowId ou patientPhone' });
     if (flowId) { vals.push(flowId); sql += ` AND flow_id = $${vals.length}`; }
     if (patientPhone) { vals.push(normalizeWhatsappNumber(patientPhone)); sql += ` AND patient_phone = $${vals.length}`; }
     const { rowCount } = await pool.query(sql, vals);
@@ -13135,6 +13153,28 @@ app.get('/api/automations/stats', async (req, res) => {
 // BROADCAST CAMPAIGNS (Disparos) CRUD
 // ═══════════════════════════════════════════════════════════════
 
+// Quem pode criar/alterar/disparar marketing — o mesmo de src/lib/routeAccess.ts.
+// Antes só a tela escondia: pela API qualquer perfil (ex.: dentista) disparava campanha.
+const COMERCIAL_WRITE_ROLES = {
+  campanhas: ['admin'],
+  automacoes: ['admin'],
+  reativacao: ['admin', 'recepcionista', 'comercial'],
+};
+async function userHasAnyRole(user, roles) {
+  if (user?.is_super_admin) return true;
+  if (roles.includes(user?.role)) return true;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM user_roles WHERE user_id = $1 AND role::text = ANY($2::text[]) LIMIT 1', [user?.id, roles]
+  ).catch(() => ({ rows: [] }));
+  return rows.length > 0;
+}
+// Responde 403 e devolve true quando o perfil não pode; uso: if (await denyComercial(res, user, 'campanhas')) return;
+async function denyComercial(res, user, area) {
+  if (await userHasAnyRole(user, COMERCIAL_WRITE_ROLES[area] || ['admin'])) return false;
+  res.status(403).json({ error: 'Seu perfil não tem permissão para esta ação.' });
+  return true;
+}
+
 // List all campaigns
 function mapCampaignRow(r) {
   return {
@@ -13178,6 +13218,7 @@ app.get('/api/campaigns', async (req, res) => {
 app.post('/api/campaigns', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, template, tipo, diasSemana, horarioInicio, horarioFim, dataInicio, dataFim,
       campanhaPerpetua, usarHorarioClinica, publico, filtroCustom, numeroEnvio,
@@ -13212,6 +13253,7 @@ app.post('/api/campaigns', async (req, res) => {
 app.put('/api/campaigns/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const fields = req.body;
     const sets = [];
@@ -13267,6 +13309,7 @@ app.put('/api/campaigns/:id', async (req, res) => {
 app.delete('/api/campaigns/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const { rowCount } = await pool.query(
       'DELETE FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]
@@ -13288,6 +13331,7 @@ app.delete('/api/campaigns/:id', async (req, res) => {
 app.patch('/api/campaigns/:id/toggle', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const { rows } = await pool.query(
       `UPDATE broadcast_campaigns SET ativo = NOT ativo, updated_at = NOW() WHERE id = $1 AND tenant_id = $2 RETURNING ativo`,
@@ -13311,6 +13355,7 @@ app.patch('/api/campaigns/:id/toggle', async (req, res) => {
 app.post('/api/campaigns/:id/duplicate', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const { rows } = await pool.query(
       'SELECT * FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]
@@ -13337,6 +13382,7 @@ app.post('/api/campaigns/:id/duplicate', async (req, res) => {
 });
 
 // Público da campanha — sempre só contatos da clínica dona da campanha.
+const CAMPAIGN_AUDIENCES = ['todos', 'ativos', 'inativos', 'aniversariantes'];
 async function resolveCampaignAudience(camp, tenantId) {
   const limit = Math.min(Number(camp.capacidade_diaria) || 232, 500);
   const publico = camp.publico || 'todos';
@@ -13349,27 +13395,44 @@ async function resolveCampaignAudience(camp, tenantId) {
       return [];
     }
   };
+  // Marketing só para quem já falou com a clínica no WhatsApp (mensagem recebida do
+  // contato, nesta clínica) — regra "opt-in registrado ou conversa prévia" de
+  // docs/whatsapp/diagnostico.md. Não existe registro de opt-in de marketing: sem
+  // conversa, o contato fica de fora (lead importado/cadastrado à mão, agenda do celular).
+  const conversou = (alias, { comLead = true, dias = null } = {}) => `EXISTS (
+       SELECT 1 FROM chat_messages cm
+        WHERE cm.tenant_id = $2 AND cm.sender = 'lead'
+          ${dias ? `AND cm.timestamp > NOW() - INTERVAL '${Number(dias)} days'` : ''}
+          AND (${comLead ? `cm.lead_id = ${alias}.id::text OR ` : ''}${sqlFoneIgual('cm.phone', `${alias}.telefone`)}))`;
   if (publico === 'ativos') {
     return run(`SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
-       INNER JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.tenant_id = cl.tenant_id
-       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.timestamp > NOW() - INTERVAL '180 days'
+       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != ''
+         AND ${conversou('cl', { dias: 180 })}
        LIMIT $1`);
   }
   if (publico === 'inativos') {
     return run(`SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
        LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.tenant_id = cl.tenant_id AND cm.timestamp > NOW() - INTERVAL '90 days'
        WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL
+         AND ${conversou('cl')}
        LIMIT $1`);
   }
   if (publico === 'aniversariantes') {
-    return run(`SELECT nome, telefone FROM contatos
-       WHERE tenant_id = $2 AND telefone IS NOT NULL AND telefone != ''
-         AND EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM NOW())
+    return run(`SELECT nome, telefone FROM contatos c
+       WHERE c.tenant_id = $2 AND c.telefone IS NOT NULL AND c.telefone != ''
+         AND EXTRACT(MONTH FROM c.data_nascimento) = EXTRACT(MONTH FROM NOW())
+         AND ${conversou('c', { comLead: false })}
        LIMIT $1`);
+  }
+  // 'custom' nunca teve filtro no servidor e caía em "todos": público desconhecido não envia.
+  if (publico !== 'todos') {
+    console.warn(`[campaign audience] público "${publico}" sem filtro no servidor: nenhum contato`);
+    return [];
   }
   return run(`SELECT DISTINCT COALESCE(c.nome, cl.nome) AS nome, COALESCE(c.telefone, cl.telefone) AS telefone
      FROM crm_leads cl LEFT JOIN contatos c ON c.telefone = cl.telefone AND c.tenant_id = cl.tenant_id
      WHERE cl.tenant_id = $2 AND COALESCE(c.telefone, cl.telefone) IS NOT NULL AND COALESCE(c.telefone, cl.telefone) != ''
+       AND ${conversou('cl')}
      LIMIT $1`);
 }
 
@@ -13496,9 +13559,12 @@ async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, ex
 
   const spamDays = camp.intervalo_spam || 7;
   const { rows: recentlySent } = await pool.query(
+    // Qualquer marketing (outra campanha, reativação, follow-up) no intervalo conta: o
+    // contato recebe no máximo 1 marketing por intervalo, não 1 por campanha.
     `SELECT DISTINCT patient_phone FROM automation_jobs
-      WHERE trigger_event = 'campaign' AND status IN ('sent', 'pending') AND tenant_id = $3
-        AND COALESCE(sent_at, created_at) > NOW() - INTERVAL '1 day' * $1 AND flow_id = $2`,
+      WHERE status IN ('sent', 'pending') AND tenant_id = $3
+        AND COALESCE(sent_at, created_at) > NOW() - INTERVAL '1 day' * $1
+        AND ((trigger_event = 'campaign' AND flow_id = $2) OR category = 'marketing')`,
     [spamDays, camp.id, tenantId]
   );
   const recentKeys = new Set(recentlySent.map(r => waPhoneKey(r.patient_phone)));
@@ -13570,12 +13636,16 @@ async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, ex
 app.post('/api/campaigns/:id/execute', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows: campRows } = await pool.query(
       'SELECT * FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]
     );
     if (campRows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
     const camp = campRows[0];
+    if (!CAMPAIGN_AUDIENCES.includes(camp.publico || 'todos')) {
+      return res.status(400).json({ error: 'O filtro personalizado ainda não está disponível. Escolha outro público.' });
+    }
     const tenantId = String(user.tenant_id);
     const today = spClock().day;
     let opts = {};
