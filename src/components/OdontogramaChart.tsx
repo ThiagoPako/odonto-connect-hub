@@ -30,7 +30,7 @@ function isUpper(n: number): boolean {
 }
 
 /* ─── Lateral (side) view of each tooth ─── */
-function LateralToothSVG({ numero, status, color, fillColor }: {
+export function LateralToothSVG({ numero, status, color, fillColor }: {
   numero: number; status: StatusDente; color: string; fillColor: string;
 }) {
   const type = getToothType(numero);

@@ -1,4 +1,7 @@
+import { iniciaisNome } from "@/lib/iniciais";
 import { createFileRoute } from "@tanstack/react-router";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { pacientesApi, type HistoricoConsulta } from "@/lib/vpsApi";
@@ -9,6 +12,8 @@ import { crmApi } from "@/lib/vpsApi";
 import { AlertasMedicosBanner } from "@/components/AlertasMedicosBanner";
 import { useAuth } from "@/hooks/useAuth";
 import { extrairAlertasMedicos, type AnamneseVPS } from "@/lib/alertasMedicos";
+import { maskCPF, cpfValido, maskTelefone, telefoneValido, telefoneParaGravar, isoParaBr } from "@/lib/formatos";
+import { localDateISO } from "@/lib/utils";
 import {
   Search,
   Users,
@@ -34,15 +39,17 @@ import {
   Save,
   Loader2,
   Trash2,
-  Filter,
-  ChevronDown,
-  RotateCcw,
 } from "lucide-react";
 
+// Na URL só vão filtros NÃO identificáveis (convênio, sexo). A busca por nome/CPF/telefone fica só na memória (LGPD).
+type PacientesSearch = { pacienteId?: string; convenio?: string; sexo?: string };
 export const Route = createFileRoute("/pacientes")({
-  validateSearch: (search: Record<string, unknown>): { pacienteId?: string } => {
-    const id = search.pacienteId;
-    return typeof id === "string" && id.length > 0 ? { pacienteId: id } : {};
+  validateSearch: (search: Record<string, unknown>): PacientesSearch => {
+    const out: PacientesSearch = {};
+    if (typeof search.pacienteId === "string" && search.pacienteId) out.pacienteId = search.pacienteId;
+    if (typeof search.convenio === "string" && search.convenio) out.convenio = search.convenio;
+    if (typeof search.sexo === "string" && ["masculino", "feminino", "outro"].includes(search.sexo)) out.sexo = search.sexo;
+    return out;
   },
   ssr: false,
   component: PacientesPage,
@@ -64,9 +71,67 @@ interface PacienteAPI {
   updated_at: string;
 }
 
+/** Só a parte aaaa-mm-dd: new Date("1985-03-10") é meia-noite UTC e, no Brasil, vira 09/03. */
+function dataSemHora(v: string | null | undefined): string {
+  return v ? String(v).slice(0, 10) : "";
+}
+
+const soDigitos = (v: string | null | undefined) => (v || "").replace(/\D/g, "");
+
+type ErrosPaciente = Partial<Record<"nome" | "cpf" | "telefone" | "email" | "data_nascimento", string>>;
+
+type CamposValidados = { nome: string; cpf: string; telefone: string; email: string; data_nascimento: string };
+
+/**
+ * Validação do cadastro: mensagens por campo + CPF repetido na clínica (bloqueia)
+ * e telefone repetido (só avisa: famílias costumam dividir o número).
+ * Com `original` (edição), só valida o que a pessoa mudou: um paciente importado
+ * com CPF ruim continua editável nos outros campos.
+ */
+function validarPaciente(
+  form: CamposValidados,
+  pacientes: { id: string; nome: string; cpf: string | null; telefone: string | null }[],
+  proprioId?: string,
+  original?: CamposValidados,
+): { erros: ErrosPaciente; telefoneRepetido: string | null } {
+  const erros: ErrosPaciente = {};
+  const mudou = (k: keyof CamposValidados) => !original || (form[k] || "").trim() !== (original[k] || "").trim();
+  if (mudou("nome")) {
+    if (!form.nome.trim()) erros.nome = "Informe o nome do paciente.";
+    else if (form.nome.trim().length < 3) erros.nome = "Nome muito curto.";
+  }
+  const cpf = soDigitos(form.cpf);
+  if (mudou("cpf") && cpf) {
+    if (!cpfValido(cpf)) erros.cpf = "CPF inválido. Confira os 11 dígitos.";
+    // Mesma frase do servidor (#50); não expõe quem é o outro paciente
+    else if (pacientes.some((p) => p.id !== proprioId && soDigitos(p.cpf) === cpf)) erros.cpf = "Já existe um paciente com este CPF nesta clínica.";
+  }
+  if (mudou("telefone") && form.telefone.trim() && !telefoneValido(form.telefone)) erros.telefone = "Telefone incompleto. Use DDD + número.";
+  if (mudou("email") && form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) erros.email = "E-mail inválido.";
+  if (mudou("data_nascimento") && form.data_nascimento) {
+    if (form.data_nascimento > localDateISO()) erros.data_nascimento = "A data de nascimento não pode ser no futuro.";
+    else if (form.data_nascimento < "1900-01-01") erros.data_nascimento = "Data de nascimento inválida.";
+  }
+  let telefoneRepetido: string | null = null;
+  const tel = soDigitos(form.telefone).slice(-10);
+  if (tel.length === 10) {
+    const outro = pacientes.find((p) => p.id !== proprioId && soDigitos(p.telefone).slice(-10) === tel);
+    if (outro) telefoneRepetido = outro.nome;
+  }
+  return { erros, telefoneRepetido };
+}
+
+function ErroCampo({ id, msg }: { id: string; msg?: string }) {
+  if (!msg) return null;
+  return <p id={`${id}-erro`} className="mt-1 text-xs text-destructive">{msg}</p>;
+}
+const ariaErro = (id: string, msg?: string) =>
+  msg ? { "aria-invalid": true as const, "aria-describedby": `${id}-erro` } : {};
+
 function calcularIdade(dataNasc: string | null): number | null {
   if (!dataNasc) return null;
-  const nasc = new Date(dataNasc);
+  const [y, mo, d] = dataSemHora(dataNasc).split("-").map(Number);
+  const nasc = new Date(y, (mo || 1) - 1, d || 1);
   if (isNaN(nasc.getTime())) return null;
   const hoje = new Date();
   let idade = hoje.getFullYear() - nasc.getFullYear();
@@ -75,13 +140,20 @@ function calcularIdade(dataNasc: string | null): number | null {
   return idade;
 }
 
-function getInitials(nome: string) {
-  return nome
-    .split(" ")
-    .filter((_, i, arr) => i === 0 || i === arr.length - 1)
-    .map((n) => n[0]?.toUpperCase() ?? "")
-    .join("");
+function semAcento(t: string) {
+  return t.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
+
+/** "M"/"masculino" → "masculino"; "F"/"feminino" → "feminino"; outro valor → "outro"; vazio → "". */
+function normalizarSexo(sexo: string | null | undefined): "" | "masculino" | "feminino" | "outro" {
+  const v = (sexo ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "m" || v.startsWith("masc")) return "masculino";
+  if (v === "f" || v.startsWith("fem")) return "feminino";
+  return "outro";
+}
+
+const getInitials = iniciaisNome; // ignora "(Alfa)", "-" etc.
 
 function PacientesPage() {
   const { pacienteId } = Route.useSearch();
@@ -90,9 +162,8 @@ function PacientesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [selectedPaciente, setSelectedPaciente] = useState<PacienteAPI | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
-  const [filterConvenio, setFilterConvenio] = useState("");
-  const [filterSexo, setFilterSexo] = useState("");
+  const [convenioUrl, setFilterConvenio] = useFiltroUrl("convenio");
+  const [filterSexo, setFilterSexo] = useFiltroUrl("sexo", ["masculino", "feminino", "outro"]);
   const [filterIdadeMin, setFilterIdadeMin] = useState("");
   const [filterIdadeMax, setFilterIdadeMax] = useState("");
   const [usingDemo, setUsingDemo] = useState(false);
@@ -136,16 +207,21 @@ function PacientesPage() {
 
   // Unique convenios for filter dropdown
   const convenios = [...new Set(pacientes.map((p) => p.convenio).filter(Boolean))] as string[];
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const filterConvenio = convenioUrl === "__particular" || convenios.includes(convenioUrl) ? convenioUrl : "";
 
-  const hasActiveFilters = filterConvenio || filterSexo || filterIdadeMin || filterIdadeMax;
+  const termo = searchTerm.trim().toLowerCase();
+  const termoDigitos = termo.replace(/\D/g, "");
 
   const filtered = pacientes.filter((p) => {
-    // Text search
-    const matchesSearch =
-      p.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (p.cpf && p.cpf.includes(searchTerm)) ||
-      (p.telefone && p.telefone.includes(searchTerm));
-    if (!matchesSearch) return false;
+    // Busca: nome (sem acento/caixa) ou CPF/telefone (só dígitos, aceita com ou sem máscara)
+    if (termo) {
+      const nomeOk = semAcento(p.nome.toLowerCase()).includes(semAcento(termo));
+      const digOk =
+        termoDigitos.length >= 3 &&
+        (soDigitos(p.cpf).includes(termoDigitos) || soDigitos(p.telefone).includes(termoDigitos));
+      if (!nomeOk && !digOk) return false;
+    }
 
     // Convenio filter
     if (filterConvenio === "__particular") {
@@ -155,7 +231,8 @@ function PacientesPage() {
     }
 
     // Sexo filter
-    if (filterSexo && (p.sexo || "").toLowerCase() !== filterSexo.toLowerCase()) return false;
+    // Sexo: o cadastro grava "masculino"/"feminino", importações (Clinicorp) gravam "M"/"F"
+    if (filterSexo && normalizarSexo(p.sexo) !== filterSexo) return false;
 
     // Age range filter
     const idade = calcularIdade(p.data_nascimento);
@@ -172,151 +249,108 @@ function PacientesPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Cadastro de Pacientes" />
-      <main className="flex-1 p-8 space-y-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 overflow-auto">
         {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
-          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
+          <div className="group bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Total</p>
+            <p className="text-[11px] sm:text-xs uppercase sm:tracking-wider text-muted-foreground font-medium break-words">Total</p>
             <p className="text-2xl font-bold text-card-foreground mt-1 font-heading">{pacientes.length}</p>
           </div>
-          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+          <div className="group bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Com Convênio</p>
+            <p className="text-[11px] sm:text-xs uppercase sm:tracking-wider text-muted-foreground font-medium break-words">Com Convênio</p>
             <p className="text-2xl font-bold text-primary mt-1 font-heading">{comConvenio}</p>
           </div>
-          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+          <div className="group bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Particular</p>
+            <p className="text-[11px] sm:text-xs uppercase sm:tracking-wider text-muted-foreground font-medium break-words">Particular</p>
             <p className="text-2xl font-bold text-card-foreground mt-1 font-heading">{pacientes.length - comConvenio}</p>
           </div>
-          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+          <div className="group bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-success/5 to-transparent rounded-bl-full pointer-events-none" />
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Cadastrados Hoje</p>
+            <p className="text-[11px] sm:text-xs uppercase sm:tracking-wider text-muted-foreground font-medium break-words">Cadastrados Hoje</p>
             <p className="text-2xl font-bold text-success mt-1 font-heading">
               {pacientes.filter((p) => {
-                const today = new Date().toISOString().split("T")[0];
-                return p.created_at?.startsWith(today);
+                // Data local: toISOString() é UTC e, depois das 21h, contava o cadastro como "amanhã"
+                return !!p.created_at && localDateISO(new Date(p.created_at)) === localDateISO();
               }).length}
             </p>
           </div>
         </div>
 
-        {/* Search + Actions */}
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="Buscar por nome, CPF ou telefone..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full h-10 pl-10 pr-4 rounded-xl bg-card border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-              />
-            </div>
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-xs font-semibold transition-colors ${
-                hasActiveFilters
-                  ? "bg-primary/10 border-primary/30 text-primary"
-                  : "bg-card border-border/60 text-muted-foreground hover:text-foreground hover:border-border"
-              }`}
-            >
-              <Filter className="h-3.5 w-3.5" />
-              Filtros
-              {hasActiveFilters && (
-                <span className="ml-1 h-4 w-4 rounded-full bg-primary text-primary-foreground text-[9px] flex items-center justify-center font-bold">
-                  {[filterConvenio, filterSexo, filterIdadeMin || filterIdadeMax].filter(Boolean).length}
-                </span>
-              )}
-              <ChevronDown className={`h-3 w-3 transition-transform ${showFilters ? "rotate-180" : ""}`} />
-            </button>
-          </div>
-          <button
-            onClick={() => setShowForm(true)}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
-          >
-            <UserPlus className="h-4 w-4" />
-            Novo Paciente
-          </button>
-        </div>
-
-        {/* Advanced Filters */}
-        {showFilters && (
-          <div className="bg-card rounded-xl border border-border/60 p-4 animate-fade-in shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Filtros Avançados</p>
-              {hasActiveFilters && (
-                <button
-                  onClick={() => { setFilterConvenio(""); setFilterSexo(""); setFilterIdadeMin(""); setFilterIdadeMax(""); }}
-                  className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <RotateCcw className="h-3 w-3" />
-                  Limpar filtros
-                </button>
-              )}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div>
-                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Convênio</label>
-                <select
-                  value={filterConvenio}
-                  onChange={(e) => setFilterConvenio(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-                >
-                  <option value="">Todos</option>
-                  <option value="__particular">Particular (sem convênio)</option>
-                  {convenios.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Sexo</label>
-                <select
-                  value={filterSexo}
-                  onChange={(e) => setFilterSexo(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-                >
-                  <option value="">Todos</option>
-                  <option value="masculino">Masculino</option>
-                  <option value="feminino">Feminino</option>
-                  <option value="outro">Outro</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Idade mínima</label>
+        {/* Busca + filtros + ação */}
+        <BarraFiltros
+          busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Nome, CPF ou telefone", rotulo: "Buscar paciente por nome, CPF ou telefone" }}
+          filtros={[
+            {
+              id: "convenio",
+              rotulo: "Convênio",
+              valor: filterConvenio,
+              onChange: setFilterConvenio,
+              opcoes: [{ valor: "__particular", rotulo: "Particular (sem convênio)" }, ...convenios.map((c) => ({ valor: c, rotulo: c }))],
+            },
+            {
+              id: "sexo",
+              rotulo: "Sexo",
+              valor: filterSexo,
+              onChange: setFilterSexo,
+              opcoes: [
+                { valor: "feminino", rotulo: "Feminino" },
+                { valor: "masculino", rotulo: "Masculino" },
+                { valor: "outro", rotulo: "Outro" },
+              ],
+            },
+          ]}
+          extras={
+            <fieldset className="flex flex-col gap-1">
+              <legend className="text-xs font-medium text-muted-foreground mb-1">Idade (anos)</legend>
+              <div className="flex items-center gap-2">
                 <input
                   type="number"
+                  inputMode="numeric"
                   min="0"
                   max="120"
+                  aria-label="Idade mínima"
                   value={filterIdadeMin}
                   onChange={(e) => setFilterIdadeMin(e.target.value)}
-                  placeholder="Ex: 18"
-                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="de"
+                  className="w-20 h-10 px-3 rounded-xl bg-card border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
-              </div>
-              <div>
-                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Idade máxima</label>
+                <span className="text-xs text-muted-foreground">a</span>
                 <input
                   type="number"
+                  inputMode="numeric"
                   min="0"
                   max="120"
+                  aria-label="Idade máxima"
                   value={filterIdadeMax}
                   onChange={(e) => setFilterIdadeMax(e.target.value)}
-                  placeholder="Ex: 65"
-                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="até"
+                  className="w-20 h-10 px-3 rounded-xl bg-card border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
               </div>
-            </div>
-            {hasActiveFilters && (
-              <p className="text-[10px] text-muted-foreground mt-3">
-                {filtered.length} paciente{filtered.length !== 1 ? "s" : ""} encontrado{filtered.length !== 1 ? "s" : ""}
-              </p>
-            )}
-          </div>
-        )}
+            </fieldset>
+          }
+          extrasAtivos={filterIdadeMin || filterIdadeMax ? 1 : 0}
+          onLimpar={() => {
+            setSearchTerm("");
+            setFilterConvenio("");
+            setFilterSexo("");
+            setFilterIdadeMin("");
+            setFilterIdadeMax("");
+          }}
+          resultado={`${filtered.length} paciente${filtered.length !== 1 ? "s" : ""}`}
+          acoes={
+            <button
+              onClick={() => setShowForm(true)}
+              className="flex items-center gap-2 px-5 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
+            >
+              <UserPlus className="h-4 w-4" />
+              Novo paciente
+            </button>
+          }
+        />
 
         {/* Loading */}
         {loading && (
@@ -332,9 +366,11 @@ function PacientesPage() {
             {filtered.map((pac) => {
               const idade = calcularIdade(pac.data_nascimento);
               return (
-                <div
+                <button
+                  type="button"
                   key={pac.id}
-                  className="bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 cursor-pointer group"
+                  aria-label={`Abrir ficha de ${pac.nome}`}
+                  className="w-full text-left bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 cursor-pointer group focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                   onClick={() => setSelectedPaciente(pac)}
                 >
                   <div className="flex items-start gap-3">
@@ -342,14 +378,14 @@ function PacientesPage() {
                       {getInitials(pac.nome)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-foreground truncate">{pac.nome}</p>
+                      <p className="text-sm font-semibold text-foreground break-words">{pac.nome}</p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">
                         {idade !== null ? `${idade} anos` : ""}
-                        {pac.sexo ? ` • ${pac.sexo === "masculino" ? "M" : pac.sexo === "feminino" ? "F" : "O"}` : ""}
+                        {normalizarSexo(pac.sexo) ? `${idade !== null ? " • " : ""}${({ masculino: "Masculino", feminino: "Feminino", outro: "Outro" } as const)[normalizarSexo(pac.sexo) as "masculino"]}` : ""}
                       </p>
                       {pac.telefone && (
                         <span className="text-[10px] text-muted-foreground flex items-center gap-1 mt-2">
-                          <Phone className="h-3 w-3" />{pac.telefone}
+                          <Phone className="h-3 w-3" />{maskTelefone(pac.telefone)}
                         </span>
                       )}
                       {pac.convenio && (
@@ -358,11 +394,11 @@ function PacientesPage() {
                         </span>
                       )}
                     </div>
-                    <button className="p-2 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-muted/60 transition-all">
+                    <span aria-hidden className="p-2 rounded-lg opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-all">
                       <Eye className="h-4 w-4 text-muted-foreground" />
-                    </button>
+                    </span>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -385,6 +421,7 @@ function PacientesPage() {
         {/* New Patient Form */}
         {showForm && (
           <NovoPacienteModal
+            pacientes={pacientes}
             onClose={() => setShowForm(false)}
             onSaved={() => {
               setShowForm(false);
@@ -397,19 +434,27 @@ function PacientesPage() {
         {selectedPaciente && (
           <PacienteDetailModal
             paciente={selectedPaciente}
+            pacientesClinica={pacientes}
             onClose={() => setSelectedPaciente(null)}
             onUpdated={() => {
               loadPacientes();
             }}
           />
         )}
-      </main>
+      </div>
     </div>
   );
 }
 
 /* ─── Novo Paciente Modal ─── */
-function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function NovoPacienteModal({ pacientes, onClose, onSaved }: { pacientes: PacienteAPI[]; onClose: () => void; onSaved: () => void }) {
+  const [erros, setErros] = useState<ErrosPaciente>({});
+  // Esc fecha o cadastro (o modal não é um Dialog do shadcn)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   const [saving, setSaving] = useState(false);
   const [showLeadPicker, setShowLeadPicker] = useState(false);
   const [leadSearch, setLeadSearch] = useState("");
@@ -418,7 +463,7 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
     nome: "",
     cpf: "",
     data_nascimento: "",
-    sexo: "masculino",
+    sexo: "",
     telefone: "",
     email: "",
     convenio: "",
@@ -471,7 +516,7 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
     setForm((prev) => ({
       ...prev,
       nome: lead.name,
-      telefone: lead.phone,
+      telefone: maskTelefone(lead.phone || ""),
       observacoes: prev.observacoes
         ? `${prev.observacoes}\nOrigem CRM: ${lead.origin}`
         : `Origem CRM: ${lead.origin}`,
@@ -484,10 +529,14 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  const telefoneRepetido = validarPaciente(form, pacientes).telefoneRepetido;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.nome.trim()) {
-      toast.error("Nome é obrigatório");
+    const { erros: er } = validarPaciente(form, pacientes);
+    setErros(er);
+    if (Object.keys(er).length) {
+      document.getElementById(`novo-${Object.keys(er)[0]}`)?.focus();
       return;
     }
     setSaving(true);
@@ -495,7 +544,8 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
       const { error } = await pacientesApi.create({
         nome: form.nome.trim(),
         cpf: form.cpf.trim() || null,
-        telefone: form.telefone.trim() || null,
+        // Grava só dígitos com 55, igual ao lead do CRM (o servidor cruza por igualdade exata)
+        telefone: telefoneParaGravar(form.telefone),
         email: form.email.trim() || null,
         data_nascimento: form.data_nascimento || null,
         sexo: form.sexo || null,
@@ -530,12 +580,12 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
       <div className="bg-card rounded-2xl border border-border/60 shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto animate-slide-up">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border/60 sticky top-0 bg-card z-10 rounded-t-2xl">
-          <h2 className="text-lg font-bold text-foreground font-heading">Novo Paciente</h2>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted/60 transition-colors">
+          <h2 id="novo-paciente-titulo" className="text-lg font-bold text-foreground font-heading">Novo Paciente</h2>
+          <button onClick={onClose} aria-label="Fechar" className="p-2 rounded-lg hover:bg-muted/60 transition-colors">
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
-        <form className="p-6 space-y-5" onSubmit={handleSubmit}>
+        <form noValidate className="p-4 sm:p-6 space-y-5" onSubmit={handleSubmit}>
           {/* Lead pre-fill banner */}
           <div className="rounded-xl border border-dashed border-primary/30 bg-primary/5 p-4">
             <div className="flex items-center justify-between">
@@ -601,7 +651,7 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
                         {lead.initials}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-foreground truncate">{lead.name}</p>
+                        <p className="text-xs font-semibold text-foreground break-words">{lead.name}</p>
                         <p className="text-[10px] text-muted-foreground">{lead.phone} • {lead.origin}</p>
                       </div>
                       {selectedLeadId === lead.id && (
@@ -614,87 +664,116 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Nome completo *</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2">
+              <label htmlFor="novo-nome" className="text-xs font-medium text-muted-foreground mb-1 block">Nome completo *</label>
               <input
-                required
+                id="novo-nome"
+                autoFocus
+                autoComplete="off"
                 value={form.nome}
                 onChange={(e) => handleChange("nome", e.target.value)}
                 placeholder="Nome do paciente"
-                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                {...ariaErro("novo-nome", erros.nome)}
+                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 aria-[invalid=true]:border-destructive"
               />
+              <ErroCampo id="novo-nome" msg={erros.nome} />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">CPF</label>
+              <label htmlFor="novo-cpf" className="text-xs font-medium text-muted-foreground mb-1 block">CPF</label>
               <input
+                id="novo-cpf"
+                inputMode="numeric"
                 value={form.cpf}
-                onChange={(e) => handleChange("cpf", e.target.value)}
+                onChange={(e) => handleChange("cpf", maskCPF(e.target.value))}
                 placeholder="000.000.000-00"
-                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                {...ariaErro("novo-cpf", erros.cpf)}
+                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 aria-[invalid=true]:border-destructive"
               />
+              <ErroCampo id="novo-cpf" msg={erros.cpf} />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Data de Nascimento</label>
+              <label htmlFor="novo-data_nascimento" className="text-xs font-medium text-muted-foreground mb-1 block">Data de nascimento</label>
               <input
+                id="novo-data_nascimento"
                 type="date"
+                max={localDateISO()}
+                min="1900-01-01"
                 value={form.data_nascimento}
                 onChange={(e) => handleChange("data_nascimento", e.target.value)}
-                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                {...ariaErro("novo-data_nascimento", erros.data_nascimento)}
+                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 aria-[invalid=true]:border-destructive"
               />
+              <ErroCampo id="novo-data_nascimento" msg={erros.data_nascimento} />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Sexo</label>
+              <label htmlFor="novo-sexo" className="text-xs font-medium text-muted-foreground mb-1 block">Sexo</label>
               <select
+                id="novo-sexo"
                 value={form.sexo}
                 onChange={(e) => handleChange("sexo", e.target.value)}
                 className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
               >
+                <option value="">Não informado</option>
                 <option value="masculino">Masculino</option>
                 <option value="feminino">Feminino</option>
                 <option value="outro">Outro</option>
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Telefone</label>
+              <label htmlFor="novo-telefone" className="text-xs font-medium text-muted-foreground mb-1 block">Telefone (WhatsApp)</label>
               <input
+                id="novo-telefone"
+                type="tel"
+                inputMode="tel"
                 value={form.telefone}
-                onChange={(e) => handleChange("telefone", e.target.value)}
+                onChange={(e) => handleChange("telefone", maskTelefone(e.target.value))}
                 placeholder="(11) 99999-0000"
-                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                {...ariaErro("novo-telefone", erros.telefone)}
+                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 aria-[invalid=true]:border-destructive"
               />
+              <ErroCampo id="novo-telefone" msg={erros.telefone} />
+              {!erros.telefone && telefoneRepetido && (
+                <p className="mt-1 text-xs text-warning">Este telefone já está no cadastro de outro paciente da clínica. Confira se não é a mesma pessoa antes de salvar.</p>
+              )}
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">E-mail</label>
+              <label htmlFor="novo-email" className="text-xs font-medium text-muted-foreground mb-1 block">E-mail</label>
               <input
+                id="novo-email"
                 type="email"
                 value={form.email}
                 onChange={(e) => handleChange("email", e.target.value)}
                 placeholder="email@exemplo.com"
-                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                {...ariaErro("novo-email", erros.email)}
+                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 aria-[invalid=true]:border-destructive"
               />
+              <ErroCampo id="novo-email" msg={erros.email} />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Convênio</label>
+              <label htmlFor="novo-convenio" className="text-xs font-medium text-muted-foreground mb-1 block">Convênio</label>
               <input
+                id="novo-convenio"
                 value={form.convenio}
                 onChange={(e) => handleChange("convenio", e.target.value)}
                 placeholder="Ex: Amil Dental, Particular..."
                 className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
-            <div className="col-span-2">
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Endereço</label>
+            <div className="sm:col-span-2">
+              <label htmlFor="novo-endereco" className="text-xs font-medium text-muted-foreground mb-1 block">Endereço</label>
               <input
+                id="novo-endereco"
                 value={form.endereco}
                 onChange={(e) => handleChange("endereco", e.target.value)}
                 placeholder="Rua, número — Cidade, UF"
                 className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
-            <div className="col-span-2">
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Observações</label>
+            <div className="sm:col-span-2">
+              <label htmlFor="novo-observacoes" className="text-xs font-medium text-muted-foreground mb-1 block">Observações</label>
               <textarea
+                id="novo-observacoes"
                 rows={3}
                 value={form.observacoes}
                 onChange={(e) => handleChange("observacoes", e.target.value)}
@@ -749,16 +828,19 @@ interface AnamneseData {
 
 function PacienteDetailModal({
   paciente,
+  pacientesClinica = [],
   onClose,
   onUpdated,
 }: {
   paciente: PacienteAPI;
+  pacientesClinica?: PacienteAPI[];
   onClose: () => void;
   onUpdated?: () => void;
 }) {
   const { user: usuario } = useAuth();
   // DELETE /api/pacientes/:id exige admin (verifyAdmin): para os outros perfis o botão só dava erro
   const podeExcluir = usuario?.role === "admin" || !!usuario?.is_super_admin;
+  const [errosEdicao, setErrosEdicao] = useState<ErrosPaciente>({});
   const [activeTab, setActiveTab] = useState<DetailTab>("dados");
   // Abas já abertas continuam montadas (escondidas): trocar de aba não apaga o que foi digitado
   const [abasVisitadas, setAbasVisitadas] = useState<Set<DetailTab>>(() => new Set<DetailTab>(["dados"]));
@@ -772,9 +854,9 @@ function PacienteDetailModal({
   const [form, setForm] = useState({
     nome: paciente.nome,
     cpf: paciente.cpf || "",
-    data_nascimento: paciente.data_nascimento ? paciente.data_nascimento.split("T")[0] : "",
+    data_nascimento: dataSemHora(paciente.data_nascimento),
     sexo: paciente.sexo || "",
-    telefone: paciente.telefone || "",
+    telefone: paciente.telefone || "", // sem máscara aqui: só muda o formato gravado se a pessoa editar
     email: paciente.email || "",
     convenio: paciente.convenio || "",
     endereco: paciente.endereco || "",
@@ -786,8 +868,14 @@ function PacienteDetailModal({
   };
 
   const handleSave = async () => {
-    if (!form.nome.trim()) {
-      toast.error("Nome é obrigatório");
+    const original = {
+      nome: paciente.nome || "", cpf: paciente.cpf || "", telefone: paciente.telefone || "",
+      email: paciente.email || "", data_nascimento: dataSemHora(paciente.data_nascimento),
+    };
+    const { erros: er } = validarPaciente(form, pacientesClinica, paciente.id, original);
+    setErrosEdicao(er);
+    if (Object.keys(er).length) {
+      toast.error("Confira os campos destacados.");
       return;
     }
     setSaving(true);
@@ -795,7 +883,8 @@ function PacienteDetailModal({
       const { error } = await pacientesApi.update(paciente.id, {
         nome: form.nome.trim(),
         cpf: form.cpf.trim() || null,
-        telefone: form.telefone.trim() || null,
+        // Telefone não alterado vai como estava; alterado vai no formato de gravação (dígitos com 55)
+        telefone: form.telefone.trim() === (paciente.telefone || "").trim() ? (paciente.telefone || null) : telefoneParaGravar(form.telefone),
         email: form.email.trim() || null,
         data_nascimento: form.data_nascimento || null,
         sexo: form.sexo || null,
@@ -821,7 +910,7 @@ function PacienteDetailModal({
     setForm({
       nome: paciente.nome,
       cpf: paciente.cpf || "",
-      data_nascimento: paciente.data_nascimento ? paciente.data_nascimento.split("T")[0] : "",
+      data_nascimento: dataSemHora(paciente.data_nascimento),
       sexo: paciente.sexo || "",
       telefone: paciente.telefone || "",
       email: paciente.email || "",
@@ -829,6 +918,7 @@ function PacienteDetailModal({
       endereco: paciente.endereco || "",
       observacoes: paciente.observacoes || "",
     });
+    setErrosEdicao({});
     setEditing(false);
   };
 
@@ -845,9 +935,9 @@ function PacienteDetailModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
       <div className="bg-card rounded-2xl border border-border/60 shadow-xl w-full max-w-4xl mx-4 max-h-[90vh] overflow-hidden animate-slide-up flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border/60 shrink-0">
-          <div className="flex items-center gap-4">
+        {/* Header — quebra linha no celular para os botões não saírem da tela */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-border/60 shrink-0">
+          <div className="flex items-center gap-4 min-w-0">
             <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
               {getInitials(form.nome || paciente.nome)}
             </div>
@@ -954,49 +1044,49 @@ function PacienteDetailModal({
                   <FileHeart className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                   <div className="flex-1">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Nome</p>
-                    {editing ? <input value={form.nome} onChange={(e) => handleChange("nome", e.target.value)} className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.nome}</p>}
+                    {editing ? <><input aria-label="Nome" value={form.nome} onChange={(e) => handleChange("nome", e.target.value)} className={inputClass + " mt-1"} {...ariaErro("edit-nome", errosEdicao.nome)} /><ErroCampo id="edit-nome" msg={errosEdicao.nome} /></> : <p className="text-sm text-foreground mt-0.5">{paciente.nome}</p>}
                   </div>
                 </div>
                 <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
                   <FileHeart className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                   <div className="flex-1">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">CPF</p>
-                    {editing ? <input value={form.cpf} onChange={(e) => handleChange("cpf", e.target.value)} placeholder="000.000.000-00" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.cpf || "—"}</p>}
+                    {editing ? <><input aria-label="CPF" inputMode="numeric" value={form.cpf} onChange={(e) => handleChange("cpf", maskCPF(e.target.value))} placeholder="000.000.000-00" className={inputClass + " mt-1"} {...ariaErro("edit-cpf", errosEdicao.cpf)} /><ErroCampo id="edit-cpf" msg={errosEdicao.cpf} /></> : <p className="text-sm text-foreground mt-0.5">{paciente.cpf || "—"}</p>}
                   </div>
                 </div>
                 <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
                   <Calendar className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                   <div className="flex-1">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Nascimento</p>
-                    {editing ? <input type="date" value={form.data_nascimento} onChange={(e) => handleChange("data_nascimento", e.target.value)} className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.data_nascimento ? new Date(paciente.data_nascimento).toLocaleDateString("pt-BR") : "—"}</p>}
+                    {editing ? <><input aria-label="Data de nascimento" type="date" max={localDateISO()} min="1900-01-01" value={form.data_nascimento} onChange={(e) => handleChange("data_nascimento", e.target.value)} className={inputClass + " mt-1"} {...ariaErro("edit-nasc", errosEdicao.data_nascimento)} /><ErroCampo id="edit-nasc" msg={errosEdicao.data_nascimento} /></> : <p className="text-sm text-foreground mt-0.5">{paciente.data_nascimento ? isoParaBr(dataSemHora(paciente.data_nascimento)) : "—"}</p>}
                   </div>
                 </div>
                 <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
                   <Phone className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                   <div className="flex-1">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Telefone</p>
-                    {editing ? <input value={form.telefone} onChange={(e) => handleChange("telefone", e.target.value)} placeholder="(11) 99999-0000" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.telefone || "—"}</p>}
+                    {editing ? <><input aria-label="Telefone" type="tel" inputMode="tel" value={form.telefone} onChange={(e) => handleChange("telefone", maskTelefone(e.target.value))} placeholder="(11) 99999-0000" className={inputClass + " mt-1"} {...ariaErro("edit-tel", errosEdicao.telefone)} /><ErroCampo id="edit-tel" msg={errosEdicao.telefone} /></> : <p className="text-sm text-foreground mt-0.5">{paciente.telefone ? maskTelefone(paciente.telefone) : "—"}</p>}
                   </div>
                 </div>
                 <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
                   <Mail className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                   <div className="flex-1">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">E-mail</p>
-                    {editing ? <input type="email" value={form.email} onChange={(e) => handleChange("email", e.target.value)} placeholder="email@exemplo.com" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.email || "—"}</p>}
+                    {editing ? <><input aria-label="E-mail" type="email" value={form.email} onChange={(e) => handleChange("email", e.target.value)} placeholder="email@exemplo.com" className={inputClass + " mt-1"} {...ariaErro("edit-email", errosEdicao.email)} /><ErroCampo id="edit-email" msg={errosEdicao.email} /></> : <p className="text-sm text-foreground mt-0.5">{paciente.email || "—"}</p>}
                   </div>
                 </div>
                 <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
                   <Shield className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                   <div className="flex-1">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Convênio</p>
-                    {editing ? <input value={form.convenio} onChange={(e) => handleChange("convenio", e.target.value)} placeholder="Particular" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.convenio || "Particular"}</p>}
+                    {editing ? <input aria-label="Convênio" value={form.convenio} onChange={(e) => handleChange("convenio", e.target.value)} placeholder="Particular" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.convenio || "Particular"}</p>}
                   </div>
                 </div>
                 <div className="col-span-1 md:col-span-2 bg-muted/30 rounded-xl p-4 flex items-start gap-3">
                   <MapPin className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                   <div className="flex-1">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Endereço</p>
-                    {editing ? <input value={form.endereco} onChange={(e) => handleChange("endereco", e.target.value)} placeholder="Rua, número — Cidade, UF" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.endereco || "—"}</p>}
+                    {editing ? <input aria-label="Endereço" value={form.endereco} onChange={(e) => handleChange("endereco", e.target.value)} placeholder="Rua, número — Cidade, UF" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.endereco || "—"}</p>}
                   </div>
                 </div>
               </div>
