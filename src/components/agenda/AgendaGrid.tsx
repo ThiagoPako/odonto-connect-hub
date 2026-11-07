@@ -44,6 +44,8 @@ const STATUS_STYLE: Record<
   finalizado:      { chip: "bg-muted text-muted-foreground",                                          icon: CheckCircle2, label: "Finalizado",    ring: "ring-muted-foreground/30" },
   faltou:          { chip: "bg-amber-500/15 text-amber-600 dark:text-amber-400",                      icon: AlertCircle,  label: "Faltou",        ring: "ring-amber-500/40" },
   cancelado:       { chip: "bg-destructive/15 text-destructive",                                      icon: XCircle,      label: "Cancelado",     ring: "ring-destructive/40" },
+  // Horário liberado pela recepção (lista de espera)
+  desmarcado:      { chip: "bg-destructive/15 text-destructive",                                      icon: XCircle,      label: "Desmarcado",    ring: "ring-destructive/40" },
 };
 
 // Estado do pedido de confirmação pelo WhatsApp (só para consulta ainda "agendado").
