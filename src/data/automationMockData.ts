@@ -33,6 +33,8 @@ export interface PreConfiguredSolution {
   defaultSteps: AutomationStep[];
   totalPacientes?: number;
   hasDelay?: boolean;
+  /** Motivo de a solução ainda não poder ser ligada (o card mostra e trava o botão). */
+  indisponivel?: string;
 }
 
 export const automationTypes: { id: AutomationType; label: string; color: string; description: string; icon: string }[] = [
@@ -126,6 +128,7 @@ export const preConfiguredSolutions: PreConfiguredSolution[] = [
     type: "inadimplencia",
     trigger: "Parcela ou pagamento em atraso",
     totalPacientes: 0,
+    indisponivel: "Em breve: depende das parcelas a receber no Financeiro. Hoje não há como saber quem está em atraso.",
     defaultSteps: [
       { id: "si1", delay: "1 dia", delayMinutes: 1440, channel: "whatsapp", message: "Olá, {{nome}}. Aqui é do financeiro da {{clinica}}. Há um assunto administrativo no seu cadastro e gostaríamos de ajudar. Pode responder esta mensagem ou falar com a recepção?", variables: ["nome", "clinica"] },
       { id: "si2", delay: "7 dias", delayMinutes: 10080, channel: "whatsapp", message: "{{primeiro_nome}}, aqui é do financeiro da {{clinica}}. Ainda não conseguimos falar com você sobre seu cadastro. Responda esta mensagem para combinarmos a melhor forma de resolver.", variables: ["primeiro_nome", "clinica"] },

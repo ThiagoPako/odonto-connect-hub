@@ -6410,6 +6410,28 @@ async function handleWaitlistOfferReply({ tenantId, phone, msgType, msgContent, 
 // FINANCEIRO
 // ═══════════════════════════════════════════════════════════════
 
+// Financeiro (bancos, salários, CPF de funcionários, movimentações) e comissões são só do
+// administrador — as telas /financeiro e /comissoes já são só de admin (routeAccess.ts), mas a
+// API aceitava qualquer usuário logado (recepção lia salários e lançava saídas no banco).
+app.use(['/api/fin', '/api/financeiro', '/api/comissoes'], async (req, res, next) => {
+  try {
+    await verifyAdmin(req);
+    next();
+  } catch (err) {
+    if (err.message === 'Admin access required') return res.status(403).json({ error: 'Apenas o administrador da clínica acessa o financeiro.' });
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[financeiro:acesso]', err.message);
+    return res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+/** Valor em reais positivo, arredondado a centavos; null se inválido. */
+function valorPositivoEmReais(v) {
+  const n = typeof v === 'string' ? Number(v.trim()) : Number(v);
+  if (v === null || v === undefined || v === '' || !Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
 app.get('/api/financeiro', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -6930,24 +6952,54 @@ app.post('/api/fin/movements', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { type, description, category, value, date, bank_account_id, bank_name, patient, bill_id, payroll_id } = req.body;
+    const { type, description, category, date, bank_account_id, bank_name, patient, bill_id, payroll_id } = req.body;
+    // Valor negativo invertia o sinal do saldo ("+-R$ 50,00"); tipo desconhecido virava saída.
+    if (type !== 'entrada' && type !== 'saida') return res.status(400).json({ error: 'Tipo inválido: use entrada ou saida.' });
+    const value = valorPositivoEmReais(req.body.value);
+    if (value === null) return res.status(400).json({ error: 'O valor precisa ser maior que zero.' });
     if (bank_account_id) {
       const { rows: bank } = await pool.query('SELECT 1 FROM fin_bank_accounts WHERE id=$1 AND tenant_id=$2', [bank_account_id, user.tenant_id]);
       if (bank.length === 0) return res.status(404).json({ error: 'Conta não encontrada' });
     }
+    // Lançamento, saldo e checagem de duplicidade na mesma transação. A linha da conta a pagar /
+    // folha fica travada (FOR UPDATE): dois cliques ou duas abas pagando a mesma conta não
+    // debitam duas vezes — o segundo recebe 409.
     const id = randomUUID();
-    await pool.query(
-      'INSERT INTO fin_movements (id,type,description,category,value,date,bank_account_id,bank_name,patient,bill_id,payroll_id,tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
-      [id, type, description, category, value, date, bank_account_id || null, bank_name || '', patient || null, bill_id || null, payroll_id || null, user.tenant_id]
-    );
-    // Update bank balance
-    if (bank_account_id) {
-      const op = type === 'entrada' ? '+' : '-';
-      await pool.query(`UPDATE fin_bank_accounts SET balance = balance ${op} $1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`, [value, bank_account_id, user.tenant_id]);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const origens = [
+        ['fin_bills', 'bill_id', bill_id, 'Conta a pagar não encontrada', 'Esta conta já foi paga.'],
+        ['fin_payrolls', 'payroll_id', payroll_id, 'Folha não encontrada', 'Esta folha já foi paga.'],
+      ];
+      for (const [tabela, coluna, origemId, naoAchou, jaPaga] of origens) {
+        if (!origemId) continue;
+        const { rows: dono } = await client.query(`SELECT id FROM ${tabela} WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, [origemId, user.tenant_id]);
+        if (dono.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: naoAchou }); }
+        const { rows: ja } = await client.query(`SELECT 1 FROM fin_movements WHERE ${coluna}=$1 AND tenant_id=$2 LIMIT 1`, [origemId, user.tenant_id]);
+        if (ja.length > 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: jaPaga }); }
+      }
+      await client.query(
+        'INSERT INTO fin_movements (id,type,description,category,value,date,bank_account_id,bank_name,patient,bill_id,payroll_id,tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+        [id, type, description, category, value, date, bank_account_id || null, bank_name || '', patient || null, bill_id || null, payroll_id || null, user.tenant_id]
+      );
+      if (bank_account_id) {
+        const op = type === 'entrada' ? '+' : '-';
+        await client.query(`UPDATE fin_bank_accounts SET balance = balance ${op} $1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`, [value, bank_account_id, user.tenant_id]);
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
     }
     const { rows } = await pool.query('SELECT * FROM fin_movements WHERE id=$1 AND tenant_id=$2', [id, user.tenant_id]);
     res.status(201).json(rows[0]);
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) {
+    console.error('[fin:movements:create]', error.message);
+    res.status(500).json({ error: 'Erro ao lançar a movimentação.' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -7314,11 +7366,19 @@ app.post('/api/comissoes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status } = req.body;
+    const { dentista_id, tratamento_id, paciente_id, percentual, data, procedimento, descricao, status } = req.body;
+    const valor = Number(req.body.valor);
+    if (!Number.isFinite(valor) || valor < 0) return res.status(400).json({ error: 'Valor da comissão inválido.' });
+    const perc = percentual === undefined || percentual === null || percentual === '' ? null : Number(percentual);
+    if (perc !== null && (!Number.isFinite(perc) || perc < 0 || perc > 100)) return res.status(400).json({ error: 'Percentual precisa estar entre 0 e 100.' });
+    if (status !== undefined && !['pendente', 'aprovado', 'pago'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO comissoes (id, dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-      [id, dentista_id, tratamento_id, paciente_id, valor, percentual, data || new Date().toISOString().split('T')[0], procedimento, descricao, status || 'pendente', user.tenant_id]
+      // Data padrão no fuso da clínica (toISOString é UTC: depois das 21h gravava o dia seguinte)
+      [id, dentista_id, tratamento_id, paciente_id, Math.round(valor * 100) / 100, perc, data || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }), procedimento, descricao, status || 'pendente', user.tenant_id]
     );
     res.json({ id, success: true });
   } catch (error) {
@@ -7331,6 +7391,9 @@ app.put('/api/comissoes/:id', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { valor, percentual, status, pago, descricao } = req.body;
+    if (status !== undefined && !['pendente', 'aprovado', 'pago'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+    if (valor !== undefined && !(Number.isFinite(Number(valor)) && Number(valor) >= 0)) return res.status(400).json({ error: 'Valor da comissão inválido.' });
+    if (percentual !== undefined && percentual !== null && !(Number(percentual) >= 0 && Number(percentual) <= 100)) return res.status(400).json({ error: 'Percentual precisa estar entre 0 e 100.' });
     const sets = []; const params = [];
     if (valor !== undefined) { params.push(valor); sets.push(`valor=$${params.length}`); }
     if (percentual !== undefined) { params.push(percentual); sets.push(`percentual=$${params.length}`); }
@@ -7470,6 +7533,27 @@ async function congelarVersoesItens(itens, tenantId) {
   return out;
 }
 
+const ORCAMENTO_STATUS = ['pendente', 'aprovado', 'reprovado', 'em_tratamento', 'finalizado'];
+
+/**
+ * Confere os valores de um orçamento antes de gravar. `atual` = linha já gravada (no PUT),
+ * para validar desconto contra o subtotal que vai ficar. Devolve a mensagem de erro ou null.
+ */
+function erroValoresOrcamento(body, atual = null) {
+  const num = (v) => (v === undefined ? undefined : Number(v));
+  const total = num(body.valor_total) ?? Number(atual?.valor_total ?? 0);
+  const desc = num(body.desconto) ?? Number(atual?.desconto ?? 0);
+  if (!Number.isFinite(total) || total < 0) return 'Valor total inválido.';
+  if (!Number.isFinite(desc) || desc < 0) return 'O desconto não pode ser negativo.';
+  if (desc > total) return 'O desconto não pode passar do subtotal.';
+  if (body.parcelas !== undefined && body.parcelas !== null) {
+    const p = Number(body.parcelas);
+    if (!Number.isInteger(p) || p < 1 || p > 48) return 'Número de parcelas inválido (1 a 48).';
+  }
+  if (body.status !== undefined && !ORCAMENTO_STATUS.includes(body.status)) return 'Status inválido.';
+  return null;
+}
+
 app.post('/api/orcamentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -7478,6 +7562,10 @@ app.post('/api/orcamentos', async (req, res) => {
       paciente_id, dentista_id, itens, valor_total, desconto, status, validade,
       observacoes, forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
     } = req.body;
+    const erroValor = erroValoresOrcamento(req.body);
+    if (erroValor) return res.status(400).json({ error: erroValor });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const itensCongelados = await congelarVersoesItens(itens, user.tenant_id);
     const id = crypto.randomUUID();
     await pool.query(
@@ -7510,6 +7598,16 @@ app.put('/api/orcamentos/:id', async (req, res) => {
       itens, valor_total, desconto, status, validade, observacoes,
       forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
     } = req.body;
+    const { rows: atualRows } = await pool.query('SELECT status, valor_total, desconto FROM orcamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (atualRows.length === 0) return res.status(404).json({ error: 'Orçamento não encontrado' });
+    // Orçamento aprovado obriga as duas partes (CDC art. 40 §2º): preço, itens, desconto e
+    // condições só mudam enquanto está pendente. Status muda por PATCH /status.
+    const mexeEmValores = [itens, valor_total, desconto, forma_pagamento, parcelas].some((v) => v !== undefined);
+    if (mexeEmValores && atualRows[0].status !== 'pendente') {
+      return res.status(409).json({ error: 'Orçamento já aprovado ou encerrado: valores e condições não podem ser alterados. Crie um novo orçamento.' });
+    }
+    const erroValor = erroValoresOrcamento(req.body, atualRows[0]);
+    if (erroValor) return res.status(400).json({ error: erroValor });
     const sets = []; const params = [];
     if (itens !== undefined) {
       const itensCongelados = await congelarVersoesItens(itens, user.tenant_id);
@@ -8023,7 +8121,8 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
       // Recebimentos/pagamentos reais do mês: movimentações da tela Financeiro.
       safe(FIN_MES_SQL, ['entrada', user.tenant_id, mesIso, mesBr]),
       safe(FIN_MES_SQL, ['saida', user.tenant_id, mesIso, mesBr]),
-      safe(`SELECT status, COUNT(*)::int AS qtd, COALESCE(SUM(valor_total), 0)::numeric AS soma
+      // valor_total é o subtotal bruto; o que o paciente paga é valor_total − desconto.
+      safe(`SELECT status, COUNT(*)::int AS qtd, COALESCE(SUM(valor_total - COALESCE(desconto, 0)), 0)::numeric AS soma
             FROM orcamentos WHERE tenant_id = $1 GROUP BY status`, [user.tenant_id]),
       safe(`SELECT kanban_stage AS stage, COUNT(*)::int AS qtd FROM crm_leads WHERE tenant_id = $1 GROUP BY kanban_stage`, [user.tenant_id]),
       // pacientes não tem coluna status: ativo = teve agendamento nos últimos 12 meses.
@@ -8346,7 +8445,7 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       // Orçamentos do dentista
       safe(
         `SELECT o.id, o.paciente_id, p.nome as p_nome, o.itens,
-                o.valor_total, o.status, o.created_at
+                o.valor_total, o.desconto, o.status, o.created_at
            FROM orcamentos o
            LEFT JOIN pacientes p ON p.id = o.paciente_id AND p.tenant_id = o.tenant_id
           WHERE o.dentista_id = $1 AND o.tenant_id = $2
@@ -8439,7 +8538,8 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
         pacienteId: r.paciente_id || undefined,
         pacienteNome: r.p_nome || r.paciente_nome || 'Paciente',
         itens: norm,
-        total: Number(r.valor_total || norm.reduce((s, i) => s + i.valor * i.quantidade, 0)),
+        // Total que o paciente paga: subtotal − desconto (valor_total é o bruto)
+        total: Math.round((Number(r.valor_total || norm.reduce((s, i) => s + i.valor * i.quantidade, 0)) - (Number(r.desconto) || 0)) * 100) / 100,
         status: r.status || 'pendente',
         criadoEm: r.created_at,
       };
@@ -11633,16 +11733,9 @@ app.get('/api/automations/solution-counts', async (req, res) => {
          AND NOT EXISTS (SELECT 1 FROM agendamentos b WHERE b.paciente_id = a.paciente_id AND b.tenant_id = a.tenant_id AND b.status IN ('realizado','confirmado','atendido'))`,
         [user.tenant_id]
       ),
-      // Inadimplência: financeiro com tipo receita e valor em parcelas vencidas (simplificado: orçamentos aprovados sem receita correspondente)
-      pool.query(
-        `SELECT COUNT(DISTINCT o.paciente_id) as total FROM orcamentos o
-         WHERE o.status = 'aprovado'
-         AND o.tenant_id = $1
-         AND NOT EXISTS (
-           SELECT 1 FROM financeiro f WHERE f.paciente_id = o.paciente_id AND f.tenant_id = o.tenant_id AND f.tipo = 'receita' AND f.valor >= o.valor_total
-         )`,
-        [user.tenant_id]
-      ),
+      // Inadimplência: sem contas a receber no sistema não há como saber quem está em atraso
+      // (a regra antiga contava todo orçamento aprovado). Fica 0 até existirem parcelas reais.
+      Promise.resolve({ rows: [{ total: 0 }] }),
       // Orçamentos em Aberto: orçamentos com status 'pendente'
       pool.query(
         `SELECT COUNT(DISTINCT paciente_id) as total FROM orcamentos WHERE status = 'pendente' AND tenant_id = $1`,
@@ -13962,21 +14055,11 @@ async function processSolutionTriggers() {
                 LIMIT 100`,
         params: [],
       },
-      {
-        trigger: 'Parcela ou pagamento em atraso',
-        query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, o.valor_total::text as valor
-                FROM orcamentos o
-                JOIN pacientes p ON o.paciente_id = p.id
-                WHERE p.tenant_id = $1
-                AND o.status = 'aprovado'
-                AND p.telefone IS NOT NULL AND p.telefone != ''
-                AND NOT EXISTS (
-                  SELECT 1 FROM financeiro f
-                  WHERE f.paciente_id = o.paciente_id AND f.tipo = 'receita' AND f.valor >= o.valor_total
-                )
-                LIMIT 100`,
-        params: [],
-      },
+      // 'Parcela ou pagamento em atraso' DESLIGADO: não existe contas a receber/parcelas no sistema.
+      // A regra antiga ("orçamento aprovado sem linha na tabela financeiro") marcava como
+      // inadimplente TODO paciente com orçamento aprovado — a tela Financeiro grava em
+      // fin_movements, nunca em financeiro — e mandava cobrança por WhatsApp todo dia a quem já
+      // tinha pago (CDC art. 42). Só religar com parcelas reais (vencimento + baixa por paciente).
       {
         trigger: 'Orçamento criado e não aprovado',
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone,
