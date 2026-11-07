@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
 CREATE TABLE IF NOT EXISTS pacientes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nome TEXT NOT NULL,
-  cpf TEXT UNIQUE,
+  cpf TEXT,  -- único POR CLÍNICA: uq_pacientes_tenant_cpf (migration-unicos-por-clinica.sql)
   telefone TEXT,
   email TEXT,
   data_nascimento DATE,
@@ -48,7 +48,7 @@ ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS convenio TEXT;
 CREATE TABLE IF NOT EXISTS dentistas (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nome TEXT NOT NULL,
-  cro TEXT UNIQUE,
+  cro TEXT,  -- único POR CLÍNICA: uq_dentistas_tenant_cro (migration-unicos-por-clinica.sql)
   especialidade TEXT,
   telefone TEXT,
   email TEXT,

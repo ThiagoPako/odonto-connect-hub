@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
-  Search, CheckCircle2, Clock, Pause, PlayCircle, CalendarDays,
+  CheckCircle2, Clock, Pause, PlayCircle, CalendarDays,
   FileText, Plus, Loader2, X, Trash2, Download,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { tratamentosApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { exportarTratamentosPdf } from "@/lib/tratamentosPdfExport";
@@ -13,6 +15,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { formatBRL, parseValorBRL, maskValorDigitado, isoParaBr } from "@/lib/formatos";
 
 export const Route = createFileRoute("/tratamentos")({
   ssr: false,
@@ -67,8 +70,17 @@ const stepStatusCfg: Record<string, { label: string; color: string }> = {
 };
 
 function getInitials(name: string) {
-  return name.split(" ").filter((_, i, a) => i === 0 || i === a.length - 1).map(n => n[0]).join("").toUpperCase();
+  const partes = name.split(/\s+/).filter((w) => /^\p{L}/u.test(w)); // ignora "(Alfa)"
+  return partes.filter((_, i, a) => i === 0 || i === a.length - 1).map(n => n[0]).join("").toUpperCase() || "?";
 }
+
+/** DATE do banco: usa só aaaa-mm-dd. new Date("2026-11-05") é meia-noite UTC e aparece como 04/11 no Brasil. */
+function dataBr(v: string | null | undefined): string {
+  return v ? isoParaBr(String(v).slice(0, 10)) : "-";
+}
+
+// Status que encerram o tratamento: pedem confirmação antes de gravar
+const STATUS_ENCERRA = new Set(["finalizado", "cancelado"]);
 
 // Data de hoje no fuso do aparelho (AAAA-MM-DD); a coluna data_realizada é DATE.
 function hojeLocal() {
@@ -84,6 +96,7 @@ function TratamentosPage() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [filterStatus, setFilterStatus] = useFiltroUrl("status", Object.keys(treatmentStatusCfg));
   const [showAddModal, setShowAddModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
@@ -183,6 +196,16 @@ function TratamentosPage() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [updatingEtapaId, setUpdatingEtapaId] = useState<string | null>(null);
   const [confirmEtapa, setConfirmEtapa] = useState<EtapaRow | null>(null);
+  const [confirmStatus, setConfirmStatus] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const selecionar = (id: string) => {
+    setSelectedId(id);
+    // No celular o detalhe fica embaixo da lista: leva a pessoa até ele
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches) {
+      requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
+  };
 
   const handleStatusChange = async (id: string, status: string) => {
     setUpdatingStatus(true);
@@ -203,8 +226,10 @@ function TratamentosPage() {
   };
 
   const handleDelete = async () => {
-    if (!deleteTarget) return;
-    const { error } = await tratamentosApi.delete(deleteTarget) as any;
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    const { error } = await tratamentosApi.delete(deleteTarget);
+    setDeleting(false);
     if (error) { toast.error("Erro ao excluir: " + error); return; }
     toast.success("Tratamento excluído com sucesso!");
     setDeleteTarget(null);
@@ -255,8 +280,10 @@ function TratamentosPage() {
     janela.focus();
   };
 
-  const filtered = tratamentos.filter(
-    t => !searchTerm || t.paciente_nome.toLowerCase().includes(searchTerm.toLowerCase()) || t.descricao.toLowerCase().includes(searchTerm.toLowerCase())
+  const termo = searchTerm.trim().toLowerCase();
+  const filtered = tratamentos.filter(t =>
+    (!filterStatus || t.status === filterStatus) &&
+    (!termo || (t.paciente_nome || "").toLowerCase().includes(termo) || (t.descricao || "").toLowerCase().includes(termo))
   );
 
   const selected = tratamentos.find(t => t.id === selectedId) || null;
@@ -276,45 +303,53 @@ function TratamentosPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Gestão de Tratamentos" />
-      <main className="flex-1 p-6 overflow-auto">
+      {/* div e não main: o __root já tem o <main> da página (B5, main aninhado) */}
+      <div className="flex-1 p-4 sm:p-6 overflow-auto space-y-5">
+        <BarraFiltros
+          busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Paciente ou descrição", rotulo: "Buscar tratamento por paciente ou descrição" }}
+          filtros={[{
+            id: "status",
+            rotulo: "Status",
+            valor: filterStatus,
+            onChange: setFilterStatus,
+            opcoes: Object.entries(treatmentStatusCfg).map(([valor, c]) => ({ valor, rotulo: c.label })),
+          }]}
+          onLimpar={() => { setSearchTerm(""); setFilterStatus(""); }}
+          resultado={`${filtered.length} tratamento${filtered.length !== 1 ? "s" : ""}`}
+          acoes={
+            <>
+              <button type="button" onClick={handleExportPdf} disabled={exporting}
+                className="h-10 px-4 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted flex items-center gap-1.5 disabled:opacity-50">
+                {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Exportar PDF
+              </button>
+              <button type="button" onClick={() => setShowAddModal(true)}
+                className="h-10 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 flex items-center gap-1.5">
+                <Plus className="h-4 w-4" /> Novo tratamento
+              </button>
+            </>
+          }
+        />
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Treatment list */}
-          <div className="lg:col-span-3 space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <input type="text" placeholder="Buscar tratamento..." value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full h-9 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
-              </div>
-              <button onClick={() => setShowAddModal(true)}
-                className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 flex items-center gap-1 shrink-0">
-                <Plus className="h-3.5 w-3.5" /> Novo
-              </button>
-              <button onClick={handleExportPdf} disabled={exporting}
-                className="h-9 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted flex items-center gap-1 justify-center shrink-0 disabled:opacity-50"
-                aria-label="Exportar relatório em PDF" title="Exportar relatório em PDF">
-                {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} PDF
-              </button>
-            </div>
+          <div className="lg:col-span-4 xl:col-span-3 space-y-3">
             <div className="space-y-1.5 max-h-[calc(100vh-200px)] overflow-y-auto">
               {filtered.map((t, i) => {
                 const cfg = treatmentStatusCfg[t.status] || treatmentStatusCfg.planejado;
                 return (
-                  <button key={t.id} onClick={() => setSelectedId(t.id)}
+                  <button key={t.id} onClick={() => selecionar(t.id)} aria-pressed={selectedId === t.id}
                     className={`w-full text-left px-3 py-3 rounded-xl border transition-all duration-300 hover-lift ${selectedId === t.id ? "bg-primary/5 border-primary/30 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)]" : "border-transparent hover:bg-muted hover:shadow-card"}`}>
                     <div className="flex items-center gap-2 mb-1.5">
                       <div className={`h-7 w-7 rounded-full ${AVATAR_COLORS[i % AVATAR_COLORS.length]} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>
                         {getInitials(t.paciente_nome || '?')}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-foreground truncate">{t.paciente_nome}</p>
-                        <p className="text-[10px] text-muted-foreground truncate">{t.dentista_nome || t.descricao}</p>
+                        <p className="text-xs font-medium text-foreground break-words">{t.paciente_nome}</p>
+                        <p className="text-[10px] text-muted-foreground break-words">{t.dentista_nome || t.descricao}</p>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${cfg.color}`}>{cfg.label}</span>
-                      <span className="text-[10px] text-muted-foreground">R$ {t.valor.toLocaleString("pt-BR")}</span>
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap ${cfg.color}`}>{cfg.label}</span>
+                      <span className="text-[10px] text-muted-foreground">{formatBRL(t.valor)}</span>
                     </div>
                   </button>
                 );
@@ -325,25 +360,33 @@ function TratamentosPage() {
                   <button type="button" onClick={loadAll} className="text-xs font-semibold underline">Tentar de novo</button>
                 </div>
               )}
-              {!loadError && filtered.length === 0 && <p className="text-xs text-muted-foreground text-center py-8">Nenhum tratamento encontrado</p>}
+              {!loadError && filtered.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-8">
+                  {tratamentos.length === 0 ? "Nenhum tratamento ainda. Toque em \u201cNovo\u201d para criar o primeiro." : "Nenhum tratamento com essa busca."}
+                </p>
+              )}
             </div>
           </div>
 
           {/* Detail area */}
-          <div className="lg:col-span-9 space-y-4">
+          <div className="lg:col-span-8 xl:col-span-9 space-y-4 scroll-mt-4" ref={detailRef}>
             {selected ? (
               <>
                 {/* Header */}
                 <div className="bg-card rounded-xl border border-border p-5">
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
+                  <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                    <div className="min-w-0">
                       <h3 className="text-base font-semibold text-foreground">{selected.paciente_nome}</h3>
                       <p className="text-xs text-muted-foreground">{selected.dentista_nome} · {selected.descricao}</p>
                       {selected.plano && <p className="text-xs text-muted-foreground mt-0.5">Plano: {selected.plano}</p>}
                     </div>
                     <div className="flex items-center gap-2">
                       <select value={selected.status} disabled={updatingStatus}
-                        onChange={(e) => handleStatusChange(selected.id, e.target.value)}
+                        onChange={(e) => {
+                          const novo = e.target.value;
+                          if (STATUS_ENCERRA.has(novo)) setConfirmStatus(novo);
+                          else handleStatusChange(selected.id, novo);
+                        }}
                         aria-label="Status do tratamento"
                         className={`h-8 px-2.5 rounded-full text-xs font-medium border-0 focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60 ${(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).color}`}>
                         {Object.entries(treatmentStatusCfg).map(([key, c]) => <option key={key} value={key}>{c.label}</option>)}
@@ -355,10 +398,10 @@ function TratamentosPage() {
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <StatBox label="Progresso" value={totalSteps > 0 ? `${progress.toFixed(0)}%` : 'N/A'} />
                     <StatBox label="Etapas" value={`${completedSteps}/${totalSteps}`} />
-                    <StatBox label="Valor Total" value={`R$ ${(selected.valor / 1000).toFixed(1)}k`} />
+                    <StatBox label="Valor Total" value={formatBRL(selected.valor)} />
                     <StatBox label="Criado em" value={selected.created_at ? new Date(selected.created_at).toLocaleDateString("pt-BR") : '-'} />
                   </div>
                   {totalSteps > 0 && (
@@ -407,10 +450,10 @@ function TratamentosPage() {
                                 {step.data_realizada && (
                                   <span className="flex items-center gap-0.5">
                                     <CheckCircle2 className="h-2.5 w-2.5 text-success" />
-                                    {new Date(step.data_realizada).toLocaleDateString("pt-BR")}
+                                    {dataBr(step.data_realizada)}
                                   </span>
                                 )}
-                                {step.valor > 0 && <span>· R$ {step.valor.toLocaleString("pt-BR")}</span>}
+                                {step.valor > 0 && <span>· {formatBRL(step.valor)}</span>}
                               </div>
                               {step.observacoes && <p className="text-[10px] text-muted-foreground/70 mt-1 italic">{step.observacoes}</p>}
                             </div>
@@ -432,7 +475,7 @@ function TratamentosPage() {
                 )}
               </>
             ) : (
-              <div className="bg-card rounded-xl border border-border p-8 flex flex-col items-center justify-center text-center min-h-[400px]">
+              <div className="bg-card rounded-xl border border-border p-8 hidden lg:flex flex-col items-center justify-center text-center min-h-[400px]">
                 <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
                 <h3 className="text-sm font-semibold text-foreground mb-1">Selecione um tratamento</h3>
                 <p className="text-xs text-muted-foreground">Clique em um tratamento ao lado para ver detalhes.</p>
@@ -443,32 +486,58 @@ function TratamentosPage() {
 
         {showAddModal && <AddTratamentoModal onSave={handleCreate} onClose={() => setShowAddModal(false)} />}
 
-        {deleteTarget && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-            <div className="bg-card rounded-2xl border border-border/60 shadow-xl w-full max-w-sm mx-4 animate-slide-up p-6 space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-full bg-destructive/15 flex items-center justify-center">
-                  <Trash2 className="h-5 w-5 text-destructive" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-foreground">Excluir Tratamento</h3>
-                  <p className="text-xs text-muted-foreground">Esta ação não pode ser desfeita.</p>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">Tem certeza que deseja excluir este tratamento e todas as suas etapas permanentemente?</p>
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setDeleteTarget(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-medium border border-border hover:bg-muted transition-colors">
-                  Cancelar
-                </button>
-                <button onClick={handleDelete}
-                  className="px-4 py-2 rounded-xl text-xs font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors">
-                  Excluir
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <AlertDialog open={!!deleteTarget} onOpenChange={(o) => { if (!o && !deleting) setDeleteTarget(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Excluir este tratamento?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {(() => {
+                  const t = tratamentos.find((x) => x.id === deleteTarget);
+                  return t ? `${t.descricao} · ${t.paciente_nome}. ` : "";
+                })()}
+                O tratamento e todas as etapas serão apagados. Esta ação não pode ser desfeita.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={deleting}
+                onClick={(e) => { e.preventDefault(); handleDelete(); }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Excluir tratamento
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={!!confirmStatus} onOpenChange={(o) => { if (!o) setConfirmStatus(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {confirmStatus === "cancelado" ? "Cancelar este tratamento?" : "Marcar o tratamento como finalizado?"}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {selected ? `${selected.descricao} · ${selected.paciente_nome}. ` : ""}
+                {totalSteps > completedSteps
+                  ? `Ainda há ${totalSteps - completedSteps} etapa(s) não realizada(s).`
+                  : "Todas as etapas estão realizadas."}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Voltar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  if (selected && confirmStatus) handleStatusChange(selected.id, confirmStatus);
+                  setConfirmStatus(null);
+                }}
+              >
+                {confirmStatus === "cancelado" ? "Cancelar tratamento" : "Finalizar"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Confirmar etapa clínica realizada (não há como desmarcar por esta tela) */}
         <AlertDialog open={!!confirmEtapa} onOpenChange={(o) => { if (!o) setConfirmEtapa(null); }}>
@@ -494,7 +563,7 @@ function TratamentosPage() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-      </main>
+      </div>
     </div>
   );
 }
@@ -566,15 +635,31 @@ function AddTratamentoModal({
     setEtapasForm(updated);
   };
 
-  const valorTotal = etapasForm.reduce((s, e) => s + (Number(e.valor) || 0), 0);
+  // Valor digitado como "1.234,56"; o servidor recebe número
+  const valorTotal = etapasForm.reduce((s, e) => s + (parseValorBRL(e.valor) || 0), 0);
+  const [erros, setErros] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !saving) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, saving]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.paciente_id || !form.dentista_id || !form.descricao) {
-      toast.error(!form.paciente_id ? "Escolha o paciente." : !form.dentista_id ? "Escolha o dentista." : "Preencha a descrição do tratamento.");
-      return;
-    }
-    const validEtapas = etapasForm.filter(et => et.descricao.trim());
+    const er: Record<string, string> = {};
+    if (!form.paciente_id) er.paciente = "Escolha o paciente.";
+    if (!form.dentista_id) er.dentista = dentistas.length === 0 ? "Cadastre um dentista em Dentistas antes." : "Escolha o dentista.";
+    if (!form.descricao.trim()) er.descricao = "Descreva o tratamento.";
+    etapasForm.forEach((et, i) => {
+      if (et.valor.trim() && parseValorBRL(et.valor) === null) er[`valor-${i}`] = "Valor inválido.";
+      if (!et.descricao.trim() && (et.valor.trim() || et.dente.trim())) er[`desc-${i}`] = "Informe o procedimento da etapa.";
+    });
+    setErros(er);
+    if (Object.keys(er).length) return;
+    const validEtapas = etapasForm
+      .filter(et => et.descricao.trim())
+      .map(et => ({ ...et, valor: String(parseValorBRL(et.valor) ?? 0) }));
     setSaving(true);
     await onSave({ ...form, etapas: validEtapas });
     setSaving(false);
@@ -585,17 +670,17 @@ function AddTratamentoModal({
       <div className="bg-card rounded-2xl border border-border/60 shadow-xl w-full max-w-2xl mx-4 animate-slide-up max-h-[90vh] overflow-hidden flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border/60 shrink-0">
           <h2 className="text-lg font-bold text-foreground font-heading">Novo Tratamento</h2>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted/60"><X className="h-4 w-4 text-muted-foreground" /></button>
+          <button onClick={onClose} aria-label="Fechar" className="p-2 rounded-lg hover:bg-muted/60"><X className="h-4 w-4 text-muted-foreground" /></button>
         </div>
 
         {loadingData ? (
           <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
         ) : (
-          <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+          <form noValidate onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Paciente</label>
-                <input type="text" placeholder="Buscar paciente..." value={pacienteSearch}
+                <label htmlFor="trat-busca-paciente" className="text-xs font-medium text-muted-foreground mb-1 block">Paciente *</label>
+                <input id="trat-busca-paciente" type="search" placeholder="Buscar paciente..." value={pacienteSearch}
                   onChange={(e) => handlePacienteSearch(e.target.value)}
                   className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-xs text-foreground mb-1 focus:outline-none focus:ring-1 focus:ring-primary" />
                 <select value={form.paciente_id} onChange={(e) => setForm({ ...form, paciente_id: e.target.value })} required
@@ -607,24 +692,30 @@ function AddTratamentoModal({
                 {pacienteSelecionado && (
                   <p className="text-[11px] text-muted-foreground mt-1">Paciente selecionado: <span className="font-medium text-foreground">{pacienteSelecionado.nome}</span></p>
                 )}
+                {erros.paciente && <p className="text-[11px] text-destructive mt-1">{erros.paciente}</p>}
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Dentista</label>
-                <select value={form.dentista_id} onChange={(e) => setForm({ ...form, dentista_id: e.target.value })}
-                  className="w-full h-10 px-3 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 mt-[calc(2.25rem+0.25rem)]">
-                  {dentistas.map(d => <option key={d.id} value={d.id}>{d.nome} — {d.especialidade}</option>)}
+                <label htmlFor="trat-dentista" className="text-xs font-medium text-muted-foreground mb-1 block sm:mb-[calc(2.25rem+0.5rem)]">Dentista *</label>
+                <select id="trat-dentista" value={form.dentista_id} onChange={(e) => setForm({ ...form, dentista_id: e.target.value })}
+                  aria-invalid={!!erros.dentista || undefined}
+                  className="w-full h-10 px-3 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 aria-[invalid=true]:border-destructive">
+                  {dentistas.length === 0 && <option value="">Nenhum dentista cadastrado</option>}
+                  {dentistas.map(d => <option key={d.id} value={d.id}>{d.nome}{d.especialidade ? ` — ${d.especialidade}` : ""}</option>)}
                 </select>
+                {erros.dentista && <p className="text-[11px] text-destructive mt-1">{erros.dentista}</p>}
               </div>
             </div>
 
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Descrição do Tratamento</label>
-              <input type="text" value={form.descricao} onChange={(e) => setForm({ ...form, descricao: e.target.value })}
-                placeholder="Ex: Implante dentário superior" required
-                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+              <label htmlFor="trat-desc" className="text-xs font-medium text-muted-foreground mb-1 block">Descrição do tratamento *</label>
+              <input id="trat-desc" type="text" value={form.descricao} onChange={(e) => setForm({ ...form, descricao: e.target.value })}
+                placeholder="Ex: Implante dentário superior"
+                aria-invalid={!!erros.descricao || undefined}
+                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 aria-[invalid=true]:border-destructive" />
+              {erros.descricao && <p className="text-[11px] text-destructive mt-1">{erros.descricao}</p>}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Plano/Convênio</label>
                 <input type="text" value={form.plano} onChange={(e) => setForm({ ...form, plano: e.target.value })}
@@ -634,7 +725,7 @@ function AddTratamentoModal({
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Valor Total (etapas)</label>
                 <div className="h-10 px-4 rounded-xl bg-muted/50 border border-border/60 flex items-center text-sm font-bold text-foreground">
-                  R$ {valorTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  {formatBRL(valorTotal)}
                 </div>
               </div>
             </div>
@@ -661,19 +752,27 @@ function AddTratamentoModal({
                     <span className="h-6 w-6 rounded-full bg-primary/15 text-primary flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">
                       {idx + 1}
                     </span>
-                    <div className="flex-1 grid grid-cols-3 gap-2">
-                      <input type="text" value={et.descricao} onChange={(e) => updateEtapa(idx, 'descricao', e.target.value)}
-                        placeholder="Procedimento"
-                        className="col-span-1 h-8 px-3 rounded-lg bg-background border border-border/60 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
-                      <input type="text" value={et.dente} onChange={(e) => updateEtapa(idx, 'dente', e.target.value)}
-                        placeholder="Dente (ex: 14)"
+                    <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      <div className="col-span-2 sm:col-span-1">
+                        <input type="text" value={et.descricao} onChange={(e) => updateEtapa(idx, 'descricao', e.target.value)}
+                          placeholder="Procedimento" aria-label={`Procedimento da etapa ${idx + 1}`}
+                          aria-invalid={!!erros[`desc-${idx}`] || undefined}
+                          className="w-full h-8 px-3 rounded-lg bg-background border border-border/60 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary aria-[invalid=true]:border-destructive" />
+                        {erros[`desc-${idx}`] && <p className="text-[10px] text-destructive mt-0.5">{erros[`desc-${idx}`]}</p>}
+                      </div>
+                      <input type="text" inputMode="numeric" value={et.dente} onChange={(e) => updateEtapa(idx, 'dente', e.target.value)}
+                        placeholder="Dente (ex: 14)" aria-label={`Dente da etapa ${idx + 1}`}
                         className="h-8 px-3 rounded-lg bg-background border border-border/60 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
-                      <input type="number" value={et.valor} onChange={(e) => updateEtapa(idx, 'valor', e.target.value)}
-                        placeholder="Valor (R$)" min="0" step="0.01"
-                        className="h-8 px-3 rounded-lg bg-background border border-border/60 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
+                      <div>
+                        <input type="text" inputMode="decimal" value={et.valor} onChange={(e) => updateEtapa(idx, 'valor', maskValorDigitado(e.target.value))}
+                          placeholder="Valor (R$)" aria-label={`Valor da etapa ${idx + 1}`}
+                          aria-invalid={!!erros[`valor-${idx}`] || undefined}
+                          className="w-full h-8 px-3 rounded-lg bg-background border border-border/60 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary aria-[invalid=true]:border-destructive" />
+                        {erros[`valor-${idx}`] && <p className="text-[10px] text-destructive mt-0.5">{erros[`valor-${idx}`]}</p>}
+                      </div>
                     </div>
                     {etapasForm.length > 1 && (
-                      <button type="button" onClick={() => removeEtapa(idx)}
+                      <button type="button" onClick={() => removeEtapa(idx)} aria-label={`Remover etapa ${idx + 1}`}
                         className="p-1 rounded hover:bg-destructive/15 text-muted-foreground hover:text-destructive shrink-0 mt-0.5">
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -686,7 +785,8 @@ function AddTratamentoModal({
             <div className="flex justify-end gap-2 pt-2 border-t border-border/40">
               <button type="button" onClick={onClose}
                 className="px-4 py-2 rounded-xl text-xs font-medium border border-border hover:bg-muted transition-colors">Cancelar</button>
-              <button type="submit" disabled={saving || !form.paciente_id || !form.dentista_id || !form.descricao}
+              {/* Habilitado: ao clicar, mostra o que falta em vez de ficar cinza sem explicar */}
+              <button type="submit" disabled={saving}
                 className="px-5 py-2 rounded-xl text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5">
                 {saving && <Loader2 className="h-3 w-3 animate-spin" />} Criar Tratamento
               </button>
