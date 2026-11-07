@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { saasApi } from "@/lib/saasApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -53,6 +55,8 @@ function UsuariosPage() {
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [perfilFiltro, setPerfilFiltro] = useFiltroUrl("perfil", ROLES.map((r) => r.value));
+  const [situacaoFiltro, setSituacaoFiltro] = useFiltroUrl("situacao", ["ativo", "inativo"]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [deactivating, setDeactivating] = useState<TenantUser | null>(null);
 
@@ -152,11 +156,17 @@ function UsuariosPage() {
     setPwUser(null); setPwValue("");
   };
 
+  const termo = search.trim().toLowerCase();
   const filtered = users.filter(
     (u) =>
-      u.name.toLowerCase().includes(search.toLowerCase()) ||
-      u.email.toLowerCase().includes(search.toLowerCase()) ||
-      u.role.toLowerCase().includes(search.toLowerCase())
+      (!perfilFiltro || u.role === perfilFiltro) &&
+      (!situacaoFiltro || (situacaoFiltro === "ativo" ? u.active : !u.active)) &&
+      (!termo ||
+        (u.name || "").toLowerCase().includes(termo) ||
+        (u.email || "").toLowerCase().includes(termo) ||
+        // Busca pelo nome do perfil que aparece na tela ("Recepção"), não só pelo código interno
+        roleLabel(u.role).toLowerCase().includes(termo) ||
+        u.role.toLowerCase().includes(termo))
   );
 
   return (
@@ -236,15 +246,15 @@ function UsuariosPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar por nome, email ou perfil..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
+            <BarraFiltros
+              busca={{ valor: search, onChange: setSearch, placeholder: "Nome, e-mail ou perfil", rotulo: "Buscar usuário por nome, e-mail ou perfil" }}
+              filtros={[
+                { id: "perfil", rotulo: "Perfil", valor: perfilFiltro, onChange: setPerfilFiltro, opcoes: ROLES.map((r) => ({ valor: r.value, rotulo: r.label })) },
+                { id: "situacao", rotulo: "Situação", valor: situacaoFiltro, onChange: setSituacaoFiltro, opcoes: [{ valor: "ativo", rotulo: "Ativo" }, { valor: "inativo", rotulo: "Inativo" }] },
+              ]}
+              onLimpar={() => { setSearch(""); setPerfilFiltro(""); setSituacaoFiltro(""); }}
+              resultado={`${filtered.length} usuário${filtered.length !== 1 ? "s" : ""}`}
+            />
 
             {loading ? (
               <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>
@@ -265,7 +275,7 @@ function UsuariosPage() {
                   const initials = u.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
                   const isSelf = u.id === currentUser?.id;
                   return (
-                    <div key={u.id} className={`flex items-center gap-3 p-3 ${!u.active ? "opacity-50" : ""}`}>
+                    <div key={u.id} className={`flex flex-wrap items-center gap-x-3 gap-y-2 p-3 ${!u.active ? "opacity-60" : ""}`}>
                       {u.avatar_url ? (
                         <img src={u.avatar_url} alt={u.name} className="h-9 w-9 rounded-lg object-cover shrink-0" />
                       ) : (
@@ -273,15 +283,15 @@ function UsuariosPage() {
                           {initials}
                         </div>
                       )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">
+                      <div className="flex-1 min-w-[min(100%,10rem)]">
+                        <p className="text-sm font-medium break-words">
                           {u.name} {isSelf && <span className="text-xs text-muted-foreground">(você)</span>}
                         </p>
-                        <p className="text-xs text-muted-foreground truncate">{u.email}</p>
+                        <p className="text-xs text-muted-foreground break-all">{u.email}</p>
                       </div>
                       <Badge variant="outline" className="text-[11px] shrink-0">{roleLabel(u.role)}</Badge>
                       {!u.active && <Badge variant="destructive" className="text-[10px] shrink-0">Inativo</Badge>}
-                      <div className="flex gap-1 shrink-0">
+                      <div className="flex gap-1 shrink-0 ml-auto">
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(u)} title="Editar" aria-label={`Editar ${u.name}`}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>

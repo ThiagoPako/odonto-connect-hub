@@ -290,14 +290,15 @@ function FinanceiroPage() {
       <main className="flex-1 overflow-auto">
         {/* Tabs */}
         <div className="border-b border-border bg-card/80 sticky top-0 z-30 backdrop-blur-md">
-          <div className="flex gap-1 px-6 overflow-x-auto">
+          <div className="flex flex-wrap gap-x-1 px-4 sm:px-6">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               return (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
+                  aria-current={activeTab === tab.id ? "page" : undefined}
+                  className={`flex items-center gap-2 px-3 sm:px-4 py-3 text-xs font-medium border-b-2 transition-all ${
                     activeTab === tab.id
                       ? "border-primary text-primary"
                       : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
@@ -311,7 +312,7 @@ function FinanceiroPage() {
           </div>
         </div>
 
-        <div className="p-6 space-y-6">
+        <div className="p-4 sm:p-6 space-y-6">
           {loadErrors.length > 0 && (
             <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               <div>

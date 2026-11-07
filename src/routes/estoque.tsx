@@ -5,6 +5,8 @@ import {
   Loader2, X,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   inventoryCategories,
@@ -53,7 +55,8 @@ function EstoquePage() {
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [categoryFilter, setCategoryFilter] = useFiltroUrl("categoria", inventoryCategories.map((c) => c.id));
+  const [situacaoFilter, setSituacaoFilter] = useFiltroUrl("situacao", ["baixo", "zerado", "ok"]);
   const [showAddItem, setShowAddItem] = useState(false);
   const [showAddMov, setShowAddMov] = useState(false);
 
@@ -78,8 +81,13 @@ function EstoquePage() {
   useEffect(() => { loadAll(); }, [loadAll]);
 
   const filteredItems = items
-    .filter((i) => categoryFilter === "all" || i.category === categoryFilter)
-    .filter((i) => !searchTerm || i.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    .filter((i) => !categoryFilter || i.category === categoryFilter)
+    .filter((i) =>
+      !situacaoFilter ||
+      (situacaoFilter === "zerado" && i.currentStock === 0) ||
+      (situacaoFilter === "baixo" && i.currentStock <= i.minStock) ||
+      (situacaoFilter === "ok" && i.currentStock > i.minStock))
+    .filter((i) => !searchTerm.trim() || (i.name || "").toLowerCase().includes(searchTerm.trim().toLowerCase()));
 
   const lowStock = items.filter((i) => i.currentStock <= i.minStock);
   const outOfStock = items.filter((i) => i.currentStock === 0);
@@ -126,7 +134,7 @@ function EstoquePage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Controle de Estoque" />
-      <main className="flex-1 p-6 space-y-5 overflow-auto">
+      <main className="flex-1 p-4 sm:p-6 space-y-5 overflow-auto">
         {loadErrors.length > 0 && (
           <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             <div>
@@ -167,11 +175,11 @@ function EstoquePage() {
               <TabsTrigger value="inventory">Inventário</TabsTrigger>
               <TabsTrigger value="movements">Movimentações</TabsTrigger>
             </TabsList>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button onClick={() => setShowAddMov(true)} disabled={items.length === 0}
                 title={items.length === 0 ? "Cadastre um item primeiro" : undefined}
                 className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-muted text-foreground text-xs font-medium hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed">
-                <ArrowDownCircle className="h-3.5 w-3.5" /> Registrar Mov.
+                <ArrowDownCircle className="h-3.5 w-3.5" /> Registrar movimentação
               </button>
               <button onClick={() => setShowAddItem(true)} className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90">
                 <Plus className="h-3.5 w-3.5" /> Novo Item
@@ -180,36 +188,74 @@ function EstoquePage() {
           </div>
 
           <TabsContent value="inventory">
-            {/* Filters */}
-            <div className="flex flex-wrap items-center gap-2 mb-4">
-              <div className="relative w-full sm:w-auto">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <input type="text" placeholder="Buscar item..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                  className="h-8 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-full sm:w-48" />
-              </div>
-              <div className="inline-flex h-9 items-center rounded-lg bg-muted p-0.5 max-w-full overflow-x-auto">
-                <button onClick={() => setCategoryFilter("all")} className={`shrink-0 h-8 px-2.5 rounded-md text-[11px] font-medium transition-colors ${categoryFilter === "all" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}>
-                  Todos
-                </button>
-                {inventoryCategories.map((c) => (
-                  <button key={c.id} onClick={() => setCategoryFilter(c.id)} className={`shrink-0 h-8 px-2.5 rounded-md text-[11px] font-medium transition-colors ${categoryFilter === c.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}>
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* Filtros */}
+            <BarraFiltros
+              className="mb-4"
+              busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Buscar item" }}
+              filtros={[
+                {
+                  id: "categoria",
+                  rotulo: "Categoria",
+                  valor: categoryFilter,
+                  onChange: setCategoryFilter,
+                  rotuloTodos: "Todas",
+                  opcoes: inventoryCategories.map((c) => ({ valor: c.id, rotulo: c.label })),
+                },
+                {
+                  id: "situacao",
+                  rotulo: "Situação",
+                  valor: situacaoFilter,
+                  onChange: setSituacaoFilter,
+                  opcoes: [
+                    { valor: "baixo", rotulo: "Estoque baixo" },
+                    { valor: "zerado", rotulo: "Sem estoque" },
+                    { valor: "ok", rotulo: "Estoque normal" },
+                  ],
+                },
+              ]}
+              onLimpar={() => { setSearchTerm(""); setCategoryFilter(""); setSituacaoFilter(""); }}
+              resultado={`${filteredItems.length} ${filteredItems.length !== 1 ? "itens" : "item"}`}
+            />
 
-            <div className="bg-card rounded-xl border border-border overflow-x-auto">
+            {/* Celular: cartões em vez de tabela */}
+            <ul className="lg:hidden space-y-2">
+              {filteredItems.map((item) => (
+                <li key={item.id} className="bg-card rounded-xl border border-border p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground break-words flex items-center gap-1.5">
+                        {item.currentStock <= item.minStock && <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" aria-label="Estoque baixo" />}
+                        {item.name}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{inventoryCategories.find((c) => c.id === item.category)?.label || item.category}</p>
+                    </div>
+                    <p className="text-right shrink-0">
+                      <span className={`text-base font-bold ${item.currentStock === 0 ? "text-destructive" : item.currentStock <= item.minStock ? "text-warning" : "text-foreground"}`}>{item.currentStock}</span>
+                      <span className="text-[11px] text-muted-foreground ml-1">{item.unit}</span>
+                      <span className="block text-[11px] text-muted-foreground">mínimo {item.minStock}</span>
+                    </p>
+                  </div>
+                  <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                    <dt className="text-muted-foreground">Custo unitário</dt><dd className="text-foreground text-right">R$ {item.unitCost.toLocaleString("pt-BR")}</dd>
+                    {item.supplier && (<><dt className="text-muted-foreground">Fornecedor</dt><dd className="text-foreground text-right break-words">{item.supplier}</dd></>)}
+                    {item.lastEntry && (<><dt className="text-muted-foreground">Atualizado em</dt><dd className="text-foreground text-right">{item.lastEntry}</dd></>)}
+                  </dl>
+                </li>
+              ))}
+              {filteredItems.length === 0 && <li className="py-8 text-center text-xs text-muted-foreground">Nenhum item encontrado</li>}
+            </ul>
+
+            <div className="hidden lg:block bg-card rounded-xl border border-border overflow-x-auto">
               <table className="w-full min-w-[720px]">
                 <thead>
                   <tr className="border-b border-border text-left">
                     <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Item</th>
                     <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Categoria</th>
                     <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider text-center">Estoque</th>
-                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider text-center">Mín</th>
-                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider text-right">Custo Unit.</th>
+                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider text-center">Mínimo</th>
+                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider text-right">Custo unitário</th>
                     <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Fornecedor</th>
-                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Última Atualiz.</th>
+                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Atualizado em</th>
                   </tr>
                 </thead>
                 <tbody>

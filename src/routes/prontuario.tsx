@@ -5,6 +5,7 @@ import {
   AlertCircle, Pill, Heart, User, Calendar, Phone, Loader2, Plus, X,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
 import { prontuariosApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
@@ -116,17 +117,16 @@ function ProntuarioPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Prontuário Eletrônico" />
-      <main className="flex-1 p-6 overflow-auto">
+      <main className="flex-1 p-4 sm:p-6 overflow-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 h-full">
           {/* Patient list */}
-          <div className="lg:col-span-3 space-y-3">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <input type="text" placeholder="Buscar paciente..." value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full h-9 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
-            </div>
-            <div className="space-y-1.5 max-h-[calc(100vh-220px)] overflow-y-auto">
+          <div className="lg:col-span-4 xl:col-span-3 space-y-3">
+            <BarraFiltros
+              busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Buscar paciente", rotulo: "Buscar paciente pelo nome" }}
+              onLimpar={() => setSearchTerm("")}
+              resultado={`${allFiltered.length} paciente${allFiltered.length !== 1 ? "s" : ""}`}
+            />
+            <div className="space-y-1.5 max-h-[40vh] lg:max-h-[calc(100vh-220px)] overflow-y-auto">
               {allFiltered.map((p, i) => {
                 const count = prontuarios.filter(pr => pr.paciente_id === p.id).length;
                 return (
@@ -136,8 +136,8 @@ function ProntuarioPage() {
                       {getInitials(p.nome)}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-foreground truncate">{p.nome}</p>
-                      <p className="text-[10px] text-muted-foreground">{count} registros</p>
+                      <p className="text-xs font-medium text-foreground break-words">{p.nome}</p>
+                      <p className="text-[10px] text-muted-foreground">{count} registro{count !== 1 ? "s" : ""}</p>
                     </div>
                   </button>
                 );
@@ -147,31 +147,31 @@ function ProntuarioPage() {
           </div>
 
           {/* Patient details */}
-          <div className="lg:col-span-9 space-y-4">
+          <div className="lg:col-span-8 xl:col-span-9 space-y-4">
             {selectedPaciente ? (
               <>
                 {/* Header card */}
                 <div className="bg-card rounded-xl border border-border p-5">
-                  <div className="flex items-start gap-4">
+                  <div className="flex flex-wrap items-start gap-4">
                     <div className={`h-14 w-14 rounded-full bg-primary flex items-center justify-center text-lg font-bold text-primary-foreground shrink-0`}>
                       {getInitials(selectedPaciente.nome)}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-semibold text-foreground">{selectedPaciente.nome}</h3>
+                    <div className="flex-1 min-w-[min(100%,12rem)]">
+                      <h3 className="text-base font-semibold text-foreground break-words">{selectedPaciente.nome}</h3>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-muted-foreground">
                         {selectedPaciente.cpf && <span className="flex items-center gap-1"><User className="h-3 w-3" /> CPF: {selectedPaciente.cpf}</span>}
                         {selectedPaciente.telefone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" /> {selectedPaciente.telefone}</span>}
                       </div>
                     </div>
                     <button onClick={() => setShowAdd(true)} className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90">
-                      <Plus className="h-3.5 w-3.5" /> Nova Evolução
+                      <Plus className="h-3.5 w-3.5" /> Nova evolução
                     </button>
                   </div>
                 </div>
 
                 {/* Clinical history */}
                 <div className="bg-card rounded-xl border border-border p-5">
-                  <h4 className="text-sm font-semibold text-card-foreground mb-4">Histórico Clínico ({selectedEntries.length} registros)</h4>
+                  <h4 className="text-sm font-semibold text-card-foreground mb-4">Histórico clínico ({selectedEntries.length} registro{selectedEntries.length !== 1 ? "s" : ""})</h4>
                   <div className="space-y-3">
                     {selectedEntries.map(entry => {
                       const cfg = entryTypeConfig[entry.tipo] || entryTypeConfig.evolucao;

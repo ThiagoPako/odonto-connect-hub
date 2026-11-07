@@ -5,6 +5,8 @@ import {
   FileText, Plus, Loader2, X, Trash2, Download,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { tratamentosApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { exportarTratamentosPdf } from "@/lib/tratamentosPdfExport";
@@ -84,6 +86,7 @@ function TratamentosPage() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [filterStatus, setFilterStatus] = useFiltroUrl("status", Object.keys(treatmentStatusCfg));
   const [showAddModal, setShowAddModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
@@ -255,8 +258,10 @@ function TratamentosPage() {
     janela.focus();
   };
 
-  const filtered = tratamentos.filter(
-    t => !searchTerm || t.paciente_nome.toLowerCase().includes(searchTerm.toLowerCase()) || t.descricao.toLowerCase().includes(searchTerm.toLowerCase())
+  const termo = searchTerm.trim().toLowerCase();
+  const filtered = tratamentos.filter(t =>
+    (!filterStatus || t.status === filterStatus) &&
+    (!termo || (t.paciente_nome || "").toLowerCase().includes(termo) || (t.descricao || "").toLowerCase().includes(termo))
   );
 
   const selected = tratamentos.find(t => t.id === selectedId) || null;
@@ -276,27 +281,34 @@ function TratamentosPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Gestão de Tratamentos" />
-      <main className="flex-1 p-6 overflow-auto">
+      <main className="flex-1 p-4 sm:p-6 overflow-auto space-y-5">
+        <BarraFiltros
+          busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Paciente ou descrição", rotulo: "Buscar tratamento por paciente ou descrição" }}
+          filtros={[{
+            id: "status",
+            rotulo: "Status",
+            valor: filterStatus,
+            onChange: setFilterStatus,
+            opcoes: Object.entries(treatmentStatusCfg).map(([valor, c]) => ({ valor, rotulo: c.label })),
+          }]}
+          onLimpar={() => { setSearchTerm(""); setFilterStatus(""); }}
+          resultado={`${filtered.length} tratamento${filtered.length !== 1 ? "s" : ""}`}
+          acoes={
+            <>
+              <button type="button" onClick={handleExportPdf} disabled={exporting}
+                className="h-10 px-4 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted flex items-center gap-1.5 disabled:opacity-50">
+                {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Exportar PDF
+              </button>
+              <button type="button" onClick={() => setShowAddModal(true)}
+                className="h-10 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 flex items-center gap-1.5">
+                <Plus className="h-4 w-4" /> Novo tratamento
+              </button>
+            </>
+          }
+        />
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Treatment list */}
-          <div className="lg:col-span-3 space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <input type="text" placeholder="Buscar tratamento..." value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full h-9 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
-              </div>
-              <button onClick={() => setShowAddModal(true)}
-                className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 flex items-center gap-1 shrink-0">
-                <Plus className="h-3.5 w-3.5" /> Novo
-              </button>
-              <button onClick={handleExportPdf} disabled={exporting}
-                className="h-9 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted flex items-center gap-1 justify-center shrink-0 disabled:opacity-50"
-                aria-label="Exportar relatório em PDF" title="Exportar relatório em PDF">
-                {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} PDF
-              </button>
-            </div>
+          <div className="lg:col-span-4 xl:col-span-3 space-y-3">
             <div className="space-y-1.5 max-h-[calc(100vh-200px)] overflow-y-auto">
               {filtered.map((t, i) => {
                 const cfg = treatmentStatusCfg[t.status] || treatmentStatusCfg.planejado;
@@ -308,12 +320,12 @@ function TratamentosPage() {
                         {getInitials(t.paciente_nome || '?')}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-foreground truncate">{t.paciente_nome}</p>
-                        <p className="text-[10px] text-muted-foreground truncate">{t.dentista_nome || t.descricao}</p>
+                        <p className="text-xs font-medium text-foreground break-words">{t.paciente_nome}</p>
+                        <p className="text-[10px] text-muted-foreground break-words">{t.dentista_nome || t.descricao}</p>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${cfg.color}`}>{cfg.label}</span>
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap ${cfg.color}`}>{cfg.label}</span>
                       <span className="text-[10px] text-muted-foreground">R$ {t.valor.toLocaleString("pt-BR")}</span>
                     </div>
                   </button>
@@ -330,7 +342,7 @@ function TratamentosPage() {
           </div>
 
           {/* Detail area */}
-          <div className="lg:col-span-9 space-y-4">
+          <div className="lg:col-span-8 xl:col-span-9 space-y-4">
             {selected ? (
               <>
                 {/* Header */}
