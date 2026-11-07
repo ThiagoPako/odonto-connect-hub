@@ -5563,6 +5563,10 @@ app.get('/api/agenda', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json([]);
     const { data_inicio, data_fim, dentista_id } = req.query;
+    if ((data_inicio && !agendaDataValida(data_inicio)) || (data_fim && !agendaDataValida(data_fim))) {
+      return res.status(400).json({ error: 'Data inválida (use AAAA-MM-DD)' });
+    }
+    if (dentista_id && !PACIENTE_UUID_RE.test(String(dentista_id))) return res.status(400).json({ error: 'Profissional inválido' });
     // lembrete_status: 'na_fila' | 'aguardando' (enviado, sem resposta) | 'confirmado' | 'remarcar' | 'falhou' | null
     let query = `SELECT a.*,
       COALESCE(NULLIF(TRIM(p.nome), ''), a.paciente_nome) AS paciente_nome,
@@ -5623,6 +5627,17 @@ app.delete('/api/agenda/marcadores/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// Data AAAA-MM-DD que existe no calendário e hora HH:MM(:SS). Sem isso "07/11/2026"
+// era gravado como 11 de julho (DateStyle MDY) e "25:99" virava erro 500.
+function agendaDataValida(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(`${v}T12:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+}
+function agendaHoraValida(v) {
+  return typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(v);
+}
+
 // Nomes do paciente e do profissional lidos do cadastro da própria clínica (nunca do
 // corpo da requisição). Chamar depois de validarReferenciasDoTenant: aqui id ausente
 // ou não encontrado na clínica vira nome null.
@@ -5645,6 +5660,8 @@ app.post('/api/agenda', async (req, res) => {
       confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
       evento_titulo, sala, serie_id, marcadores, como_conheceu,
     } = req.body;
+    if (!agendaDataValida(data)) return res.status(400).json({ error: 'Data inválida (use AAAA-MM-DD)' });
+    if (!agendaHoraValida(hora)) return res.status(400).json({ error: 'Horário inválido (use HH:MM)' });
     const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
     if (refErro) return res.status(400).json({ error: refErro });
     const nomes = await resolverNomesAgenda(user.tenant_id, paciente_id, dentista_id);
@@ -5761,14 +5778,22 @@ app.delete('/api/agenda/:id', async (req, res) => {
     const { serie } = req.query; // ?serie=true → exclui toda a série
     const changed = () => broadcastSSE('agendamento_changed', { action: 'deleted', id: req.params.id }, tId);
     if (serie === 'true') {
-      const { rows } = await pool.query('SELECT serie_id FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
-      const sid = rows[0]?.serie_id;
+      if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Agendamento não encontrado' });
+      const { rows } = await pool.query('SELECT serie_id, data FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
+      if (!rows.length) return res.status(404).json({ error: 'Agendamento não encontrado' });
+      const sid = rows[0].serie_id;
       if (!sid) {
         const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
         changed();
         return res.json({ success: true, deleted: rowCount });
       }
-      const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE serie_id=$1 AND tenant_id=$2', [sid, tId]);
+      // "Este e os próximos": sessões anteriores e as já atendidas ficam (histórico do paciente).
+      // Antes apagava a série inteira, inclusive sessões finalizadas no passado.
+      const { rowCount } = await pool.query(
+        `DELETE FROM agendamentos WHERE serie_id=$1 AND tenant_id=$2 AND data >= $3
+            AND COALESCE(status, '') NOT IN ('finalizado', 'realizado', 'em_atendimento', 'faltou')`,
+        [sid, tId, agendaYmd(rows[0].data)]
+      );
       changed();
       return res.json({ success: true, deleted: rowCount });
     }
@@ -5843,7 +5868,9 @@ app.put('/api/agenda/:id', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const { id } = req.params;
-    const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, marcadores, como_conheceu } = req.body;
+    const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, marcadores, como_conheceu, categoria, categoria_cor } = req.body;
+    if (data && !agendaDataValida(data)) return res.status(400).json({ error: 'Data inválida (use AAAA-MM-DD)' });
+    if (hora && !agendaHoraValida(hora)) return res.status(400).json({ error: 'Horário inválido (use HH:MM)' });
     const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
     if (refErro) return res.status(400).json({ error: refErro });
     // dentista_nome vem do cadastro da clínica, não do corpo da requisição.
@@ -5863,6 +5890,9 @@ app.put('/api/agenda/:id', async (req, res) => {
     }
     if (Array.isArray(marcadores)) { params.push(JSON.stringify(marcadores)); sets.push(`marcadores = $${params.length}::jsonb`); }
     if (como_conheceu !== undefined) { params.push(como_conheceu || null); sets.push(`como_conheceu = $${params.length}`); }
+    // Editar agendamento troca o procedimento pelo catálogo: categoria e cor vinham e eram ignoradas.
+    if (categoria !== undefined) { params.push(categoria || null); sets.push(`categoria = $${params.length}`); }
+    if (categoria_cor !== undefined) { params.push(categoria_cor || null); sets.push(`categoria_cor = $${params.length}`); }
     // Horário liberado pela recepção (cancelado/desmarcado): registra quem e quando.
     if (status === 'cancelado' || status === 'desmarcado') {
       params.push(PACIENTE_UUID_RE.test(String(user.id || '')) ? user.id : null);
