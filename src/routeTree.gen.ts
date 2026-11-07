@@ -30,6 +30,7 @@ import { Route as MetricasRouteImport } from './routes/metricas'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IntegracoesRouteImport } from './routes/integracoes'
 import { Route as FinanceiroRouteImport } from './routes/financeiro'
+import { Route as ExportarDadosRouteImport } from './routes/exportar-dados'
 import { Route as ExamesRouteImport } from './routes/exames'
 import { Route as EstoqueRouteImport } from './routes/estoque'
 import { Route as EquipeRouteImport } from './routes/equipe'
@@ -155,6 +156,11 @@ const FinanceiroRoute = FinanceiroRouteImport.update({
   path: '/financeiro',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ExportarDadosRoute = ExportarDadosRouteImport.update({
+  id: '/exportar-dados',
+  path: '/exportar-dados',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExamesRoute = ExamesRouteImport.update({
   id: '/exames',
   path: '/exames',
@@ -270,6 +276,7 @@ export interface FileRoutesByFullPath {
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/exames': typeof ExamesRoute
+  '/exportar-dados': typeof ExportarDadosRoute
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
@@ -312,6 +319,7 @@ export interface FileRoutesByTo {
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/exames': typeof ExamesRoute
+  '/exportar-dados': typeof ExportarDadosRoute
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
@@ -355,6 +363,7 @@ export interface FileRoutesById {
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/exames': typeof ExamesRoute
+  '/exportar-dados': typeof ExportarDadosRoute
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
@@ -399,6 +408,7 @@ export interface FileRouteTypes {
     | '/equipe'
     | '/estoque'
     | '/exames'
+    | '/exportar-dados'
     | '/financeiro'
     | '/integracoes'
     | '/login'
@@ -441,6 +451,7 @@ export interface FileRouteTypes {
     | '/equipe'
     | '/estoque'
     | '/exames'
+    | '/exportar-dados'
     | '/financeiro'
     | '/integracoes'
     | '/login'
@@ -483,6 +494,7 @@ export interface FileRouteTypes {
     | '/equipe'
     | '/estoque'
     | '/exames'
+    | '/exportar-dados'
     | '/financeiro'
     | '/integracoes'
     | '/login'
@@ -526,6 +538,7 @@ export interface RootRouteChildren {
   EquipeRoute: typeof EquipeRoute
   EstoqueRoute: typeof EstoqueRoute
   ExamesRoute: typeof ExamesRoute
+  ExportarDadosRoute: typeof ExportarDadosRoute
   FinanceiroRoute: typeof FinanceiroRoute
   IntegracoesRoute: typeof IntegracoesRoute
   LoginRoute: typeof LoginRoute
@@ -698,6 +711,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FinanceiroRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/exportar-dados': {
+      id: '/exportar-dados'
+      path: '/exportar-dados'
+      fullPath: '/exportar-dados'
+      preLoaderRoute: typeof ExportarDadosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/exames': {
       id: '/exames'
       path: '/exames'
@@ -865,6 +885,7 @@ const rootRouteChildren: RootRouteChildren = {
   EquipeRoute: EquipeRoute,
   EstoqueRoute: EstoqueRoute,
   ExamesRoute: ExamesRoute,
+  ExportarDadosRoute: ExportarDadosRoute,
   FinanceiroRoute: FinanceiroRoute,
   IntegracoesRoute: IntegracoesRoute,
   LoginRoute: LoginRoute,

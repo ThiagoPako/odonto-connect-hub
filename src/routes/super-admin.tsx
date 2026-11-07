@@ -90,6 +90,22 @@ function SuperAdminPage() {
     reload();
   };
 
+  // Pagamento confirmado (sem gateway, manual): ativa e estende o vencimento em 30 dias a partir
+  // do vencimento atual, ou de hoje se já passou.
+  const renovar30 = async (t: Tenant) => {
+    if ((t.status === "suspended" || t.status === "canceled") &&
+        !window.confirm(`${t.nome} está ${t.status === "suspended" ? "suspensa" : "cancelada"}. Reativar e estender por 30 dias?`)) return;
+    if (t.status === "active" && !t.current_period_end &&
+        !window.confirm(`${t.nome} está ativa sem data de vencimento. Criar vencimento daqui a 30 dias?`)) return;
+    const atual = t.status === "trial" ? t.trial_ends_at : t.current_period_end;
+    const base = Math.max(Date.now(), atual ? new Date(atual).getTime() : 0);
+    const novo = new Date(base + 30 * 86400000).toISOString();
+    const r = await saasApi.updateTenant(t.id, { status: "active", current_period_end: novo });
+    if (r.error) return toast.error(r.error);
+    toast.success(`${t.nome}: válida até ${new Date(novo).toLocaleDateString("pt-BR")}`);
+    reload();
+  };
+
   const setPlan = async (id: string, slug: string) => {
     const r = await saasApi.updateTenant(id, { plan_slug: slug });
     if (r.error) return toast.error(r.error);
@@ -187,11 +203,32 @@ function SuperAdminPage() {
                               <Badge variant={t.status === "active" ? "default" : t.status === "trial" ? "secondary" : "outline"} className="h-5 px-1.5 text-[10px] uppercase">
                                 {t.status}
                               </Badge>
+                              {t.assinatura?.situacao === "carencia" && (
+                                <Badge variant="outline" className="h-5 px-1.5 text-[10px] border-warning/60 text-warning-ink bg-warning-soft">
+                                  Vencida · consulta em {t.assinatura.dias_para_proxima}d
+                                </Badge>
+                              )}
+                              {t.assinatura?.situacao === "somente_leitura" && (
+                                <Badge variant="outline" className="h-5 px-1.5 text-[10px] border-destructive/50 text-destructive">
+                                  Modo consulta · bloqueia em {t.assinatura.dias_para_proxima}d
+                                </Badge>
+                              )}
+                              {t.assinatura?.situacao === "bloqueado" && (
+                                <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">Bloqueada</Badge>
+                              )}
+                              {t.assinatura?.situacao === "cancelado" && (
+                                <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">
+                                  Cancelada{t.assinatura.exclusao_em ? ` · exclusão ${new Date(t.assinatura.exclusao_em).toLocaleDateString("pt-BR")}` : ""}
+                                </Badge>
+                              )}
                             </div>
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
                               <span className="flex items-center gap-1"><Users size={14} /> {t.users_count ?? 0} usuários</span>
                               <span className="flex items-center gap-1 lowercase"><Search size={14} /> /{t.slug}</span>
                               <span className="flex items-center gap-1 font-mono text-xs opacity-70">{t.id.slice(0, 8)}...</span>
+                              {t.assinatura?.vence_em && (
+                                <span className="flex items-center gap-1"><Calendar size={14} /> vence {new Date(t.assinatura.vence_em).toLocaleDateString("pt-BR")}</span>
+                              )}
                             </div>
                             <div className="mt-2 text-sm font-medium flex items-center gap-1">
                               <span className="text-muted-foreground font-normal">Contato:</span> {t.email_contato}
@@ -233,6 +270,10 @@ function SuperAdminPage() {
                                 </SelectContent>
                               </Select>
                             </div>
+
+                            <Button variant="outline" size="sm" className="h-9 gap-1.5" onClick={() => renovar30(t)} title="Pagamento confirmado: ativa e estende o vencimento em 30 dias">
+                              <RefreshCw size={14} /> Renovar +30 dias
+                            </Button>
 
                             <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg" title="Ver detalhes da conta">
                               <ExternalLink size={18} />

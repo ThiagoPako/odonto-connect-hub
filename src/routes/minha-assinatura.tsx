@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { saasApi, type Tenant, type Subscription, type Invoice, type Plan } from "@/lib/saasApi";
 import { DashboardHeader } from "@/components/DashboardHeader";
@@ -16,7 +16,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { AlertTriangle, CreditCard, Crown, Loader2, RefreshCw } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { AlertTriangle, CreditCard, Crown, Download, Loader2, RefreshCw } from "lucide-react";
 
 export const Route = createFileRoute("/minha-assinatura")({
   ssr: false,
@@ -47,6 +48,8 @@ const limite = (v: number | null, singular: string, plural: string) =>
   v == null ? `${plural} ilimitados` : `até ${v} ${v === 1 ? singular : plural}`;
 
 function MinhaAssinaturaPage() {
+  const { user } = useAuth();
+  const assinatura = user?.assinatura ?? null;
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [sub, setSub] = useState<Subscription | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -114,6 +117,13 @@ function MinhaAssinaturaPage() {
   const trialDaysLeft = tenant.trial_ends_at
     ? Math.max(0, Math.ceil((new Date(tenant.trial_ends_at).getTime() - Date.now()) / 86400000))
     : 0;
+  const dataBr = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "";
+  // O vencimento que vale para o bloqueio é o da clínica (tenants.current_period_end)
+  const fimPeriodo = tenant.current_period_end ?? sub?.current_period_end ?? null;
+  const etapa = assinatura?.situacao ?? "ok";
+  const bloqueada = etapa === "bloqueado" || etapa === "cancelado";
+  const oQue = assinatura?.motivo === "teste_vencido" ? "O teste" : "A assinatura";
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -137,14 +147,52 @@ function MinhaAssinaturaPage() {
             </div>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            {tenant.status === "trial" ? (
+            {bloqueada ? (
+              <p className="flex items-start gap-2 text-destructive">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+                <span>
+                  {assinatura?.motivo === "suspensa" ? "O acesso da clínica foi suspenso."
+                    : assinatura?.motivo === "cancelada" ? "A assinatura da clínica foi cancelada."
+                    : etapa === "cancelado"
+                      ? `Cancelada em ${dataBr(assinatura?.cancelamento_em)} por falta de pagamento. Exporte os dados até ${dataBr(assinatura?.exclusao_em)}; depois dessa data eles são excluídos.`
+                      : `${oQue} venceu em ${dataBr(assinatura?.vence_em)} e o acesso foi bloqueado em ${dataBr(assinatura?.bloqueio_em)}. Sem regularizar, a assinatura é cancelada em ${dataBr(assinatura?.cancelamento_em)}.`}{" "}
+                  Nenhum dado foi apagado: o prontuário segue disponível para consulta e os dados podem ser exportados.
+                  Fale com o suporte do Odonto Connect para regularizar.
+                </span>
+              </p>
+            ) : etapa === "somente_leitura" && assinatura ? (
+              <p className="flex items-start gap-2 text-destructive">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+                <span>
+                  {oQue} venceu em {dataBr(assinatura.vence_em)}: o sistema está em <strong>modo consulta</strong> (ver, exportar,
+                  responder pacientes, remarcar e cancelar consultas). O acesso será bloqueado em {dataBr(assinatura.bloqueio_em)}.
+                  Fale com o suporte do Odonto Connect para regularizar.
+                </span>
+              </p>
+            ) : etapa === "carencia" && assinatura ? (
+              <p className="flex items-start gap-2 text-warning-ink">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+                <span>
+                  {oQue} venceu em {dataBr(assinatura.vence_em)}. Em{" "}
+                  <strong>{assinatura.dias_para_proxima} dia{assinatura.dias_para_proxima !== 1 ? "s" : ""}</strong>{" "}
+                  ({dataBr(assinatura.proxima_etapa_em)}) o sistema passa a funcionar só para consulta.
+                  Fale com o suporte do Odonto Connect para regularizar.
+                </span>
+              </p>
+            ) : tenant.status === "trial" ? (
               <p>
                 Seu teste termina em <strong>{trialDaysLeft} dia{trialDaysLeft !== 1 ? "s" : ""}</strong>.
-                Escolha um plano abaixo para continuar usando após o trial.
+                Depois disso o sistema fica em modo consulta por 30 dias antes do bloqueio.
               </p>
-            ) : sub?.current_period_end ? (
-              <p>Próxima renovação: {new Date(sub.current_period_end).toLocaleDateString("pt-BR")}</p>
+            ) : fimPeriodo ? (
+              <p>Assinatura válida até {dataBr(fimPeriodo)}. Depois disso há 7 dias de tolerância antes do modo consulta.</p>
             ) : null}
+            <p className="mt-3">
+              <Link to="/exportar-dados" className="inline-flex items-center gap-1.5 font-medium text-primary underline underline-offset-2">
+                <Download className="h-4 w-4" aria-hidden /> Exportar os dados da clínica
+              </Link>{" "}
+              (disponível sempre, inclusive com a assinatura vencida)
+            </p>
           </CardContent>
         </Card>
 
@@ -178,7 +226,7 @@ function MinhaAssinaturaPage() {
                       <li>• {limite(p.max_pacientes, "paciente", "pacientes")}</li>
                     </ul>
                     <Button
-                      disabled={isCurrent || changing === p.slug}
+                      disabled={isCurrent || changing === p.slug || bloqueada}
                       onClick={() => setConfirmPlan(p)}
                       className="w-full"
                       variant={isCurrent ? "secondary" : "default"}
