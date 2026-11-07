@@ -15,6 +15,7 @@ export async function startFakeOpenWa({ adminKey = 'fake-admin-key' } = {}) {
   const calls = [];
   const chatActions = []; // "lido" e "digitando" recebidos (corpo), para os testes conferirem
   let failPlan = null;
+  let mediaPlan = null;
   keys.set(adminKey, { id: 'admin', role: 'admin', allowedSessions: null, revoked: false });
 
   const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(body === undefined ? '' : JSON.stringify(body)); };
@@ -120,6 +121,24 @@ export async function startFakeOpenWa({ adminKey = 'fake-admin-key' } = {}) {
       return json(res, 201, out);
     }
     if (req.method === 'GET' && parts[3] === 'messages' && parts[6] === 'media') {
+      // mediaPlan: { size, chunked } — mídia grande (teto do downloadMedia). chunked = sem content-length.
+      if (mediaPlan) {
+        const { size, chunked } = mediaPlan;
+        mediaPlan = null;
+        res.writeHead(200, { 'content-type': 'video/mp4', ...(chunked ? {} : { 'content-length': String(size) }) });
+        const piece = Buffer.alloc(Math.min(size, 16 * 1024), 1);
+        let left = size;
+        const pump = () => {
+          while (left > 0) {
+            const n = Math.min(left, piece.length);
+            left -= n;
+            if (!res.write(n === piece.length ? piece : piece.subarray(0, n))) { res.once('drain', pump); return; }
+          }
+          res.end();
+        };
+        res.on('error', () => {});
+        return pump();
+      }
       res.writeHead(200, { 'content-type': 'image/jpeg' });
       return res.end(Buffer.from('JPEGFALSO'));
     }
@@ -130,12 +149,13 @@ export async function startFakeOpenWa({ adminKey = 'fake-admin-key' } = {}) {
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
 
   // Corpo + cabeçalhos de um webhook assinado como o OpenWA (para postar no nosso servidor).
-  function signedDelivery(sessionId, event, data, { secret, idempotencyKey } = {}) {
+  // withoutIdempotencyKey: corpo sem a chave (versões que não a mandam; dedupe pelo hash do corpo).
+  function signedDelivery(sessionId, event, data, { secret, idempotencyKey, withoutIdempotencyKey = false, timestamp } = {}) {
     const w = [...webhooks.values()].find(x => x.sessionId === sessionId);
     const sec = secret ?? w?.secret;
-    const ik = idempotencyKey || `${event.replace('.', '_')}_${sessionId}_${crypto.randomUUID()}`;
-    const body = JSON.stringify({ event, timestamp: new Date().toISOString(), sessionId, idempotencyKey: ik, deliveryId: `dlv_${crypto.randomUUID()}`, data });
-    const headers = { 'content-type': 'application/json', 'x-openwa-event': event, 'x-openwa-idempotency-key': ik };
+    const ik = withoutIdempotencyKey ? null : (idempotencyKey || `${event.replace('.', '_')}_${sessionId}_${crypto.randomUUID()}`);
+    const body = JSON.stringify({ event, timestamp: timestamp || new Date().toISOString(), sessionId, ...(ik ? { idempotencyKey: ik, deliveryId: `dlv_${crypto.randomUUID()}` } : {}), data });
+    const headers = { 'content-type': 'application/json', 'x-openwa-event': event, ...(ik ? { 'x-openwa-idempotency-key': ik } : {}) };
     if (sec) headers['x-openwa-signature'] = `sha256=${crypto.createHmac('sha256', sec).update(body).digest('hex')}`;
     return { body, headers, url: w?.url || null };
   }
@@ -144,6 +164,7 @@ export async function startFakeOpenWa({ adminKey = 'fake-admin-key' } = {}) {
     baseUrl, adminKey, sessions, keys, webhooks, sent, calls, chatActions, signedDelivery,
     connect(sessionId, phone = '5562900000000') { const s = sessions.get(sessionId); s.status = 'ready'; s.phone = phone; },
     fail(plan) { failPlan = { count: 1, ...plan }; },
+    bigMedia(plan) { mediaPlan = plan; },
     async close() { await new Promise(r => server.close(r)); },
   };
 }
