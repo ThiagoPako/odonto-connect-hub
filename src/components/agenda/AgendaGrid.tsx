@@ -290,16 +290,16 @@ export function AgendaGrid({
                 key={p.id}
                 className="px-3 py-2.5 border-r border-border/60 flex items-center gap-2.5"
               >
-                <div className={`h-10 w-10 rounded-xl ${c.soft} ${c.text} flex items-center justify-center text-[10px] font-bold ring-1 ring-border/20 shadow-inner overflow-hidden`}>
+                <div className={`h-10 w-10 shrink-0 rounded-xl ${c.soft} ${c.text} flex items-center justify-center text-[10px] font-bold ring-1 ring-border/20 shadow-inner overflow-hidden`}>
                   {initials(p.nome) || <User2 className="h-5 w-5" />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[13px] font-bold text-foreground tracking-tight truncate leading-tight uppercase">{p.nome}</div>
+                  <div className="text-[13px] font-bold text-foreground tracking-tight break-words leading-tight uppercase">{p.nome}</div>
                   {p.especialidade && (
-                    <div className="text-[9px] font-medium text-muted-foreground/60 uppercase tracking-wider truncate leading-tight">{p.especialidade}</div>
+                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide break-words leading-tight">{p.especialidade}</div>
                   )}
                 </div>
-                <div className={`h-1.5 w-1.5 rounded-full ${c.bar}`} />
+                <div className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.bar}`} />
               </div>
             );
           })}
@@ -464,7 +464,11 @@ export function AgendaGrid({
                               <StatusIcon className="h-2.5 w-2.5" />
                             </span>
                           )}
-                          <span className="text-[12px] font-bold text-foreground tracking-tight truncate flex-1 uppercase">
+                          {/* Altura do cartão é a duração da consulta: o nome pode ser cortado, mas o texto completo fica no title/leitor de tela */}
+                          <span
+                            className="text-[12px] font-bold text-foreground tracking-tight truncate flex-1 uppercase"
+                            title={(isShared && a.evento_titulo) || a.paciente_nome || a.evento_titulo || a.procedimento || "Sem paciente"}
+                          >
                             {compact && <span className="font-medium text-muted-foreground mr-1">{(a.hora || "").slice(0, 5)}</span>}
                             {(isShared && a.evento_titulo) || a.paciente_nome || a.evento_titulo || a.procedimento || "Sem paciente"}
                           </span>

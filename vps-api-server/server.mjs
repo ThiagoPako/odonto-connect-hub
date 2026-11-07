@@ -13628,7 +13628,8 @@ app.get('/api/crm/leads', async (req, res) => {
     }
     if (origin && origin !== 'Todos') {
       params.push(origin);
-      whereClause += ` AND l.origem = $${params.length}`;
+      // Leads automáticos do WhatsApp gravam "whatsapp"; o cadastro manual grava "WhatsApp"
+      whereClause += ` AND LOWER(l.origem) = LOWER($${params.length})`;
     }
 
     const baseFrom = `FROM crm_leads l
