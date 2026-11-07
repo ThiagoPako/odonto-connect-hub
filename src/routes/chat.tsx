@@ -36,8 +36,12 @@ import {
 import { zodValidator, fallback } from "@tanstack/zod-adapter";
 import { z } from "zod";
 
+// Abrir uma conversa pela URL: só por id (LGPD — nada de telefone ou nome na URL, que fica no
+// histórico do navegador, em logs de proxy e em links compartilhados).
+// lead = id do lead (crm_leads.id) · contato = id do contato (a tela resolve o telefone por dentro).
 const chatSearchSchema = z.object({
   lead: fallback(z.string(), "").default(""),
+  contato: fallback(z.string(), "").default(""),
 });
 
 function incomingToChatMessage(msg: IncomingMessage, leadId?: string): ChatMessage {
@@ -152,7 +156,7 @@ function ChatPage() {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const activeTenantId = currentUser?.tenant_id || getCachedTenantId();
-  const { lead: leadSearch } = Route.useSearch();
+  const { lead: leadSearch, contato: contatoSearch } = Route.useSearch();
   const { connected: connectedInstances } = useWhatsAppInstances();
   const [activeTab, setActiveTab] = useState<"queue" | "mine">("queue");
   const [queue, setQueue] = useState<Lead[]>([]);
@@ -178,6 +182,7 @@ function ChatPage() {
   const myLeadsRef = useRef(myLeads);
   const selectedLeadRef = useRef(selectedLead);
   const syncedChatInstancesRef = useRef(new Set<string>());
+  const contatoPhoneByIdRef = useRef(new Map<string, string>());
   const pendingStatusByMessageIdRef = useRef(new Map<string, MessageStatus>());
   const lastSentPresenceRef = useRef<{ leadId: string | null; status: "composing" | "recording" | "paused"; timestamp: number }>({
     leadId: null,
@@ -202,6 +207,9 @@ function ChatPage() {
     if (!data) return;
 
     const { data: contactsData } = await contatosApi.list();
+    contatoPhoneByIdRef.current = new Map(
+      ((contactsData as Array<{ id?: unknown; telefone?: unknown }> | null) || []).map((c) => [String(c.id), String(c.telefone || "")]),
+    );
     const contactMap = new Map(((contactsData as any[]) || []).map((c: any) => [c.telefone?.replace(/\D/g, ''), c.nome]));
 
     const toLead = (r: any): Lead => {
@@ -454,10 +462,10 @@ function ChatPage() {
       duration: 5000,
       action: {
         label: "Abrir",
-          onClick: () => navigate({ to: "/chat", search: { lead: msg.leadId || msg.phone || name } }),
+          onClick: () => navigate({ to: "/chat", search: msg.leadId ? { lead: msg.leadId } : {} }),
       },
     });
-    showBrowserNotification(`💬 ${name}`, body, name);
+    showBrowserNotification(`💬 ${name}`, body, msg.leadId || undefined);
   }, [navigate, reloadQueueLeads]);
 
   const handlePresenceUpdate = useCallback((update: import("@/hooks/useRealtimeChat").PresenceUpdate) => {
@@ -623,7 +631,7 @@ function ChatPage() {
     showBrowserNotification(
       "🔥 Lead de Recuperação!",
       `${data.leadName} respondeu do follow-up e voltou à fila com prioridade!`,
-      data.leadName,
+      data.leadId,
     );
   }, []);
 
@@ -895,25 +903,23 @@ function ChatPage() {
 
 
   useEffect(() => {
-    if (!leadSearch) return;
+    if (!leadSearch && !contatoSearch) return;
     const allLeads = [...myLeads, ...queue];
     if (allLeads.length === 0) return; // wait for leads to load
 
-    const normalizedSearchPhone = leadSearch.replace(/\D/g, "");
-    const normalizedSearchName = leadSearch.trim().toLowerCase();
-
-    const match = allLeads.find(
-      (l) => {
-        const leadPhone = l.phone.replace(/\D/g, "");
-        return l.name.toLowerCase() === normalizedSearchName
-          || l.id === leadSearch
-          || (normalizedSearchPhone.length >= 8 && (
-            leadPhone === normalizedSearchPhone
-            || leadPhone.endsWith(normalizedSearchPhone.slice(-11))
-            || normalizedSearchPhone.endsWith(leadPhone.slice(-11))
-          ));
+    let match: Lead | undefined;
+    if (leadSearch) {
+      match = allLeads.find((l) => l.id === leadSearch);
+    } else {
+      // Contato (tela Contatos): o telefone sai do cadastro já carregado, nunca da URL.
+      const phone = (contatoPhoneByIdRef.current.get(contatoSearch) || "").replace(/\D/g, "");
+      if (phone.length >= 8) {
+        match = allLeads.find((l) => {
+          const leadPhone = l.phone.replace(/\D/g, "");
+          return leadPhone === phone || leadPhone.endsWith(phone.slice(-11)) || phone.endsWith(leadPhone.slice(-11));
+        });
       }
-    );
+    }
     if (match) {
       if (match.status === "waiting") {
         // Opening from a notification must not approve/assume the attendance.
@@ -937,10 +943,14 @@ function ChatPage() {
         setSelectedLead(match);
         setActiveTab("mine");
       }
-      // Clear the search param after selecting
-      navigate({ to: "/chat", search: { lead: "" }, replace: true });
+    } else {
+      toast.info("Este contato não tem conversa aberta no chat agora.", {
+        description: "Use \"Nova conversa\" para falar com ele.",
+      });
     }
-  }, [leadSearch, myLeads.length, queue.length]);
+    // Clear the search param after selecting
+    navigate({ to: "/chat", search: {}, replace: true });
+  }, [leadSearch, contatoSearch, myLeads.length, queue.length]);
 
   const handleAssign = async (lead: Lead) => {
     try {
