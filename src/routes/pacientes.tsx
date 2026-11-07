@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { BarraFiltros } from "@/components/filtros/BarraFiltros";
 import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { DashboardHeader } from "@/components/DashboardHeader";
+import { EstadoVazio } from "@/components/EstadoVazio";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { pacientesApi, type HistoricoConsulta } from "@/lib/vpsApi";
 import { OdontogramaChart, OdontogramaEditor } from "@/components/OdontogramaChart";
@@ -36,6 +37,7 @@ import {
   Save,
   Loader2,
   Trash2,
+  Plus,
 } from "lucide-react";
 
 // Na URL só vão filtros NÃO identificáveis (convênio, sexo). A busca por nome/CPF/telefone fica só na memória (LGPD).
@@ -406,13 +408,18 @@ function PacientesPage() {
         )}
 
         {!loading && !loadError && filtered.length === 0 && (
-          <div className="text-center py-16">
-            <p className="text-sm text-muted-foreground">
-              {pacientes.length === 0
-                ? "Nenhum paciente cadastrado ainda. Use \"Novo Paciente\" para cadastrar o primeiro."
-                : "Nenhum paciente encontrado com essa busca ou filtros."}
-            </p>
-          </div>
+          pacientes.length === 0 ? (
+            <EstadoVazio
+              icon={Users}
+              titulo="Cadastre o primeiro paciente"
+              descricao="Aqui ficam a ficha, a anamnese, o odontograma e o histórico de cada paciente. Para começar, nome e telefone bastam."
+              acao={{ label: "Novo paciente", icon: Plus, onClick: () => setShowForm(true) }}
+            />
+          ) : (
+            <div className="text-center py-16">
+              <p className="text-sm text-muted-foreground">Nenhum paciente encontrado com essa busca ou filtros.</p>
+            </div>
+          )
         )}
 
         {/* New Patient Form */}

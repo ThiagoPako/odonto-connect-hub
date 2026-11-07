@@ -4,8 +4,9 @@
  */
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
+import { EstadoVazio } from "@/components/EstadoVazio";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Archive, Loader2, History } from "lucide-react";
+import { Plus, Pencil, Archive, Loader2, History, ClipboardList } from "lucide-react";
 import { BarraFiltros } from "@/components/filtros/BarraFiltros";
 import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { procedimentosCatalogoApi, type ProcedimentoCatalogo } from "@/lib/vpsApi";
@@ -175,6 +176,14 @@ function ProcedimentosCatalogoPage() {
                     Não foi possível carregar os procedimentos. {loadError}{" "}
                     <button type="button" onClick={load} className="underline font-semibold">Tentar de novo</button>
                   </span>
+                ) : items.length === 0 ? (
+                  <EstadoVazio
+                    compacto
+                    icon={ClipboardList}
+                    titulo="Cadastre os procedimentos da clínica"
+                    descricao="O catálogo traz nome, código e valores. Ele é usado nos orçamentos, na agenda e nas comissões."
+                    acao={{ label: "Novo procedimento", icon: Plus, onClick: novo }}
+                  />
                 ) : vazioMsg}
               </li>
             )}
@@ -237,6 +246,14 @@ function ProcedimentosCatalogoPage() {
                         Não foi possível carregar os procedimentos. {loadError}{" "}
                         <button type="button" onClick={load} className="underline font-semibold">Tentar de novo</button>
                       </span>
+                    ) : items.length === 0 ? (
+                      <EstadoVazio
+                        compacto
+                        icon={ClipboardList}
+                        titulo="Cadastre os procedimentos da clínica"
+                        descricao="O catálogo traz nome, código e valores. Ele é usado nos orçamentos, na agenda e nas comissões."
+                        acao={{ label: "Novo procedimento", icon: Plus, onClick: novo }}
+                      />
                     ) : vazioMsg}
                   </td></tr>
                 )}

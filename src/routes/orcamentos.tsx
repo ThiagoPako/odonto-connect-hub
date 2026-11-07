@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
+import { EstadoVazio } from "@/components/EstadoVazio";
 import {
   Plus, DollarSign, CheckCircle2, XCircle, Clock, TrendingUp,
   FileText, CreditCard, ExternalLink, Loader2, Printer, Pencil, Trash2,
@@ -277,18 +278,16 @@ function OrcamentosPage() {
                 <Button size="sm" variant="outline" onClick={loadAll}>Tentar de novo</Button>
               </div>
             )}
-            {!loadError && filtered.length === 0 && (
-              <div className="text-center py-8 space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  {orcamentos.length === 0 ? "Nenhum orçamento ainda." : "Nenhum orçamento com esse filtro."}
-                </p>
-                {orcamentos.length === 0 && (
-                  <Button size="sm" variant="outline" onClick={() => setNovoOpen(true)} className="h-8 text-xs gap-1.5">
-                    <Plus className="h-3.5 w-3.5" /> Criar o primeiro orçamento
-                  </Button>
-                )}
-              </div>
-            )}
+            {!loadError && filtered.length === 0 && (orcamentos.length === 0 ? (
+              <EstadoVazio
+                compacto
+                icon={FileText}
+                titulo="Nenhum orçamento ainda"
+                descricao="Monte o orçamento do paciente com os procedimentos do catálogo. Ao aprovar, ele vira tratamento."
+                acao={{ label: "Novo orçamento", icon: Plus, onClick: () => setNovoOpen(true) }}
+                acaoSecundaria={{ label: "Ver catálogo", to: "/procedimentos" }}
+              />
+            ) : <p className="text-xs text-muted-foreground text-center py-8">Nenhum orçamento com esse filtro</p>)}
           </div>
 
           {/* Budget detail */}

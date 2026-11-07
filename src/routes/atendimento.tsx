@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { localDateISO } from "@/lib/utils";
 import { simpleMarkdownToHtml } from "@/lib/safeHtml";
 import { useState, useCallback, useEffect, useRef } from "react";
@@ -675,7 +675,10 @@ function ConsultaPage() {
                         <Loader2 className="h-5 w-5 text-primary animate-spin" />
                       </div>
                     ) : agendaOrdenada.length === 0 ? (
-                      <p className="text-xs text-muted-foreground text-center py-6">Nenhum agendamento hoje</p>
+                      <div className="text-center py-6 space-y-2">
+                        <p className="text-xs text-muted-foreground">Nenhum agendamento hoje. A consulta começa por um agendamento do dia.</p>
+                        <Link to="/agenda" className="text-xs font-semibold text-primary hover:underline">Abrir a agenda</Link>
+                      </div>
                     ) : (
                       agendaOrdenada.map(apt => {
                         const sel = appointmentSelecionado?.id === apt.id;

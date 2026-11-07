@@ -9,6 +9,7 @@ import {
 } from "@/lib/examesApi";
 import { pacientesApi } from "@/lib/vpsApi";
 import { Button } from "@/components/ui/button";
+import { EstadoVazio } from "@/components/EstadoVazio";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -186,10 +187,19 @@ function ExamesPage() {
         {loading ? (
           <div className="p-12 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
         ) : exames.length === 0 ? (
-          <div className="p-12 text-center text-muted-foreground">
-            <FileText className="h-10 w-10 mx-auto mb-2 opacity-40" />
-            Nenhum exame encontrado
-          </div>
+          !statusFilter && !q.trim() ? (
+            <EstadoVazio
+              icon={FileText}
+              titulo="Nenhum exame pedido ainda"
+              descricao="Registre aqui os pedidos de exame de imagem (radiografia, tomografia) e acompanhe até o laudo e a entrega."
+              acao={{ label: "Novo exame", icon: Plus, onClick: () => setOpen(true) }}
+            />
+          ) : (
+            <div className="p-12 text-center text-muted-foreground">
+              <FileText className="h-10 w-10 mx-auto mb-2 opacity-40" />
+              Nenhum exame com esse filtro
+            </div>
+          )
         ) : (
           <div className="divide-y divide-border">
             {exames.map((e) => (

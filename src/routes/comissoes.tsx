@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2, Plus, X, Trash2,
@@ -196,7 +196,12 @@ function ComissoesPage() {
                 </button>
               );
             })}
-            {dentistas.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhum dentista cadastrado</p>}
+            {dentistas.length === 0 && !loadError && (
+              <div className="text-center py-4 space-y-1">
+                <p className="text-xs text-muted-foreground">Nenhum dentista cadastrado. A comissão é calculada por dentista.</p>
+                <Link to="/dentistas" className="text-xs font-semibold text-primary hover:underline">Cadastrar dentista</Link>
+              </div>
+            )}
           </div>
 
           {/* Entries table — a tabela só aparece quando ESTE bloco tem largura para as 8 colunas
@@ -330,7 +335,7 @@ function ComissoesPage() {
                             Não foi possível carregar as comissões. {loadError}{" "}
                             <button type="button" onClick={loadAll} className="underline font-semibold">Tentar de novo</button>
                           </span>
-                        ) : "Nenhuma comissão encontrada."}
+                        ) : "Nenhuma comissão ainda. Registre a de cada dentista em \"Nova comissão\"."}
                       </td></tr>
                     )}
                   </tbody>

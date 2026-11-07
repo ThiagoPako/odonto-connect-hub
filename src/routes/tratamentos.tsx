@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
+import { EstadoVazio } from "@/components/EstadoVazio";
 import {
   CheckCircle2, Clock, Pause, PlayCircle, CalendarDays,
-  FileText, Plus, Loader2, X, Trash2, Download,
+  FileText, Plus, Loader2, X, Trash2, Download, ClipboardList,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { BarraFiltros } from "@/components/filtros/BarraFiltros";
@@ -360,11 +361,16 @@ function TratamentosPage() {
                   <button type="button" onClick={loadAll} className="text-xs font-semibold underline">Tentar de novo</button>
                 </div>
               )}
-              {!loadError && filtered.length === 0 && (
-                <p className="text-xs text-muted-foreground text-center py-8">
-                  {tratamentos.length === 0 ? "Nenhum tratamento ainda. Toque em \u201cNovo\u201d para criar o primeiro." : "Nenhum tratamento com essa busca."}
-                </p>
-              )}
+              {!loadError && filtered.length === 0 && (tratamentos.length === 0 ? (
+                <EstadoVazio
+                  compacto
+                  icon={ClipboardList}
+                  titulo="Nenhum tratamento ainda"
+                  descricao="Um tratamento acompanha as etapas clínicas de um paciente. Ele nasce de um orçamento aprovado ou daqui mesmo."
+                  acao={{ label: "Novo tratamento", icon: Plus, onClick: () => setShowAddModal(true) }}
+                  acaoSecundaria={{ label: "Ver orçamentos", to: "/orcamentos" }}
+                />
+              ) : <p className="text-xs text-muted-foreground text-center py-8">Nenhum tratamento com essa busca.</p>)}
             </div>
           </div>
 
