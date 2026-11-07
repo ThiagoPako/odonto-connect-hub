@@ -35,7 +35,8 @@ export function useGlobalChatNotifier() {
   const queuePollInitializedRef = useRef(false);
   const isOnChatPage = location.pathname === "/chat";
 
-  const notify = (name: string, body: string, lead: string) => {
+  // leadId: só o id do lead vai para a URL do chat (LGPD); sem id, abre o chat sem seleção.
+  const notify = (name: string, body: string, leadId: string | null | undefined) => {
     playNotificationSound();
     incrementChatUnread(1);
     toast.info(`💬 ${name}`, {
@@ -43,10 +44,10 @@ export function useGlobalChatNotifier() {
       duration: 5000,
       action: {
         label: "Abrir",
-        onClick: () => navigate({ to: "/chat", search: { lead } as never }),
+        onClick: () => navigate({ to: "/chat", search: (leadId ? { lead: leadId } : {}) as never }),
       },
     });
-    showBrowserNotification(`💬 ${name}`, body, name);
+    showBrowserNotification(`💬 ${name}`, body, leadId || undefined);
   };
 
   useRealtimeChat({
@@ -59,7 +60,7 @@ export function useGlobalChatNotifier() {
 
       const name = msg.leadName || msg.pushName || msg.phone;
       const body = msg.content?.slice(0, 80) || `[${msg.type}]`;
-      notify(name, body, msg.leadId || msg.phone || name);
+      notify(name, body, msg.leadId);
     },
   });
 
@@ -89,7 +90,7 @@ export function useGlobalChatNotifier() {
 
         const name = row.name || row.phone || "WhatsApp";
         const body = row.lastMessage?.slice(0, 80) || "Nova mensagem";
-        notify(name, body, row.id || row.phone || name);
+        notify(name, body, row.id);
       }
 
       queuePollInitializedRef.current = true;

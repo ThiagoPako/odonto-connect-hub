@@ -65,7 +65,14 @@ export interface ClinicorpUserSettings {
   base_url: string;
   has_api_token: boolean;
   has_webhook_secret: boolean;
+  /** Sempre mascarado: o segredo não fica guardado em claro. */
   webhook_secret_preview: string;
+  /** Até quando o segredo anterior ainda é aceito (após gerar um novo). */
+  previous_secret_expires_at?: string | null;
+  /** Segredo antigo (escolhido à mão): aceito só até esta data. */
+  legacy_secret_deadline?: string | null;
+  /** Admin da clínica: pode salvar, remover e gerar segredo. */
+  can_manage?: boolean;
   last_sync_at: string | null;
   last_sync_status: string | null;
   last_sync_error: string | null;
@@ -252,9 +259,11 @@ export const clinicorpApi = {
     enabled: boolean;
     api_token: string;
     subscriber_id: string;
-    webhook_secret: string;
     base_url: string;
   }>) => req<{ ok: true }>('/my-settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  /** Gera um segredo novo no servidor. O valor volta só nesta resposta. */
+  rotateWebhookSecret: () =>
+    req<{ ok: true; webhook_secret: string; previous_valid_hours: number }>('/my-settings/rotate-secret', { method: 'POST' }),
   deleteMySettings: () => req<{ ok: true }>('/my-settings', { method: 'DELETE' }),
   testMyConnection: (payload: Partial<{ api_token: string; subscriber_id: string; base_url: string }> = {}) =>
     req<ClinicorpConnectionTest>('/my-settings/test', { method: 'POST', body: JSON.stringify(payload) }),
@@ -294,12 +303,10 @@ export interface ClinicorpConnectionTest {
   }>;
 }
 
-export function buildWebhookUrl(secret: string): string {
-  return `${WEBHOOK_BASE}?user_api=${encodeURIComponent(secret || '<seu-secret>')}`;
-}
+/** URL do webhook, sem o segredo (o segredo vai no header x-user-api). */
+export const CLINICORP_WEBHOOK_URL = WEBHOOK_BASE;
 
-export function generateWebhookSecret(length = 40): string {
-  const bytes = new Uint8Array(length);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('').slice(0, length);
+/** URL completa com o segredo: o painel da Clinicorp pede a URL. Mostrada só ao gerar. */
+export function buildWebhookUrlWithSecret(secret: string): string {
+  return `${WEBHOOK_BASE}?user_api=${encodeURIComponent(secret)}`;
 }
