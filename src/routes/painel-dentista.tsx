@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { localDateISO } from "@/lib/utils";
 import { EstadoVazio } from "@/components/EstadoVazio";
+import { iniciaisNome } from "@/lib/iniciais";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
@@ -80,12 +81,12 @@ function PainelDentistaPage() {
     return (
       <div className="flex-1 flex flex-col min-h-screen">
         <DashboardHeader title="Painel — Dentista" />
-        <main className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex items-center justify-center">
           <div className="flex items-center gap-2 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" />
             Carregando painel…
           </div>
-        </main>
+        </div>
       </div>
     );
   }
@@ -112,7 +113,7 @@ function PainelDentistaPage() {
     return (
       <div className="flex-1 flex flex-col min-h-screen">
         <DashboardHeader title="Painel — Dentista" />
-        <main className="flex-1 flex items-center justify-center p-8">
+        <div className="flex-1 flex items-center justify-center p-8">
           <div className="text-center max-w-md">
             <AlertCircle className="h-10 w-10 text-destructive mx-auto mb-3" />
             <p className="text-sm text-foreground font-semibold">Não foi possível carregar o painel</p>
@@ -124,7 +125,7 @@ function PainelDentistaPage() {
               <RefreshCw className="h-4 w-4" /> Tentar novamente
             </button>
           </div>
-        </main>
+        </div>
       </div>
     );
   }
@@ -146,16 +147,12 @@ function PainelDentistaPage() {
 
   const isAprovado = (s: string) => s === "aprovado" || s === "em_tratamento" || s === "finalizado";
 
-  const iniciaisDentista = dentista.nome
-    .split(" ")
-    .filter((_, i, arr) => i === 0 || i === arr.length - 1)
-    .map((n) => n[0])
-    .join("");
+  const iniciaisDentista = iniciaisNome(dentista.nome);
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title={`Painel — ${dentista.nome}`} />
-      <main className="flex-1 p-4 sm:p-8 space-y-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-8 space-y-6 overflow-auto">
         {user?.role === "admin" && (
           <div className="flex items-center gap-4 animate-fade-in">
             <Link
@@ -227,21 +224,23 @@ function PainelDentistaPage() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 border-b border-border/60 pb-0 overflow-x-auto">
+        {/* Quebram em linhas no celular/tablet (antes rolavam de lado sem indicação). */}
+        <div className="flex flex-wrap gap-x-2 gap-y-1 border-b border-border/60 pb-0">
           {tabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-all border-b-2 -mb-[1px] whitespace-nowrap ${
+              aria-pressed={activeTab === tab.key}
+              className={`flex items-center gap-2 min-h-10 px-3 sm:px-4 py-2.5 sm:py-3 text-sm font-medium text-left transition-all border-b-2 -mb-[1px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                 activeTab === tab.key
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
             >
-              <tab.icon className="h-4 w-4" />
-              {tab.label}
+              <tab.icon className="h-4 w-4 shrink-0" />
+              <span className="break-words">{tab.label}</span>
               <span
-                className={`h-5 min-w-[22px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center ${
+                className={`shrink-0 h-5 min-w-[22px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center ${
                   activeTab === tab.key ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
                 }`}
               >
@@ -273,7 +272,7 @@ function PainelDentistaPage() {
           {activeTab === "orcamentos" && <OrcamentosTab orcamentos={orcamentos} />}
           {activeTab === "prontuario" && <ProntuarioTab prontuarios={prontuarios} />}
         </div>
-      </main>
+      </div>
     </div>
   );
 }
@@ -403,8 +402,8 @@ function AtendimentosTab({ atendimentos }: { atendimentos: PainelAtendimento[] }
             key={a.id}
             className="bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-card-hover transition-all flex flex-wrap items-center gap-3 sm:gap-4"
           >
-            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
-              {a.pacienteIniciais}
+            <div className="h-12 w-12 shrink-0 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
+              {iniciaisNome(a.pacienteNome) || a.pacienteIniciais}
             </div>
             <div className="flex-1 min-w-[10rem]">
               <div className="flex flex-wrap items-center gap-2">
@@ -430,8 +429,8 @@ function AtendimentosTab({ atendimentos }: { atendimentos: PainelAtendimento[] }
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">{a.procedimento}</p>
             </div>
-            <div className="text-right">
-              <p className="text-sm font-bold text-foreground font-heading">{a.horario}</p>
+            <div className="shrink-0 text-right">
+              <p className="text-sm font-bold text-foreground font-heading tabular-nums whitespace-nowrap">{a.horario}</p>
               {a.valor != null && (
                 <p className="text-xs text-muted-foreground mt-0.5">R$ {a.valor.toLocaleString("pt-BR")}</p>
               )}
@@ -523,8 +522,8 @@ function AgendaTab({
           statusColor[item.status] || "border-l-muted"
         } flex items-center gap-4 flex-wrap`}
       >
-        <div className="text-center min-w-[60px]">
-          <p className="text-lg font-bold text-foreground font-heading">{item.horario}</p>
+        <div className="shrink-0 text-center min-w-[60px]">
+          <p className="text-lg font-bold text-foreground font-heading tabular-nums whitespace-nowrap">{item.horario}</p>
           <p className="text-[10px] text-muted-foreground">{item.duracao}min</p>
         </div>
         <div className="flex-1 min-w-[200px]">
@@ -755,7 +754,7 @@ function ProntuarioTab({ prontuarios }: { prontuarios: PainelProntuario[] }) {
         >
           <div className="flex items-center gap-3 mb-4">
             <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
-              {p.pacienteIniciais}
+              {iniciaisNome(p.pacienteNome) || p.pacienteIniciais}
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-1.5">

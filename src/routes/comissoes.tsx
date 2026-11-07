@@ -4,6 +4,8 @@ import {
   DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2, Plus, X, Trash2,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { comissoesApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import {
@@ -54,8 +56,9 @@ function ComissoesPage() {
   const [pacientes, setPacientes] = useState<{ id: string; nome: string }[]>([]);
   const [comissoes, setComissoes] = useState<ComissaoRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedDentista, setSelectedDentista] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>("todos");
+  const [dentistaUrl, setDentistaUrl] = useFiltroUrl("profissional");
+  const setSelectedDentista = (id: string | null) => setDentistaUrl(id ?? "");
+  const [statusFilter, setStatusFilter] = useFiltroUrl("status", Object.keys(statusCfg));
   const [showAddModal, setShowAddModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [statusTarget, setStatusTarget] = useState<{ entry: ComissaoRow; status: "aprovado" | "pago" } | null>(null);
@@ -122,12 +125,15 @@ function ComissoesPage() {
     loadAll();
   };
 
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const selectedDentista = dentistas.some(d => d.id === dentistaUrl) ? dentistaUrl : null;
+
   const profComissoes = (dId: string) => comissoes.filter(c => c.dentista_id === dId);
 
   const filteredEntries = (selectedDentista
     ? profComissoes(selectedDentista)
     : comissoes
-  ).filter(c => statusFilter === "todos" || c.status === statusFilter);
+  ).filter(c => !statusFilter || c.status === statusFilter);
 
   const totalPending = comissoes.filter(c => c.status === "pendente").reduce((s, c) => s + c.valor, 0);
   const totalApproved = comissoes.filter(c => c.status === "aprovado").reduce((s, c) => s + c.valor, 0);
@@ -146,7 +152,7 @@ function ComissoesPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Gestão de Comissões" />
-      <main className="flex-1 p-6 overflow-auto space-y-5">
+      <div className="flex-1 p-4 sm:p-6 overflow-auto space-y-5">
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 animate-slide-up" style={{ animationFillMode: 'both' }}>
           <KpiBox icon={DollarSign} label="Total Comissões" value={brl(totalAll)} color="text-primary" />
@@ -157,7 +163,8 @@ function ComissoesPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Dentist cards */}
-          <div className="lg:col-span-4 space-y-3">
+          {/* No celular/tablet o filtro "Profissional" da barra substitui esta lista */}
+          <div className="hidden lg:block lg:col-span-4 xl:col-span-3 space-y-3">
             <h3 className="text-sm font-semibold text-foreground">Profissionais</h3>
             <button onClick={() => setSelectedDentista(null)}
               className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all text-xs font-medium ${!selectedDentista ? "bg-primary/5 border-primary/30 text-primary" : "border-transparent hover:bg-muted text-muted-foreground"}`}>
@@ -175,7 +182,7 @@ function ComissoesPage() {
                       {getInitials(d.nome)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-foreground truncate">{d.nome}</p>
+                      <p className="text-xs font-medium text-foreground break-words">{d.nome}</p>
                       <p className="text-[10px] text-muted-foreground">{d.especialidade} · {d.comissao_percentual || 0}%</p>
                     </div>
                     <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
@@ -196,39 +203,86 @@ function ComissoesPage() {
             )}
           </div>
 
-          {/* Entries table */}
-          <div className="lg:col-span-8 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-foreground">
-                {selectedDentista ? `Comissões — ${dentistas.find(d => d.id === selectedDentista)?.nome}` : "Todas as Comissões"}
-              </h3>
-              <button onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90">
-                <Plus className="h-3.5 w-3.5" /> Nova comissão
-              </button>
-              <div className="flex flex-wrap items-center gap-1.5 w-full">
-                {["todos", "pendente", "aprovado", "pago"].map(s => (
-                  <button key={s} onClick={() => setStatusFilter(s)}
-                    className={`h-8 px-3 rounded-full text-xs font-medium transition-colors ${statusFilter === s ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}>
-                    {s === "todos" ? "Todos" : statusCfg[s]?.label || s}
-                  </button>
-                ))}
-              </div>
-            </div>
+          {/* Entries table — a tabela só aparece quando ESTE bloco tem largura para as 8 colunas
+              (container query, não a tela: com o menu lateral de 256 px, 1280 px de tela davam ~640 px
+              aqui e a coluna "Ações" ficava fora da vista). Abaixo disso, cartões. */}
+          <div className="@container lg:col-span-8 xl:col-span-9 min-w-0 space-y-3">
+            <h3 className="text-sm font-semibold text-foreground break-words">
+              {selectedDentista ? `Comissões — ${dentistas.find(d => d.id === selectedDentista)?.nome ?? "profissional"}` : "Todas as comissões"}
+            </h3>
+            <BarraFiltros
+              filtros={[
+                { id: "profissional", rotulo: "Profissional", valor: selectedDentista ?? "", onChange: setDentistaUrl, opcoes: dentistas.map(d => ({ valor: d.id, rotulo: d.nome })), className: "min-w-[12rem]" },
+                { id: "status", rotulo: "Status", valor: statusFilter, onChange: setStatusFilter, opcoes: Object.entries(statusCfg).map(([valor, c]) => ({ valor, rotulo: c.label })) },
+              ]}
+              onLimpar={() => { setDentistaUrl(""); setStatusFilter(""); }}
+              resultado={`${filteredEntries.length} comiss${filteredEntries.length !== 1 ? "ões" : "ão"}`}
+              acoes={
+                <button onClick={() => setShowAddModal(true)}
+                  className="flex items-center gap-1.5 h-10 px-4 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90">
+                  <Plus className="h-4 w-4" /> Nova comissão
+                </button>
+              }
+            />
 
-            <div className="bg-card rounded-xl border border-border overflow-hidden">
+            {/* Bloco estreito (celular, tablet, notebook com menu aberto): cartões */}
+            <ul className="@3xl:hidden space-y-2">
+              {filteredEntries.map(entry => {
+                const cfg = statusCfg[entry.status] || statusCfg.pendente;
+                return (
+                  <li key={entry.id} className="bg-card rounded-xl border border-border p-4 text-xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground break-words">{entry.procedimento}</p>
+                        <p className="text-muted-foreground break-words">{entry.paciente_nome} · {entry.dentista_nome}</p>
+                      </div>
+                      <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color}`}>
+                        <cfg.icon className="h-2.5 w-2.5" /> {cfg.label}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-muted-foreground">{entry.data} · {entry.percentual}%</span>
+                      <span className="text-sm font-bold text-foreground">R$ {entry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {entry.status === "pendente" && (
+                        <button onClick={() => setStatusTarget({ entry, status: "aprovado" })} className="h-9 px-3 rounded-lg text-xs font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25">Aprovar</button>
+                      )}
+                      {entry.status === "aprovado" && (
+                        <button onClick={() => setStatusTarget({ entry, status: "pago" })} className="h-9 px-3 rounded-lg text-xs font-medium bg-success/15 text-success hover:bg-success/25">Marcar como paga</button>
+                      )}
+                      <button onClick={() => setDeleteTarget(entry.id)} className="ml-auto h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-xs text-destructive hover:bg-destructive/10" aria-label="Excluir comissão">
+                        <Trash2 className="h-3.5 w-3.5" /> Excluir
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+              {filteredEntries.length === 0 && (
+                <li className="py-8 text-center text-xs text-muted-foreground">
+                  {loadError ? (
+                    <span role="alert" className="text-destructive">
+                      Não foi possível carregar as comissões. {loadError}{" "}
+                      <button type="button" onClick={loadAll} className="underline font-semibold">Tentar de novo</button>
+                    </span>
+                  ) : "Nenhuma comissão encontrada."}
+                </li>
+              )}
+            </ul>
+
+            <div className="hidden @3xl:block bg-card rounded-xl border border-border overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] text-xs">
+                <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Profissional</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Paciente</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Procedimento</th>
-                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">%</th>
-                      <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Comissão</th>
-                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Data</th>
-                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Status</th>
-                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Ações</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-muted-foreground">Profissional</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-muted-foreground">Paciente</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-muted-foreground">Procedimento</th>
+                      <th className="text-center px-3 py-2.5 font-medium text-muted-foreground">%</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-muted-foreground">Comissão</th>
+                      <th className="text-center px-3 py-2.5 font-medium text-muted-foreground">Data</th>
+                      <th className="text-center px-3 py-2.5 font-medium text-muted-foreground">Status</th>
+                      <th className="text-center px-3 py-2.5 font-medium text-muted-foreground">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -236,30 +290,30 @@ function ComissoesPage() {
                       const cfg = statusCfg[entry.status] || statusCfg.pendente;
                       return (
                         <tr key={entry.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                          <td className="px-4 py-2.5 text-foreground font-medium">{entry.dentista_nome}</td>
-                          <td className="px-4 py-2.5 text-foreground">{entry.paciente_nome}</td>
-                          <td className="px-4 py-2.5 text-muted-foreground">{entry.procedimento}</td>
-                          <td className="px-4 py-2.5 text-center text-muted-foreground">{entry.percentual}%</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-foreground">
+                          <td className="px-3 py-2.5 text-foreground font-medium">{entry.dentista_nome}</td>
+                          <td className="px-3 py-2.5 text-foreground">{entry.paciente_nome}</td>
+                          <td className="px-3 py-2.5 text-muted-foreground">{entry.procedimento}</td>
+                          <td className="px-3 py-2.5 text-center text-muted-foreground">{entry.percentual}%</td>
+                          <td className="px-3 py-2.5 text-right font-bold text-foreground whitespace-nowrap tabular-nums">
                             R$ {entry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                           </td>
-                          <td className="px-4 py-2.5 text-center text-muted-foreground">{entry.data}</td>
-                          <td className="px-4 py-2.5 text-center">
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color}`}>
+                          <td className="px-3 py-2.5 text-center text-muted-foreground whitespace-nowrap tabular-nums">{entry.data}</td>
+                          <td className="px-3 py-2.5 text-center">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap ${cfg.color}`}>
                               <cfg.icon className="h-2.5 w-2.5" /> {cfg.label}
                             </span>
                           </td>
-                          <td className="px-4 py-2.5 text-center">
-                            <div className="flex items-center justify-center gap-1">
+                          <td className="px-3 py-2.5 text-center">
+                            <div className="flex flex-wrap items-center justify-center gap-1">
                               {entry.status === "pendente" && (
                                 <button onClick={() => setStatusTarget({ entry, status: "aprovado" })}
-                                  className="h-8 px-3 rounded-lg text-xs font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25 whitespace-nowrap">
+                                  className="min-h-8 py-1 px-3 rounded-lg text-xs font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25">
                                   Aprovar
                                 </button>
                               )}
                               {entry.status === "aprovado" && (
                                 <button onClick={() => setStatusTarget({ entry, status: "pago" })}
-                                  className="h-8 px-3 rounded-lg text-xs font-medium bg-success/15 text-success hover:bg-success/25 whitespace-nowrap">
+                                  className="min-h-8 py-1 px-3 rounded-lg text-xs font-medium bg-success/15 text-success hover:bg-success/25">
                                   Marcar como paga
                                 </button>
                               )}
@@ -344,7 +398,7 @@ function ComissoesPage() {
             </div>
           </div>
         )}
-      </main>
+      </div>
     </div>
   );
 }
@@ -357,7 +411,7 @@ function KpiBox({ icon: Icon, label, value, color }: { icon: React.ElementType; 
         <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center group-hover:shadow-[0_0_10px_-2px_currentColor] transition-shadow duration-300">
           <Icon className={`h-3.5 w-3.5 ${color}`} />
         </div>
-        <span className="text-[10px] text-muted-foreground">{label}</span>
+        <span className="text-[11px] text-muted-foreground leading-tight">{label}</span>
       </div>
       <p className="text-base sm:text-lg font-bold tabular-nums leading-tight break-words text-foreground relative z-10" title={value}>{value}</p>
     </div>
@@ -367,7 +421,7 @@ function KpiBox({ icon: Icon, label, value, color }: { icon: React.ElementType; 
 function MiniStat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
     <div className="text-center">
-      <p className="text-[9px] text-muted-foreground">{label}</p>
+      <p className="text-[10px] text-muted-foreground leading-tight">{label}</p>
       <p className={`text-[11px] font-bold ${accent ? "text-warning" : "text-foreground"}`}>{value}</p>
     </div>
   );

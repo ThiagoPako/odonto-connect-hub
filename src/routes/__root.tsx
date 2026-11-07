@@ -1,6 +1,6 @@
 import { Outlet, Link, createRootRoute, HeadContent, Scripts, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
-import { AppSidebar } from "@/components/AppSidebar";
+import { AppSidebar, MobileTopBar } from "@/components/AppSidebar";
 import { WhatsAppConnectionBanner } from "@/components/WhatsAppConnectionBanner";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { useGlobalChatNotifier } from "@/hooks/useGlobalChatNotifier";
@@ -37,7 +37,7 @@ function NotFoundComponent() {
 
 function UnauthorizedComponent() {
   return (
-    <div className="flex-1 flex items-center justify-center bg-background px-4">
+    <div className="flex-1 flex items-center justify-center bg-background px-4 py-16">
       <div className="max-w-md text-center space-y-4">
         <div className="h-16 w-16 rounded-2xl bg-destructive/10 flex items-center justify-center mx-auto">
           <ShieldAlert className="h-8 w-8 text-destructive" />
@@ -146,12 +146,16 @@ function AuthGate() {
 
   // Authenticated — show sidebar + content (or unauthorized)
   return (
-    <div className="flex h-screen w-full overflow-hidden">
+    // h-dvh: no celular a barra do navegador não esconde o fim da página.
+    // min-w-0 na coluna de conteúdo: sem ele, uma tabela/linha larga empurra a página
+    // para fora da tela em vez de rolar dentro do <main>.
+    <div className="flex h-dvh w-full overflow-hidden">
       <GlobalChatNotifierMount />
       <AppSidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <MobileTopBar />
         <WhatsAppConnectionBanner />
-        <main className="flex-1 overflow-y-auto">
+        <main id="conteudo" className="flex-1 min-w-0 overflow-y-auto">
           {hasAccess ? <Outlet /> : <UnauthorizedComponent />}
         </main>
       </div>

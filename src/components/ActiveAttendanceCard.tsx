@@ -63,7 +63,7 @@ export function ActiveAttendanceCard({
 
       <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-xl bg-muted/40 border border-border/30">
         <MessageSquare className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
-        <p className="text-xs text-muted-foreground truncate italic">"{lastMessage}"</p>
+        <p className="text-xs text-muted-foreground truncate italic" title={lastMessage}>"{lastMessage}"</p>
       </div>
 
       <div className="flex items-center justify-between">
