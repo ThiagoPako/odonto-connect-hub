@@ -1115,7 +1115,13 @@ async function verifyUser(req) {
   // endpoints run with "sem tenant" and return empty messages.
   if (isValidTenantId(requestedTenantId)) {
     const validatedTenant = await validateRequestedTenantForUser(user, requestedTenantId);
-    if (validatedTenant) user.tenant_id = validatedTenant;
+    if (validatedTenant) {
+      // Super-admin entra em qualquer clínica pelo X-Tenant-Id: deixa rastro (sem query string).
+      if (user.is_super_admin && String(user.tenant_id || '') !== String(validatedTenant)) {
+        console.warn(`[AUDIT super-admin] user=${user.id} clinica=${validatedTenant} ${req.method} ${String(req.originalUrl || req.path || '').split('?')[0]}`);
+      }
+      user.tenant_id = validatedTenant;
+    }
   }
 
   // Set tenant context for RLS-backed queries. This must be session-level; the
@@ -1216,22 +1222,6 @@ async function assertCanManageUser(actor, targetUserId) {
   return target;
 }
 
-// Limite de usuários ativos do plano. Vale para as duas telas de criação (/api/my-tenant/users e
-// /api/auth/create-user, que antes não checava) e para reativar usuário. Devolve a mensagem ou null.
-async function limiteDeUsuariosAtingido(tenantId) {
-  const { rows: planRows } = await pool.query(
-    'SELECT pl.max_usuarios FROM tenants t LEFT JOIN plans pl ON pl.id = t.plan_id WHERE t.id = $1',
-    [tenantId]
-  );
-  const maxUsers = planRows[0]?.max_usuarios;
-  if (maxUsers == null) return null;
-  const { rows: countRows } = await pool.query(
-    'SELECT COUNT(*)::int AS c FROM profiles WHERE tenant_id = $1 AND COALESCE(active, true) = true',
-    [tenantId]
-  );
-  return Number(countRows[0]?.c) >= Number(maxUsers) ? `Limite de ${maxUsers} usuários do plano atingido` : null;
-}
-
 // true se `userId` é o único admin ativo da clínica: rebaixar ou desativar deixaria a clínica sem
 // ninguém para gerir usuários (só o suporte destravaria).
 async function eUltimoAdminAtivo(tenantId, userId) {
@@ -1259,7 +1249,7 @@ async function checarMudancaDeUsuario(actor, target, { role, active }) {
   if (active === true && tenantId) {
     const { rows } = await pool.query('SELECT COALESCE(active, true) AS active FROM profiles WHERE id = $1', [target.id]);
     if (rows[0] && rows[0].active === false) {
-      const limite = await limiteDeUsuariosAtingido(tenantId);
+      const limite = await limiteUsuariosAtingido(tenantId);
       if (limite) return { status: 403, error: limite };
     }
   }
@@ -1389,6 +1379,41 @@ function slugify(s) {
     .slice(0, 60);
 }
 
+const TENANT_STATUS_VALIDOS = ['trial', 'active', 'past_due', 'suspended', 'canceled'];
+const SAAS_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Usuários ativos (sem super-admin) da clínica.
+async function contarUsuariosAtivos(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM profiles
+      WHERE tenant_id = $1 AND COALESCE(active, true) = true AND COALESCE(is_super_admin, false) = false`,
+    [tenantId]
+  );
+  return rows[0]?.c ?? 0;
+}
+
+// Limite de usuários do plano, aplicado no backend em toda rota que cria ou reativa usuário.
+// Devolve a mensagem de erro, ou null se cabe mais um.
+async function limiteUsuariosAtingido(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT pl.max_usuarios FROM tenants t LEFT JOIN plans pl ON pl.id = t.plan_id WHERE t.id = $1`,
+    [tenantId]
+  );
+  const max = rows[0]?.max_usuarios;
+  if (max == null) return null;
+  return (await contarUsuariosAtivos(tenantId)) >= max ? `Limite de ${max} usuários do plano atingido` : null;
+}
+
+// Erro das rotas SaaS: 401/403 corretos, 400 para dado inválido, 500 sem texto do banco.
+function responderErroSaas(res, e, ctx) {
+  const status = httpStatusOf(e);
+  if (status !== 500) return res.status(status).json({ error: e.message });
+  if (e?.code === '22P02' || e?.code === '23514' || e?.code === '22007' || e?.code === '22008') return res.status(400).json({ error: 'Dados inválidos' });
+  if (e?.code === '23505') return res.status(409).json({ error: 'Já existe um registro com esse identificador' });
+  console.error(`[${ctx}]`, e?.message);
+  return res.status(500).json({ error: 'Erro interno' });
+}
+
 app.get('/api/plans', async (_req, res) => {
   try {
     const { rows } = await pool.query(
@@ -1512,7 +1537,7 @@ app.get('/api/my-tenant', async (req, res) => {
 
     res.json({ tenant: rows[0], subscription: subs[0] || null, invoices: invs });
   } catch (e) {
-    res.status(401).json({ error: e.message });
+    responderErroSaas(res, e, 'my-tenant');
   }
 });
 
@@ -1554,21 +1579,8 @@ app.post('/api/my-tenant/users', async (req, res) => {
     const { rows: existing } = await pool.query('SELECT id FROM profiles WHERE email = $1', [normalizedEmail]);
     if (existing.length > 0) return res.status(409).json({ error: 'Email já cadastrado' });
 
-    // Plan limit check
-    const { rows: planRows } = await pool.query(
-      `SELECT pl.max_usuarios FROM tenants t LEFT JOIN plans pl ON pl.id = t.plan_id WHERE t.id = $1`,
-      [user.tenant_id]
-    );
-    const maxUsers = planRows[0]?.max_usuarios;
-    if (maxUsers != null) {
-      const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*)::int as c FROM profiles WHERE tenant_id = $1 AND COALESCE(active, true) = true`,
-        [user.tenant_id]
-      );
-      if (countRows[0].c >= maxUsers) {
-        return res.status(403).json({ error: `Limite de ${maxUsers} usuários do plano atingido` });
-      }
-    }
+    const limite = await limiteUsuariosAtingido(user.tenant_id);
+    if (limite) return res.status(403).json({ error: limite });
 
     const id = crypto.randomUUID();
     const hash = await bcrypt.hash(password, 12);
@@ -1667,13 +1679,22 @@ app.post('/api/my-tenant/change-plan', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { plan_slug } = req.body || {};
     const { rows } = await pool.query('SELECT * FROM plans WHERE slug = $1 AND ativo = true', [plan_slug]);
     if (!rows[0]) return res.status(400).json({ error: 'Plano inválido' });
+    // Plano menor não pode ficar com mais usuários ativos do que permite.
+    if (rows[0].max_usuarios != null) {
+      const ativos = await contarUsuariosAtivos(user.tenant_id);
+      if (ativos > rows[0].max_usuarios) {
+        return res.status(409).json({ error: `O plano ${rows[0].nome} permite até ${rows[0].max_usuarios} usuários ativos e a clínica tem ${ativos}. Desative usuários antes de trocar.` });
+      }
+    }
     await pool.query('UPDATE tenants SET plan_id = $1, updated_at = NOW() WHERE id = $2', [rows[0].id, user.tenant_id]);
+    console.log(`[AUDIT saas] troca de plano clinica=${user.tenant_id} user=${user.id} plano=${rows[0].slug}`);
     res.json({ ok: true, plan: rows[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'my-tenant:change-plan');
   }
 });
 
@@ -1688,15 +1709,17 @@ app.get('/api/super-admin/tenants', async (req, res) => {
     `);
     res.json({ data: rows });
   } catch (e) {
-    res.status(403).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:tenants');
   }
 });
 
 app.patch('/api/super-admin/tenants/:id', async (req, res) => {
   try {
-    await verifySuperAdmin(req);
+    const { user: actor } = await verifySuperAdmin(req);
     const { id } = req.params;
+    if (!SAAS_UUID_RE.test(String(id))) return res.status(404).json({ error: 'Clínica não encontrada' });
     const { status, plan_slug, trial_ends_at, current_period_end } = req.body || {};
+    if (status && !TENANT_STATUS_VALIDOS.includes(status)) return res.status(400).json({ error: 'Status inválido' });
     const sets = [], vals = [];
     let i = 1;
     if (status) { sets.push(`status = $${i++}`); vals.push(status); }
@@ -1714,9 +1737,13 @@ app.patch('/api/super-admin/tenants/:id', async (req, res) => {
       `UPDATE tenants SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
       vals
     );
+    if (!rows[0]) return res.status(404).json({ error: 'Clínica não encontrada' });
+    const campos = Object.entries({ status, plan_slug, trial_ends_at, current_period_end })
+      .filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => `${k}=${v}`).join(' ');
+    console.log(`[AUDIT super-admin] alterou clinica=${id} actor=${actor.id} ${campos}`);
     res.json({ data: rows[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:tenant-update');
   }
 });
 
@@ -1726,7 +1753,7 @@ app.get('/api/super-admin/plans', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM plans ORDER BY display_order, preco_mensal');
     res.json({ data: rows });
   } catch (e) {
-    res.status(403).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:plans');
   }
 });
 
@@ -1745,7 +1772,7 @@ app.post('/api/super-admin/plans', async (req, res) => {
     );
     res.json({ data: rows[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:plan-create');
   }
 });
 
@@ -1850,7 +1877,7 @@ app.get('/api/super-admin/stats', async (req, res) => {
       pix_total AS (
         SELECT COALESCE(SUM(amount), 0) as total
         FROM invoices
-        WHERE status = 'paid' AND (payment_url LIKE '%pix%' OR id IN (SELECT id FROM invoices WHERE status = 'paid'))
+        WHERE status = 'paid' AND payment_url ILIKE '%pix%'
       )
       SELECT 
         (SELECT COALESCE(mrr, 0) FROM mrr_calc) as mrr,
@@ -1864,7 +1891,7 @@ app.get('/api/super-admin/stats', async (req, res) => {
 
     res.json({ data: stats[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:stats');
   }
 });
 
@@ -2366,8 +2393,6 @@ app.post('/api/auth/create-user', async (req, res) => {
 
     const { rows: existing } = await pool.query('SELECT id FROM profiles WHERE email = $1', [email.toLowerCase().trim()]);
     if (existing.length > 0) return res.status(409).json({ error: 'Email já cadastrado' });
-    const limite = await limiteDeUsuariosAtingido(actor.tenant_id);
-    if (limite) return res.status(403).json({ error: limite });
 
     const id = crypto.randomUUID();
     const hash = await bcrypt.hash(password, 12);
@@ -2375,6 +2400,8 @@ app.post('/api/auth/create-user', async (req, res) => {
       return res.status(400).json({ error: 'Perfil inválido' });
     }
     const userRole = role || 'user';
+    const limite = await limiteUsuariosAtingido(actor.tenant_id);
+    if (limite) return res.status(403).json({ error: limite });
 
     await pool.query('INSERT INTO profiles (id, name, email, role, password_hash, tenant_id) VALUES ($1, $2, $3, $4, $5, $6)', [id, name, email.toLowerCase().trim(), userRole, hash, actor.tenant_id]);
     await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, userRole]);
@@ -17757,7 +17784,7 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
-import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
+import { registerClinicorp, reconciliationTick, clinicorpBaseUrlPermitida, clinicorpBaseUrlSegura } from './clinicorp.mjs';
 registerClinicorp(app, pool, { verifyUser });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
@@ -17822,7 +17849,7 @@ app.put('/api/clinicorp/my-settings', async (req, res) => {
       }
     }
     if (base_url !== undefined && base_url !== null && base_url !== '') {
-      try { new URL(base_url); } catch { return res.status(400).json({ error: 'base_url inválida' }); }
+      if (!clinicorpBaseUrlPermitida(base_url)) return res.status(400).json({ error: 'base_url inválida: use o endereço da API da Clinicorp (https://api.clinicorp.com/...)' });
     }
     if (api_token !== undefined && api_token !== '' && api_token !== null) {
       if (typeof api_token !== 'string' || api_token.length < 8 || api_token.length > 2048) {
@@ -17915,7 +17942,7 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
 
     if (!api_token) return res.json({ ok: false, auth: 'invalid_token', error: 'Informe o API Token', ...emptyResult });
     if (!subscriber_id) return res.json({ ok: false, auth: 'invalid_token', error: 'Informe o Subscriber ID', ...emptyResult });
-    try { new URL(base_url); } catch { return res.status(400).json({ ok: false, error: 'URL base inválida' }); }
+    if (!clinicorpBaseUrlPermitida(base_url)) return res.status(400).json({ ok: false, error: 'URL base inválida: use o endereço da API da Clinicorp (https://api.clinicorp.com/...)' });
 
     const settings = { api_token, subscriber_id, base_url };
 
@@ -18069,7 +18096,7 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
 // A Clinicorp só aceita HTTP Basic (Usuário API : Token API); o token nunca
 // vai na URL.
 async function clinicorpFetchProbe(settings, pathName, opts = {}) {
-  const base = (settings.base_url || CLINICORP_DEFAULT_BASE_URL).replace(/\/$/, '');
+  const base = clinicorpBaseUrlSegura(settings.base_url).replace(/\/$/, '');
   const url = new URL(base + pathName);
   const apiUser = String(settings.subscriber_id || '').trim();
   const apiToken = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
@@ -18652,8 +18679,8 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS clinicorp_patient_id TEXT`,
       `ALTER TABLE clinicorp_financial_entries ADD COLUMN IF NOT EXISTS tenant_id UUID`,
       `ALTER TABLE clinicorp_monthly_summary ADD COLUMN IF NOT EXISTS tenant_id UUID`,
-      `UPDATE clinicorp_financial_entries SET tenant_id = (SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1) WHERE tenant_id IS NULL`,
-      `UPDATE clinicorp_monthly_summary SET tenant_id = (SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1) WHERE tenant_id IS NULL`,
+      // (Removido 2026-11-07) UPDATE ... SET tenant_id = <clínica do admin mais antigo> WHERE tenant_id IS NULL:
+      // a cada boot dava o financeiro sem dono para uma clínica qualquer.
       `ALTER TABLE clinicorp_monthly_summary DROP CONSTRAINT IF EXISTS clinicorp_monthly_summary_source_period_month_business_id_key`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_clinicorp_monthly_summary_tenant_period ON clinicorp_monthly_summary(source, period_month, business_id, tenant_id)`,
 
