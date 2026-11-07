@@ -109,8 +109,9 @@ describe('painel comercial', () => {
   test('follow-ups de um attendantId qualquer ficam na clínica do admin', async () => {
     const res = await chamar('get', '/api/comercial/painel?attendantId=99999999-9999-9999-9999-999999999999');
     expect(res.status).toBe(200);
-    const q = sqlLog.find(x => /follow_up_at IS NOT NULL/.test(x.text));
-    expect(q.text).toMatch(/AND tenant_id = \$2/);
+    const q = sqlLog.find(x => /FROM chat_messages cm/.test(x.text));
+    expect(q.text).toMatch(/AND l\.tenant_id = \$2/);
+    expect(q.text).toMatch(/cm\.tenant_id = l\.tenant_id/);
     expect(q.params[1]).toBe(tenantA);
   });
 });

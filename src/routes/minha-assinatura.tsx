@@ -39,6 +39,10 @@ const INVOICE_STATUS_LABEL: Record<string, string> = {
   canceled: "Cancelada",
 };
 
+// Mesmo formato em todo lugar: antes o card arredondava (R$ 150) e o diálogo mostrava R$ 149.90.
+const brl = (v: number | string | null | undefined) =>
+  Number(v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
 const limite = (v: number | null, singular: string, plural: string) =>
   v == null ? `${plural} ilimitados` : `até ${v} ${v === 1 ? singular : plural}`;
 
@@ -114,21 +118,21 @@ function MinhaAssinaturaPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Minha Assinatura" />
-      <main className="flex-1 p-6 overflow-auto space-y-6">
+      <main className="flex-1 p-4 sm:p-6 overflow-auto space-y-6">
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <CardTitle className="flex items-center gap-2">
                   <Crown className="h-5 w-5 text-primary" /> {tenant.nome}
                 </CardTitle>
                 <CardDescription>
                   Plano atual: <strong>{tenant.plan_nome ?? "Nenhum"}</strong>
-                  {tenant.preco_mensal ? ` — R$ ${Number(tenant.preco_mensal).toFixed(2)}/mês` : ""}
+                  {tenant.preco_mensal ? ` — ${brl(tenant.preco_mensal)}/mês` : ""}
                 </CardDescription>
               </div>
-              <Badge variant={STATUS_LABEL[tenant.status].variant}>
-                {STATUS_LABEL[tenant.status].label}
+              <Badge variant={(STATUS_LABEL[tenant.status] ?? { variant: "secondary" }).variant}>
+                {STATUS_LABEL[tenant.status]?.label ?? tenant.status}
               </Badge>
             </div>
           </CardHeader>
@@ -165,13 +169,13 @@ function MinhaAssinaturaPage() {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="text-2xl font-bold text-foreground">
-                      R$ {Number(p.preco_mensal).toFixed(0)}
+                      {brl(p.preco_mensal)}
                       <span className="text-sm font-normal text-muted-foreground"> /mês</span>
                     </div>
                     <ul className="text-xs text-muted-foreground space-y-1">
-                      <li>• {p.max_usuarios ?? "Ilimitados"} usuários</li>
-                      <li>• {p.max_dentistas ?? "Ilimitados"} dentistas</li>
-                      <li>• {p.max_pacientes ?? "Ilimitados"} pacientes</li>
+                      <li>• {limite(p.max_usuarios, "usuário", "usuários")}</li>
+                      <li>• {limite(p.max_dentistas, "dentista", "dentistas")}</li>
+                      <li>• {limite(p.max_pacientes, "paciente", "pacientes")}</li>
                     </ul>
                     <Button
                       disabled={isCurrent || changing === p.slug}
@@ -203,7 +207,7 @@ function MinhaAssinaturaPage() {
                 {invoices.map((inv) => (
                   <div key={inv.id} className="flex items-center justify-between p-3 rounded-lg border border-border">
                     <div>
-                      <div className="text-sm font-medium">R$ {Number(inv.amount).toFixed(2)}</div>
+                      <div className="text-sm font-medium">{brl(inv.amount)}</div>
                       <div className="text-xs text-muted-foreground">
                         {inv.due_date ? new Date(inv.due_date).toLocaleDateString("pt-BR") : "—"}
                       </div>
@@ -228,8 +232,8 @@ function MinhaAssinaturaPage() {
                 {confirmPlan && (
                   <>
                     <p>
-                      Valor: <strong className="text-foreground">R$ {Number(confirmPlan.preco_mensal).toFixed(2)}/mês</strong>
-                      {tenant.plan_nome ? <> (hoje: {tenant.plan_nome}{tenant.preco_mensal ? ` — R$ ${Number(tenant.preco_mensal).toFixed(2)}/mês` : ""})</> : null}
+                      Valor: <strong className="text-foreground">{brl(confirmPlan.preco_mensal)}/mês</strong>
+                      {tenant.plan_nome ? <> (hoje: {tenant.plan_nome}{tenant.preco_mensal ? ` — ${brl(tenant.preco_mensal)}/mês` : ""})</> : null}
                     </p>
                     <p>
                       Limites: {limite(confirmPlan.max_dentistas, "dentista", "dentistas")}, {limite(confirmPlan.max_usuarios, "usuário", "usuários")} e {limite(confirmPlan.max_pacientes, "paciente", "pacientes")}.

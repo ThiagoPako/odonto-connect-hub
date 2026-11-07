@@ -232,7 +232,7 @@ describe('Configurações por clínica (L4)', () => {
         expect(q.text).toMatch(/INSERT INTO app_settings[\s\S]*ON CONFLICT \(key\) DO NOTHING[\s\S]*RETURNING/); // marcador
         expect(q.text).toMatch(/WHERE EXISTS \(SELECT 1 FROM marcador\)/); // só na primeira vez
         expect(q.text).toMatch(/jsonb_typeof\(s\.value\) = 'object'/); // lê como objeto JSONB
-        expect(q.params[0]).toBe(`tenant_settings_copia_${q.params[1]}`);
+        expect(q.params[0]).toBe(`tenant_settings_copia_v2_${q.params[1]}`);
         expect(q.params[2]).toEqual(expect.arrayContaining(['00000000-0000-0000-0000-000000000001']));
       }
     });

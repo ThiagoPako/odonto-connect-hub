@@ -517,3 +517,16 @@
   70% { transform: scale(1.15); opacity: 0; }
   100% { transform: scale(1.15); opacity: 0; }
 }
+
+/* Shell: as páginas usam "min-h-screen" na raiz, mas elas vivem dentro do <main id="conteudo">,
+   que já desconta a barra do celular e o aviso do WhatsApp. Com 100vh a página ficava sempre
+   mais alta que a área visível e o <main> rolava sem necessidade. */
+#conteudo > .min-h-screen {
+  min-height: 100%;
+}
+
+/* Usada no menu lateral e em listas; não existia (a classe não fazia nada). */
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 35%, transparent) transparent;
+}
