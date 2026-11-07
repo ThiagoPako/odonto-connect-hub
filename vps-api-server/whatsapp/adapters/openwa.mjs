@@ -188,9 +188,11 @@ export function createOpenWaAdapter({ baseUrl, adminKey, env = process.env } = {
     });
   }
 
-  async function typing(channel, chatId, delayMs) {
+  // "digitando" (texto) ou "gravando" (áudio) antes de um envio da fila. O OpenWA também
+  // simula digitação no envio (SIMULATE_TYPING, até 5 s); este é o nosso ritmo, por mensagem.
+  async function typing(channel, chatId, delayMs, state = 'typing') {
     if (!delayMs || delayMs <= 0) return;
-    await request(`${sessionPath(channel)}/chats/typing`, { method: 'POST', apiKey: keyOf(channel), body: { chatId, state: 'typing' }, timeoutMs: 5000 });
+    await request(`${sessionPath(channel)}/chats/typing`, { method: 'POST', apiKey: keyOf(channel), body: { chatId, state }, timeoutMs: 5000 });
     await sleep(Math.min(Number(delayMs), 8000));
   }
 
@@ -222,10 +224,15 @@ export function createOpenWaAdapter({ baseUrl, adminKey, env = process.env } = {
       return sendResult({ ok: false, status: 501, error: 'OpenWA não envia botões/lista (vai o texto numerado)' });
     },
 
-    async sendMedia(channel, to, { kind = 'document', base64, url, mimetype, filename, caption, ptt = false, quotedId = null, idempotencyKey = null, timeoutMs = 60_000 } = {}) {
+    // Mídia por base64 (o servidor lê do nosso disco; nunca passa URL de terceiros ao OpenWA).
+    // Áudio com ptt=true vai como mensagem de voz (o chamador já converteu para OGG/Opus).
+    async sendMedia(channel, to, { kind = 'document', base64, url, mimetype, filename, caption, ptt = false, quotedId = null, idempotencyKey = null, delayMs = 0, timeoutMs = 60_000 } = {}) {
       if (!base64 && !url) return sendResult({ ok: false, status: 400, error: 'Mídia vazia' });
+      if (base64 && !mimetype) return sendResult({ ok: false, status: 400, error: 'Mídia sem tipo (mimetype)' });
       const route = { image: 'send-image', video: 'send-video', audio: 'send-audio', sticker: 'send-sticker' }[kind] || 'send-document';
-      const body = { chatId: openWaChatId(to), ...(base64 ? { base64, mimetype } : { url }) };
+      const chatId = openWaChatId(to);
+      await typing(channel, chatId, delayMs, kind === 'audio' ? 'recording' : 'typing');
+      const body = { chatId, ...(base64 ? { base64, mimetype } : { url }) };
       if (filename) body.filename = String(filename).slice(0, 255);
       if (caption && kind !== 'audio') body.caption = String(caption).slice(0, 1024);
       if (kind === 'audio' && ptt) body.ptt = true;
@@ -233,8 +240,24 @@ export function createOpenWaAdapter({ baseUrl, adminKey, env = process.env } = {
       return send(channel, route, body, { idempotencyKey, timeoutMs });
     },
 
-    async markRead(channel, chatId) {
-      const r = await request(`${sessionPath(channel)}/chats/read`, { method: 'POST', apiKey: keyOf(channel), body: { chatId: openWaChatId(chatId) }, timeoutMs: 8000 });
+    // Marcar como lido (só por ação do atendente; a sessão nunca lê sozinha). No Baileys, sem
+    // messageIds só a última mensagem recebida ganha o "lido": mandamos os ids que o chat tem.
+    async markRead(channel, chatId, { messageIds = [] } = {}) {
+      const ids = (Array.isArray(messageIds) ? messageIds : [])
+        .map(id => String(id || '').trim()).filter(id => id && !/\s/.test(id) && id.length <= 255).slice(0, 100);
+      const r = await request(`${sessionPath(channel)}/chats/read`, {
+        method: 'POST', apiKey: keyOf(channel), timeoutMs: 8000,
+        body: { chatId: openWaChatId(chatId), ...(ids.length ? { messageIds: ids } : {}) },
+      });
+      return { ok: r.ok && r.data?.success !== false, status: r.status };
+    },
+
+    // Presença no chat humano: 'typing' | 'recording' | 'paused' (paused apaga o indicador).
+    async sendTyping(channel, to, { state = 'typing' } = {}) {
+      const st = ['typing', 'recording', 'paused'].includes(state) ? state : 'typing';
+      const r = await request(`${sessionPath(channel)}/chats/typing`, {
+        method: 'POST', apiKey: keyOf(channel), body: { chatId: openWaChatId(to), state: st }, timeoutMs: 5000,
+      });
       return { ok: r.ok, status: r.status };
     },
 

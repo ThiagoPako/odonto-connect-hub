@@ -25,14 +25,14 @@ import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
 import { createLimiter, rateLimitMiddleware, sendTooMany, clientIp, ipKey, sleep } from './rate-limit.mjs';
-import { registerProvider, providerForChannel } from './whatsapp/provider.mjs';
+import { registerProvider, providerForChannel, sendResult } from './whatsapp/provider.mjs';
 import { credentialCipherFromEnv } from './whatsapp/crypto.mjs';
 import { createChannelStore, splitSqlStatements } from './whatsapp/channels.mjs';
 import { inboundMessageFromEvent, validEvents, claimWebhookEvent, pruneWebhookEvents, detachedResponse } from './whatsapp/inbound.mjs';
 import {
   createEvolutionAdapter, extractEvolutionConnectionState, normalizeEvolutionConnectionState,
   extractEvolutionMessageId, extractEvolutionInstanceName, normalizeEvolutionEventName, isEvolutionEvent,
-  extractEvolutionMessages, normalizeEvolutionAckStatus,
+  extractEvolutionMessages, normalizeEvolutionAckStatus, maskWaIdentifiers,
 } from './whatsapp/adapters/evolution.mjs';
 import { createOpenWaAdapter } from './whatsapp/adapters/openwa.mjs';
 
@@ -245,7 +245,8 @@ async function saveMediaToDisk(base64OrDataUri, mimeType, originalFileName) {
 
     // Return relative URL path
     const publicUrl = `/uploads/media/${subDir}/${fileName}`;
-    console.log(`💾 Media saved: ${publicUrl} (${(buffer.length / 1024).toFixed(1)} KB)`);
+    // Sem o caminho no log: quem tem o link abre o arquivo (dado de paciente).
+    console.log(`💾 Mídia salva (${resolvedMime.split(';')[0]}, ${(buffer.length / 1024).toFixed(1)} KB)`);
     return publicUrl;
   } catch (err) {
     console.error('Failed to save media to disk:', err.message);
@@ -3993,6 +3994,13 @@ app.get('/api/whatsapp/instances', async (req, res) => {
       }
     }
 
+    // Canais de outros provedores da clínica (OpenWA/reserva por QR), no mesmo formato, para o
+    // chat, disparos e campanhas enxergarem e escolherem o número. Mesmo com a Evolution fora.
+    if (!user.is_super_admin && isValidTenantId(user.tenant_id)) {
+      const seen = new Set(instances.map(i => i.name || i.instanceName || i.instance?.instanceName).filter(Boolean));
+      instances = instances.concat(await providerChannelsAsInstances(String(user.tenant_id), seen));
+    }
+
     res.json(instances);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -4241,6 +4249,26 @@ let resolveLidWarned = new Set();
 const instanceSubscribedPhones = new Map();
 
 // Subscribe to contact presence (typing, recording, online) — calls Evolution API
+// Recursos do chat que o número reserva (OpenWA) ainda não tem pelo nosso servidor: resposta
+// clara em vez de chamar a Evolution com um número que não é dela.
+const WA_EVOLUTION_ONLY_CHAT_ROUTES = [
+  '/api/whatsapp/subscribe-presence', '/api/whatsapp/delete-message', '/api/whatsapp/archive-chat',
+  '/api/whatsapp/send-location', '/api/whatsapp/send-contact', '/api/whatsapp/send-poll', '/api/whatsapp/send-sticker',
+  '/api/whatsapp/send-list', '/api/whatsapp/send-reaction', '/api/whatsapp/call',
+];
+app.post(WA_EVOLUTION_ONLY_CHAT_ROUTES, async (req, res, next) => {
+  try {
+    const instance = req.body?.instance;
+    if (!instance || typeof instance !== 'string') return next();
+    const channel = await waChannels.getByInstance(instance);
+    if (!channel || channel.provider === 'evolution') return next();
+    await verifyUser(req);
+    return res.status(501).json({ error: 'Este recurso ainda não está disponível no número reserva (QR). Use texto, imagem, documento ou áudio.', unsupported: true });
+  } catch (error) {
+    return res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro interno' });
+  }
+});
+
 app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
   try {
     await verifyUser(req);
@@ -4317,12 +4345,22 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
 // ─── Mark messages as read on WhatsApp (blue ticks) ───
 app.post('/api/whatsapp/mark-read', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { instance, number, messageIds } = req.body;
     if (!instance || !number) {
       return res.status(400).json({ error: 'instance e number são obrigatórios' });
     }
     const cleanNumber = normalizeWhatsappNumber(number);
+    // Canal OpenWA: "lido" pelo adaptador (só por ação do atendente; a sessão não lê sozinha).
+    const owa = await routeChatInstance(user, instance);
+    if (owa?.error) return res.status(owa.status).json({ error: owa.error });
+    if (owa) {
+      const ids = Array.isArray(messageIds) ? messageIds : [];
+      if (!ids.length) return res.json({ success: true, marked: 0 });
+      if (typeof owa.routed.provider.markRead !== 'function') return res.json({ success: false, marked: 0, unsupported: true });
+      const r = await owa.routed.provider.markRead(owa.routed.channel, cleanNumber, { messageIds: ids });
+      return res.json({ success: r.ok, marked: r.ok ? Math.min(ids.length, 100) : 0 });
+    }
     const keys = (messageIds || []).map(id => ({
       remoteJid: `${cleanNumber}@s.whatsapp.net`,
       id,
@@ -4404,7 +4442,7 @@ app.post('/api/whatsapp/archive-chat', async (req, res) => {
 
 app.post('/api/whatsapp/send-presence', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { instance, number, presence, delay } = req.body;
     if (!instance || !number || !presence) {
       return res.status(400).json({ error: 'instance, number e presence são obrigatórios' });
@@ -4416,6 +4454,17 @@ app.post('/api/whatsapp/send-presence', async (req, res) => {
     }
 
     const cleanNumber = normalizeWhatsappNumber(number);
+    // Canal OpenWA: "digitando"/"gravando" pelo adaptador, quando ele suporta.
+    const owa = await routeChatInstance(user, instance);
+    if (owa?.error) return res.status(owa.status).json({ error: owa.error });
+    if (owa) {
+      const p = owa.routed.provider;
+      if (!p.capabilities?.typing || typeof p.sendTyping !== 'function') return res.json({ success: false, presence, unsupported: true });
+      const state = presence === 'composing' ? 'typing' : presence;
+      const r = await p.sendTyping(owa.routed.channel, cleanNumber, { state });
+      if (!r.ok) return res.status(502).json({ error: 'Falha ao enviar presence' });
+      return res.json({ success: true, presence });
+    }
     const result = await evolutionFetch(`/chat/sendPresence/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
@@ -4556,13 +4605,29 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
 // Send media (image, video, document, audio)
 app.post('/api/whatsapp/send-media', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { instance, number, mediaType, media } = req.body;
     if (!instance || !number || !mediaType) {
       return res.status(400).json({ error: 'instance, number e mediaType são obrigatórios' });
     }
 
     const cleanNumber = normalizeWhatsappNumber(number);
+
+    // Canal OpenWA: imagem, documento, vídeo e áudio (voz) pelo adaptador, só por base64.
+    const owa = await routeChatInstance(user, instance);
+    if (owa?.error) return res.status(owa.status).json({ error: owa.error });
+    if (owa) {
+      if (!media?.base64) return res.status(400).json({ error: 'Nenhuma mídia válida fornecida (envie o arquivo)' });
+      const sent = await sendMediaByChannel(owa.routed, cleanNumber, {
+        kind: mediaType, base64: media.base64, mimetype: media.mimeType, filename: media.fileName, caption: media.caption,
+      });
+      if (!sent.ok) {
+        const f = providerSendFailure(sent, mediaType === 'audio' ? 'Falha ao enviar áudio' : 'Falha ao enviar mídia');
+        console.error(`❌ send-media (${owa.routed.record.provider}) falhou → ${maskPhone(cleanNumber)} (status=${sent.status})`);
+        return res.status(f.httpStatus).json({ error: f.error });
+      }
+      return res.json({ key: { id: sent.providerMessageId }, messageId: sent.providerMessageId, sent: true });
+    }
 
     ensureWebhookRegistration(instance).catch((webhookErr) => {
       console.warn(`⚠️ send-media: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
@@ -4651,7 +4716,35 @@ app.post('/api/whatsapp/send-media-upload', limiteUpload, express.raw({ type: '*
 
     const cleanNumber = normalizeWhatsappNumber(number);
     const resolvedMimeType = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
+    const owa = await routeChatInstance(jobUser, String(instance));
+    if (owa?.error) return res.status(owa.status).json({ error: owa.error });
     jobId = randomUUID();
+
+    // Canal OpenWA: envio pelo adaptador em segundo plano; a tela acompanha pelo jobId.
+    if (owa) {
+      mediaSendJobs.set(jobId, {
+        status: 'processing', createdAt: Date.now(), tenantId: String(jobUser.tenant_id), instance: String(instance),
+        number: cleanNumber, mediaType: String(mediaType), fileName: fileName ? String(fileName) : undefined, mimeType: resolvedMimeType,
+      });
+      res.status(202).json({ jobId, status: 'processing' });
+      const sent = await sendMediaByChannel(owa.routed, cleanNumber, {
+        kind: String(mediaType), base64: rawBody.toString('base64'), mimetype: resolvedMimeType,
+        filename: fileName ? String(fileName) : `arquivo.${resolvedMimeType.split('/')[1]?.split(';')[0] || 'bin'}`,
+        caption: caption && String(caption).trim() ? String(caption).trim() : undefined,
+      });
+      if (!sent.ok) {
+        const f = providerSendFailure(sent, String(mediaType) === 'audio' ? 'Falha ao enviar áudio' : 'Falha ao enviar mídia');
+        console.error(`❌ send-media-upload (${owa.routed.record.provider}) jobId=${jobId} falhou (status=${sent.status})`);
+        mediaSendJobs.set(jobId, { ...mediaSendJobs.get(jobId), status: 'failed', error: f.error, finishedAt: Date.now() });
+        return;
+      }
+      const savedMediaUrl = await saveBufferToDisk(rawBody, resolvedMimeType, fileName ? String(fileName) : undefined);
+      mediaSendJobs.set(jobId, {
+        ...mediaSendJobs.get(jobId), status: 'sent', finishedAt: Date.now(), mediaUrl: savedMediaUrl,
+        result: { key: { id: sent.providerMessageId }, messageId: sent.providerMessageId },
+      });
+      return;
+    }
 
     ensureWebhookRegistration(String(instance)).catch((webhookErr) => {
       console.warn(`⚠️ send-media-upload: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
@@ -8692,9 +8785,9 @@ app.post('/api/reativacao/rules/:id/send', async (req, res) => {
       if (!phone) {
         failed++;
         await pool.query(
-          `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status, error_message)
-           VALUES ($1,$2,$3,$4,$5,'falhou',$6)`,
-          [rule.id, m.id, m.lead_id, '', message, 'Telefone ausente']
+          `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status, error_message, tenant_id)
+           VALUES ($1,$2,$3,$4,$5,'falhou',$6,$7)`,
+          [rule.id, m.id, m.lead_id, '', message, 'Telefone ausente', tenantId]
         ).catch(() => {});
         errors.push({ pacienteId: m.id, error: 'Telefone ausente' });
         continue;
@@ -9813,14 +9906,17 @@ async function handleInboundWhatsAppMessage({ res, tenantId, instance, body = {}
   }
 
   // Extract media metadata
-  const mediaMimeType = msg.mediaMimeType || null;
+  let mediaMimeType = msg.mediaMimeType || null;
   const mediaFileName = msg.mediaFileName || null;
 
-  // Mídia pelo adaptador do provedor e gravada em disco (não guarda base64 no banco)
+  // Mídia pelo adaptador do provedor, baixada na hora (URL do provedor expira) e gravada em
+  // disco (não guarda base64 no banco). O adaptador devolve o base64 ou { base64, mimetype }.
   let mediaUrl = null;
   if (['image', 'audio', 'video', 'document', 'sticker'].includes(msgType) && msg.providerMsgId) {
     try {
-      const mediaBase64 = await msg.fetchMediaBase64();
+      const fetched = await msg.fetchMediaBase64();
+      const mediaBase64 = typeof fetched === 'string' ? fetched : (fetched?.base64 || null);
+      if (!mediaMimeType && fetched && typeof fetched === 'object' && fetched.mimetype) mediaMimeType = String(fetched.mimetype).slice(0, 120);
       if (mediaBase64) {
         // Save to disk instead of storing base64 in DB
         const diskUrl = await saveMediaToDisk(
@@ -10402,7 +10498,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // ─── Presence updates (typing, recording, online) ───
     if (isEvolutionEvent(event, 'presence.update', 'presence_update')) {
       const presenceData = body.data;
-      console.log(`👁️ PRESENCE_UPDATE raw:`, JSON.stringify(presenceData).slice(0, 500));
+      console.log(`👁️ PRESENCE_UPDATE raw:`, maskWaIdentifiers(JSON.stringify(presenceData).slice(0, 500)));
 
       // Extract participants — Baileys sends them in different shapes
       let participants = Array.isArray(presenceData?.participants) ? presenceData.participants : [];
@@ -10558,6 +10654,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
     if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update', 'send.message', 'send_message')) {
       const updates = extractStatusUpdates(body.data || body);
       console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates`);
+      // Contrato dos eventos internos: avisa (sem dados do paciente) quando nada do lote é válido.
+      if (updates.length && !validEvents(evolutionProvider.parseWebhook(body), { warn: () => {} }).some(e => e.type === 'message.status')) {
+        console.warn(`[whatsapp] messages.update sem status válido (${updates.length} itens) de ${instance || '?'}`);
+      }
       for (const update of updates) {
         const lookupIds = extractStatusLookupIds(update);
         const primaryMessageId = lookupIds[0];
@@ -10565,7 +10665,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         const ack = extractStatusAckValue(update) ?? (isSendMessageEvent ? 'SERVER_ACK' : null);
 
         if (!primaryMessageId) {
-          console.log(`⚠️ ACK ignored: missing message id in update`, JSON.stringify(update).slice(0, 300));
+          console.log(`⚠️ ACK ignored: missing message id in update`, maskWaIdentifiers(JSON.stringify(update).slice(0, 300)));
           continue;
         }
         if (remoteJid && remoteJid.endsWith('@g.us')) continue;
@@ -10674,6 +10774,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
       return res.json({ ignored: true, reason: 'group_or_missing_jid' });
     }
 
+    // Mesmo contrato do OpenWA: a mensagem só é processada se o evento interno for válido
+    // (id, chat, tipo, fromMe; sem campo de clínica). Inválido → 200 e descarta, com aviso.
+    const [inboundEvt] = evolutionProvider.parseWebhook({ event: 'messages.upsert', instance, data: message });
+    if (!inboundEvt || !validEvents([inboundEvt]).length) {
+      return res.json({ ignored: true, reason: 'invalid_event' });
+    }
     const msg = evolutionInboundMessage({ message, remoteJid, instance });
     await handleInboundWhatsAppMessage({ res, tenantId, instance, body, msg, allowTenantFallback: true });
   } catch (error) {
@@ -10747,7 +10853,11 @@ async function handleOpenWaEvent(channel, evt) {
       fetchMediaBase64: async () => {
         if (!routed.provider?.downloadMedia) return null;
         const m = await routed.provider.downloadMedia(routed.channel, evt.media);
-        return m.ok ? m.base64 : null;
+        if (!m.ok) {
+          console.warn(`[openwa] mídia recebida não baixada no canal ${channel.id} (HTTP ${m.status || '?'})`);
+          return null;
+        }
+        return { base64: m.base64, mimetype: m.mimetype || null };
       },
     });
     await handleInboundWhatsAppMessage({ res: detachedResponse(), tenantId, instance, body: {}, msg, allowTenantFallback: false });
@@ -11765,6 +11875,121 @@ async function providerForInstance(instance) {
   return { provider: null, channel, record: channel, error: `Provedor ${channel.provider} ainda não suportado` };
 }
 
+// Canais não Evolution da clínica no formato da lista de instâncias (useWhatsAppInstances lê
+// name, id, integration, connectionStatus, ownerJid). Estado ao vivo do OpenWA quando ele
+// responde; senão, o último estado gravado no canal. Sem credenciais nem ids do OpenWA.
+// Chat humano: canal não Evolution do instance_name, conferindo a clínica. null = segue o
+// caminho da Evolution (sem canal ou canal Evolution). { status, error } = recusar.
+async function routeChatInstance(user, instance) {
+  const routed = await providerForInstance(instance);
+  if (!routed.record || routed.record.provider === 'evolution') {
+    // Evolution: mesma regra do send-text — número mapeado para outra clínica é recusado.
+    const mapped = await getTenantIdByInstance(instance).catch(() => null);
+    if (user?.tenant_id && mapped && String(mapped) !== String(user.tenant_id)) {
+      return { status: 403, error: 'Esta instância do WhatsApp não pertence à clínica atual. Atualize a página e selecione o canal correto.' };
+    }
+    return null;
+  }
+  if (!user?.tenant_id || String(routed.record.tenant_id) !== String(user.tenant_id)) {
+    return { status: 403, error: 'Este número de WhatsApp não pertence à sua clínica.' };
+  }
+  if (!routed.provider) return { status: 503, error: 'Canal de WhatsApp indisponível. Reconecte o número em Canais.' };
+  return { routed };
+}
+
+const WA_MEDIA_KINDS = new Set(['image', 'video', 'audio', 'document']);
+function waMediaKind(v) {
+  const k = String(v || '').toLowerCase();
+  return WA_MEDIA_KINDS.has(k) ? k : 'document';
+}
+
+// Mídia por um adaptador (OpenWA hoje; Cloud na F2). Áudio vira mensagem de voz: convertido
+// para OGG/Opus mono pelo ffmpeg (o Baileys não converte); sem ffmpeg, vai como arquivo de
+// áudio. Devolve SendResult. Sem telefone nem conteúdo no log.
+async function sendMediaByChannel(routed, to, { kind, base64, mimetype, filename, caption, delayMs = 0, idempotencyKey = null, timeoutMs = 90_000 } = {}) {
+  let b64 = cleanBase64Media(base64 || '');
+  let mime = String(mimetype || '').split(';')[0].trim() || 'application/octet-stream';
+  if (!b64 || b64.length < 10) return sendResult({ ok: false, status: 400, error: 'Mídia vazia' });
+  const k = waMediaKind(kind);
+  let ptt = false;
+  if (k === 'audio') {
+    try {
+      const t = await transcodeAudioToWhatsAppOgg(b64, mime);
+      b64 = t.base64; mime = 'audio/ogg; codecs=opus'; ptt = true;
+    } catch (e) {
+      console.warn('[whatsapp] áudio sem conversão para OGG/Opus; vai como arquivo de áudio:', String(e?.message || e).slice(0, 120));
+    }
+  }
+  return routed.provider.sendMedia(routed.channel, to, {
+    kind: k, base64: b64, mimetype: mime, filename: filename ? String(filename).slice(0, 255) : undefined,
+    caption: k === 'audio' ? undefined : (caption ? String(caption) : undefined), ptt, delayMs, idempotencyKey, timeoutMs,
+  });
+}
+
+// Erro de envio de um adaptador → status HTTP + texto para a tela (detalhe só no log).
+function providerSendFailure(sent, fallback) {
+  const httpStatus = sent.retryAfterMs ? 429 : (sent.status >= 400 && sent.status < 600 && sent.status !== 401 && sent.status !== 403 ? sent.status : 502);
+  const error = sent.uncertain
+    ? 'Envio não confirmado: confira a conversa antes de reenviar.'
+    : sent.status === 413 ? 'Arquivo grande demais para o WhatsApp.' : fallback;
+  return { httpStatus, error };
+}
+
+// Mídia de um job da fila: só arquivos do nosso disco (/uploads/media/AAAA-MM/<uuid>.<ext>),
+// com assinatura do servidor ligada à clínica — variables vindas do cliente não apontam para
+// arquivo de outra clínica nem para fora da pasta de mídia.
+const WA_JOB_MEDIA_PATH_RE = /^\/uploads\/media\/\d{4}-\d{2}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}$/;
+function waJobMediaSignature(tenantId, media) {
+  return createHmac('sha256', `wa-job-media:${JWT_SECRET}`)
+    .update(`${tenantId}|${media.path}|${media.kind}|${media.mimetype || ''}`).digest('hex');
+}
+function signWaJobMedia(tenantId, media) {
+  if (!isValidTenantId(tenantId) || !media || !WA_JOB_MEDIA_PATH_RE.test(String(media.path || ''))) return null;
+  const m = {
+    kind: waMediaKind(media.kind), path: String(media.path),
+    mimetype: media.mimetype ? String(media.mimetype).slice(0, 120) : null,
+    filename: media.filename ? String(media.filename).slice(0, 255) : null,
+  };
+  return { ...m, sig: waJobMediaSignature(String(tenantId), m) };
+}
+async function loadWaJobMedia(tenantId, media) {
+  if (!media || typeof media !== 'object' || !WA_JOB_MEDIA_PATH_RE.test(String(media.path || ''))) return { ok: false, error: 'Mídia do envio inválida' };
+  const m = { kind: waMediaKind(media.kind), path: String(media.path), mimetype: media.mimetype || null, filename: media.filename || null };
+  const expected = Buffer.from(waJobMediaSignature(String(tenantId), m));
+  const got = Buffer.from(String(media.sig || ''));
+  if (expected.length !== got.length || !timingSafeEqual(expected, got)) return { ok: false, error: 'Mídia do envio inválida' };
+  try {
+    const buf = await readFile(path.join(UPLOADS_DIR, m.path.slice('/uploads/media/'.length)));
+    return { ok: true, media: m, base64: buf.toString('base64') };
+  } catch {
+    return { ok: false, error: 'Arquivo da mídia não encontrado no servidor' };
+  }
+}
+
+async function providerChannelsAsInstances(tenantId, skipNames = new Set()) {
+  const rows = (await waChannels.listForTenant(tenantId))
+    .filter(c => c.provider !== 'evolution' && c.status === 'active' && c.instance_name && !skipNames.has(c.instance_name));
+  if (!rows.length) return [];
+  const live = rows.some(c => c.provider === 'openwa')
+    ? await getOpenWaLiveStates().catch(() => ({ ok: false, byInstance: new Map() }))
+    : { ok: false, byInstance: new Map() };
+  return rows.map(c => {
+    const liveState = live.ok ? live.byInstance.get(c.instance_name) : null;
+    const raw = liveState && liveState !== 'ausente' ? liveState : (c.connection_state || 'close');
+    const state = raw === 'open' || raw === 'connecting' ? raw : 'close';
+    return {
+      name: c.instance_name,
+      id: c.id,
+      integration: String(c.provider).toUpperCase(),
+      connectionStatus: state,
+      ownerJid: c.display_phone ? `${c.display_phone}@s.whatsapp.net` : null,
+      provider: c.provider,
+      channelId: c.id,
+      role: c.role,
+    };
+  });
+}
+
 async function getOpenEvolutionInstances() {
   if (Date.now() - waOpenInstancesCache.at < 60_000) return waOpenInstancesCache.names;
   const result = await providerForChannel(null).listStates();
@@ -11839,11 +12064,18 @@ const WA_MARKETING_FORBIDDEN_VARS = /\{\{\s*(procedimento|valor)\s*\}\}|\{tratam
 async function enqueueWhatsAppJob({
   tenantId, instance = null, phone, message, category = 'transactional',
   flowId = null, flowName = '', stepIndex = 0, patientName = '', variables = null,
-  scheduledAt = new Date(), triggerEvent = 'manual', id = null, expiresAt = null,
+  scheduledAt = new Date(), triggerEvent = 'manual', id = null, expiresAt = null, media = null,
 }) {
   if (!isValidTenantId(tenantId)) throw new Error('enqueueWhatsAppJob: tenantId obrigatório');
   const cleanPhone = normalizeWhatsappNumber(phone || '');
   if (!cleanPhone || !message) return null;
+  // Mídia (imagem, documento, vídeo, áudio de voz): arquivo já salvo em /uploads/media; o
+  // `message` vira a legenda (e o texto auditado/deduplicado). Assinada pelo servidor.
+  if (media) {
+    const signed = signWaJobMedia(tenantId, media);
+    if (!signed) throw new Error('enqueueWhatsAppJob: mídia inválida (use um arquivo salvo em /uploads/media)');
+    variables = { ...(variables || {}), media: signed };
+  }
   if (category === 'marketing') message = withMarketingOptOutFooter(message);
   // Já fixa o número da clínica, para o ritmo por número valer desde o início.
   const resolvedInstance = instance || await getTenantDefaultInstance(tenantId).catch(() => null);
@@ -12194,7 +12426,27 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
   const interactive = vars.interactive && WA_INTERACTIVE_ENDPOINTS.has(vars.interactive.endpoint)
     && vars.interactive.payload && typeof vars.interactive.payload === 'object' ? vars.interactive : null;
   let sent;
-  if (interactive) {
+  if (vars.media) {
+    // Mídia da fila: arquivo do nosso disco, assinatura conferida; legenda = job.message.
+    const loaded = await loadWaJobMedia(tenantId, vars.media);
+    if (!loaded.ok) return fail(loaded.error);
+    const m = loaded.media;
+    if (provider.kind === 'evolution' && m.kind === 'audio') {
+      // Evolution: mesmo caminho do chat (conversão + sendWhatsAppAudio com tentativas).
+      const r = await sendWhatsAppAudioWithFallback(instance, phone, loaded.base64, m.mimetype || 'audio/ogg', m.filename || 'audio.ogg');
+      sent = sendResult({ ok: r.ok, providerMessageId: r.ok ? extractEvolutionMessageId(r.data) : null, status: r.status, retryable: r.status >= 500, raw: r });
+    } else if (provider.kind === 'evolution') {
+      sent = await provider.sendMedia(routed.channel, phone, {
+        kind: m.kind, base64: loaded.base64, mimetype: m.mimetype || 'application/octet-stream', filename: m.filename || undefined,
+        caption: job.message, delayMs: typingDelayMs(job.message), timeoutMs: 90_000,
+      });
+    } else {
+      sent = await sendMediaByChannel(routed, phone, {
+        kind: m.kind, base64: loaded.base64, mimetype: m.mimetype, filename: m.filename, caption: job.message,
+        delayMs: typingDelayMs(job.message), idempotencyKey: `job-${job.id}`,
+      });
+    }
+  } else if (interactive) {
     sent = await provider.sendInteractive(routed.channel, phone, {
       ...sendOpts, endpoint: interactive.endpoint, payload: interactive.payload, delayMs: typingDelayMs(job.message),
     });
@@ -17822,6 +18074,18 @@ if (process.env.NODE_ENV !== 'test') {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
       `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS clinicorp_estimate_id TEXT`,
+      // B2/B3 (migration-schema-b2-b3.sql, Renata): só os ALTER simples, para o primeiro boot
+      // antes do deploy. O arquivo inteiro (blocos DO, catálogo, versões, reativação) vai no deploy.
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS itens JSONB DEFAULT '[]'::jsonb`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS valor_total NUMERIC(12,2) DEFAULT 0`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS desconto NUMERIC(12,2) DEFAULT 0`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS validade TIMESTAMPTZ`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS observacoes TEXT`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS forma_pagamento TEXT`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS parcelas INTEGER DEFAULT 1`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS titulo TEXT`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS print_config JSONB`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS odontograma_snapshot JSONB`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS clinicorp_patient_id TEXT`,
       `ALTER TABLE clinicorp_financial_entries ADD COLUMN IF NOT EXISTS tenant_id UUID`,
       `ALTER TABLE clinicorp_monthly_summary ADD COLUMN IF NOT EXISTS tenant_id UUID`,
@@ -17955,6 +18219,8 @@ export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear()
 
 export { checkWhatsAppHealth, processAutomationJobs as processAutomationJobsForHealthTests };
 export { processAutomationJobs };
+// Mídia na fila (tests/whatsapp-openwa-midia.test.js): enfileirar e assinar como o servidor.
+export { enqueueWhatsAppJob, signWaJobMedia, UPLOADS_DIR as WA_UPLOADS_DIR_FOR_TESTS };
 export function resetWhatsAppQueueStateForTests() {
   waPacing.clear(); waOutcomes.clear(); waOpenInstancesCache = { at: 0, names: new Set() };
   waChannels.invalidate();

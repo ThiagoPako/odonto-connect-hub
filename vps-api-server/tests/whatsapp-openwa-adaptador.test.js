@@ -188,3 +188,53 @@ describe('OpenWA — webhook', () => {
     expect(parseOpenWaWebhook(null)).toEqual([]);
   });
 });
+
+describe('OpenWA — mídia, lido e presença (F1)', () => {
+  test('mídia por base64 sem mimetype: 400 sem chamar o OpenWA; ptt só no áudio', async () => {
+    fake.connect(channel.external_id);
+    const antes = fake.calls.length;
+    const r = await adapter.sendMedia(channel, '5511988887777', { kind: 'image', base64: 'QUJD' });
+    expect(r).toMatchObject({ ok: false, status: 400 });
+    expect(fake.calls.length).toBe(antes);
+    const img = await adapter.sendMedia(channel, '5511988887777', { kind: 'image', base64: 'QUJD', mimetype: 'image/png', ptt: true });
+    expect(img.ok).toBe(true);
+    expect(fake.sent.at(-1).body.ptt).toBeUndefined();
+    const voz = await adapter.sendMedia(channel, '5511988887777', { kind: 'audio', base64: 'T2dnUw==', mimetype: 'audio/ogg; codecs=opus', ptt: true, caption: 'não vai' });
+    expect(voz.ok).toBe(true);
+    expect(fake.sent.at(-1)).toMatchObject({ route: 'send-audio', body: { ptt: true, mimetype: 'audio/ogg; codecs=opus' } });
+    expect(fake.sent.at(-1).body.caption).toBeUndefined();
+  });
+
+  test('"gravando" antes do áudio da fila e "digitando" antes da imagem (delayMs)', async () => {
+    await adapter.sendMedia(channel, '5511988887777', { kind: 'audio', base64: 'T2dnUw==', mimetype: 'audio/ogg', ptt: true, delayMs: 1 });
+    expect(fake.chatActions.at(-1)).toMatchObject({ action: 'typing', body: { state: 'recording' } });
+    await adapter.sendMedia(channel, '5511988887777', { kind: 'document', base64: 'QUJD', mimetype: 'application/pdf', delayMs: 1 });
+    expect(fake.chatActions.at(-1).body.state).toBe('typing');
+  });
+
+  test('markRead filtra ids (sem espaço, até 100) e omite a lista vazia', async () => {
+    const ids = ['A1', 'com espaço', '', ...Array.from({ length: 120 }, (_, i) => `X${i}`)];
+    expect((await adapter.markRead(channel, '5511988887777', { messageIds: ids })).ok).toBe(true);
+    const body = fake.chatActions.at(-1).body;
+    expect(body.messageIds[0]).toBe('A1');
+    expect(body.messageIds).toHaveLength(100);
+    expect(body.messageIds).not.toContain('com espaço');
+    expect((await adapter.markRead(channel, '5511988887777')).ok).toBe(true);
+    expect('messageIds' in fake.chatActions.at(-1).body).toBe(false);
+  });
+
+  test('sendTyping aceita typing/recording/paused; outro valor vira typing', async () => {
+    for (const st of ['typing', 'recording', 'paused']) {
+      expect((await adapter.sendTyping(channel, '5511988887777', { state: st })).ok).toBe(true);
+      expect(fake.chatActions.at(-1).body).toEqual({ chatId: '5511988887777@c.us', state: st });
+    }
+    await adapter.sendTyping(channel, '5511988887777', { state: 'composing' });
+    expect(fake.chatActions.at(-1).body.state).toBe('typing');
+  });
+
+  test('downloadMedia devolve o mimetype do OpenWA quando o webhook não trouxe', async () => {
+    const m = await adapter.downloadMedia(channel, { ref: 'false_1@c.us_X', chatId: '5511988887777@c.us', mimetype: null });
+    expect(m).toMatchObject({ ok: true, mimetype: 'image/jpeg' });
+    expect(Buffer.from(m.base64, 'base64').toString()).toBe('JPEGFALSO');
+  });
+});

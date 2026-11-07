@@ -389,12 +389,12 @@ export function createEvolutionAdapter({ baseUrl, apiKey, redact = (d) => d, env
 
     // Mídia em base64 (as rotas do chat Evolution ainda usam o próprio caminho com fallbacks;
     // este método serve a interface comum).
-    async sendMedia(channel, to, { kind = 'document', base64, mimetype, filename, caption, timeoutMs = 60_000 } = {}) {
+    async sendMedia(channel, to, { kind = 'document', base64, mimetype, filename, caption, delayMs = 0, timeoutMs = 60_000 } = {}) {
       if (!base64) return sendResult({ ok: false, status: 400, error: 'Mídia vazia' });
       const mediatype = kind === 'image' || kind === 'video' || kind === 'audio' ? kind : 'document';
       const r = await request(`/message/sendMedia/${encodeURIComponent(refOf(channel))}`, {
         method: 'POST',
-        body: JSON.stringify({ number: evolutionJid(to), mediatype, mimetype, media: base64, fileName: filename, caption }),
+        body: JSON.stringify({ number: evolutionJid(to), mediatype, mimetype, media: base64, fileName: filename, caption, delay: delayMs }),
         timeoutMs,
       });
       return toSendResult(r);

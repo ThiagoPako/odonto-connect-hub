@@ -13,6 +13,7 @@ export async function startFakeOpenWa({ adminKey = 'fake-admin-key' } = {}) {
   const idem = new Map();
   const sent = [];
   const calls = [];
+  const chatActions = []; // "lido" e "digitando" recebidos (corpo), para os testes conferirem
   let failPlan = null;
   keys.set(adminKey, { id: 'admin', role: 'admin', allowedSessions: null, revoked: false });
 
@@ -84,7 +85,18 @@ export async function startFakeOpenWa({ adminKey = 'fake-admin-key' } = {}) {
       webhooks.set(w.id, w);
       return json(res, 201, { id: w.id, url: w.url, events: w.events });
     }
-    if (req.method === 'POST' && rest === 'chats/typing') return json(res, 200, { success: true });
+    if (req.method === 'POST' && rest === 'chats/typing') {
+      const body = await readBody(req);
+      if (!['typing', 'recording', 'paused'].includes(body?.state)) return json(res, 400, { statusCode: 400, message: ['state inválido'] });
+      chatActions.push({ action: 'typing', sessionId: s.id, body });
+      return json(res, 200, { success: true });
+    }
+    if (req.method === 'POST' && rest === 'chats/read') {
+      const body = await readBody(req);
+      if (Array.isArray(body?.messageIds) && !body.messageIds.length) return json(res, 400, { statusCode: 400, message: ['messageIds vazio'] });
+      chatActions.push({ action: 'read', sessionId: s.id, body });
+      return json(res, 200, { success: true });
+    }
     if (req.method === 'POST' && parts[3] === 'messages' && /^send-/.test(parts[4] || '')) {
       if (s.status !== 'ready') return json(res, 400, { statusCode: 400, message: 'session not active' });
       const k = req.headers['idempotency-key'];
@@ -95,6 +107,12 @@ export async function startFakeOpenWa({ adminKey = 'fake-admin-key' } = {}) {
       }
       const body = await readBody(req);
       if (!body?.chatId || !/^[^\s@]+@[^\s@]+$/.test(body.chatId)) return json(res, 400, { statusCode: 400, message: ['chatId inválido'] });
+      // Regras do SendMediaMessageDto: url ou base64; base64 exige mimetype (exceto voz com ptt).
+      if (/^send-(image|video|audio|document|sticker)$/.test(parts[4])) {
+        if (!body.base64 && !body.url) return json(res, 400, { statusCode: 400, message: ['url ou base64'] });
+        if (body.base64 && !body.mimetype && !(parts[4] === 'send-audio' && body.ptt === true)) return json(res, 400, { statusCode: 400, message: ['mimetype obrigatório com base64'] });
+        if ('ptt' in body && parts[4] !== 'send-audio') return json(res, 400, { statusCode: 400, message: ['property ptt should not exist'] });
+      }
       const out = { messageId: `true_${body.chatId}_FAKE${crypto.randomBytes(6).toString('hex').toUpperCase()}`, timestamp: Math.floor(Date.now() / 1000) };
       sent.push({ route: parts[4], sessionId: s.id, body, messageId: out.messageId });
       if (k) idem.set(`${s.id}:${k}`, out);
@@ -122,7 +140,7 @@ export async function startFakeOpenWa({ adminKey = 'fake-admin-key' } = {}) {
   }
 
   return {
-    baseUrl, adminKey, sessions, keys, webhooks, sent, calls, signedDelivery,
+    baseUrl, adminKey, sessions, keys, webhooks, sent, calls, chatActions, signedDelivery,
     connect(sessionId, phone = '5562900000000') { const s = sessions.get(sessionId); s.status = 'ready'; s.phone = phone; },
     fail(plan) { failPlan = { count: 1, ...plan }; },
     async close() { await new Promise(r => server.close(r)); },
