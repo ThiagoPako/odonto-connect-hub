@@ -139,12 +139,13 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
 
   const handleSave = async () => {
     if (saving || firstInvalidStep) return;
-    const tpl = templatesProntos.find((t) => t.id === templateSelecionado) || {
-      id: "custom",
-      nome: nomeDisparo,
-      mensagem,
-      variaveis: (mensagem.match(/\{\{(\w+)\}\}/g) || []).map((m) => m.replace(/[{}]/g, "")),
-    };
+    // O texto que vale é o que está no editor: antes, com um modelo pronto selecionado,
+    // o servidor recebia o texto original do modelo e as edições da clínica se perdiam.
+    const variaveis = (mensagem.match(/\{\{(\w+)\}\}/g) || []).map((m) => m.replace(/[{}]/g, ""));
+    const base = templatesProntos.find((t) => t.id === templateSelecionado);
+    const tpl = base
+      ? { ...base, mensagem, variaveis }
+      : { id: "custom", nome: nomeDisparo, mensagem, variaveis };
     const payload = ({
       nome: nomeDisparo || "Novo Disparo",
       template: tpl,
@@ -280,7 +281,7 @@ function StepPublico({
       </div>
 
       <div className="grid grid-cols-1 gap-2">
-        {publicoOptions.map((opt) => (
+        {publicoOptions.filter((opt) => opt.id !== "custom").map((opt) => (
           <button
             key={opt.id}
             onClick={() => setPublico(opt.id)}
@@ -303,13 +304,9 @@ function StepPublico({
         ))}
       </div>
 
-      <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-primary/10 text-primary text-xs">
-        <Users className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-        <span>
-          {contatosAlcancaveis > 0
-            ? <>No último envio, <strong>{contatosAlcancaveis}</strong> contatos se encaixaram neste público.</>
-            : `O número exato de contatos é calculado na hora do envio, com a base atual da clínica: até ${CAPACIDADE_POR_ENVIO} contatos deste público por envio.`}
-        </span>
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 text-primary text-xs font-medium">
+        <Users className="h-3.5 w-3.5 shrink-0" />
+        <span>Recebem só contatos que já conversaram com a clínica no WhatsApp e não pediram para sair. O número exato aparece ao disparar{contatosAlcancaveis > 0 ? ` (último envio: ${contatosAlcancaveis})` : ""}.</span>
       </div>
 
       {/* Spam control */}
@@ -685,7 +682,7 @@ function StepRevisao({
       <div className="bg-muted/50 rounded-xl p-4 space-y-3">
         <ReviewRow label="Nome" value={nomeDisparo || "Sem nome"} />
         <ReviewRow label="Público" value={publicoLabel} />
-        <ReviewRow label="Contatos" value={contatosAlcancaveis > 0 ? `${contatosAlcancaveis} no último envio` : `até ${CAPACIDADE_POR_ENVIO} por envio`} />
+        <ReviewRow label="Contatos" value="Calculados no envio (só quem já conversou com a clínica)" />
         <ReviewRow label="Tipo" value={tipo === "recorrente" ? "Campanha Recorrente" : "Campanha Única"} />
         {tipo === "recorrente" && <ReviewRow label="Dias" value={diasSemana.join(", ") || "Nenhum"} />}
         <ReviewRow label="Horário" value={`${horarioInicio} — ${horarioFim}`} />
