@@ -53,33 +53,33 @@ afterAll(async () => { await pool.end(); });
 const PAPEIS = ['user', 'recepcionista', 'dentista', 'admin'];
 const EQUIPE = ['recepcionista', 'dentista', 'admin'];
 const ADM = ['admin'];
+// [método, url, corpo, papéis que passam, tabelas que a rota lê/grava]
 const ROTAS = [
-  ['get', '/api/generic/estoque', null, EQUIPE],
-  ['get', '/api/lista-espera', null, EQUIPE],
-  ['post', '/api/lista-espera', { paciente_nome: 'X' }, EQUIPE],
-  ['delete', `/api/lista-espera/${ID}`, null, EQUIPE],
-  ['post', `/api/agenda/${ID}/liberar-horario`, null, EQUIPE],
-  ['get', `/api/agenda/${ID}/encaixe`, null, EQUIPE],
-  ['post', `/api/agenda/${ID}/oferecer-horario`, {}, EQUIPE],
-  ['delete', `/api/exames/${ID}`, null, ADM],
-  ['post', `/api/campaigns/${ID}/execute`, null, ADM],
+  ['get', '/api/generic/estoque', null, EQUIPE, ['estoque']],
+  ['get', '/api/lista-espera', null, EQUIPE, ['lista_espera']],
+  ['post', '/api/lista-espera', { paciente_nome: 'X' }, EQUIPE, ['lista_espera', 'pacientes']],
+  ['delete', `/api/lista-espera/${ID}`, null, EQUIPE, ['lista_espera']],
+  ['post', `/api/agenda/${ID}/liberar-horario`, null, EQUIPE, ['agendamentos', 'lista_espera']],
+  ['get', `/api/agenda/${ID}/encaixe`, null, EQUIPE, ['agendamentos', 'lista_espera']],
+  ['post', `/api/agenda/${ID}/oferecer-horario`, {}, EQUIPE, ['agendamentos', 'lista_espera', 'lista_espera_ofertas', 'automation_jobs']],
+  ['delete', `/api/exames/${ID}`, null, ADM, ['exames']],
+  ['post', `/api/campaigns/${ID}/execute`, null, ADM, ['broadcast_campaigns', 'automation_jobs']],
 ];
 
 describe('rotas que estavam fora da matriz', () => {
-  test.each(ROTAS.flatMap(([m, u, b, ok]) => PAPEIS.map(p => [p, m, u, b, ok.includes(p)])))(
-    '%s %s %s', async (papel, m, u, b, passa) => {
+  test.each(ROTAS.flatMap(([m, u, b, ok, tabelas]) => PAPEIS.map(p => [p, m, u, b, ok.includes(p), tabelas])))(
+    '%s %s %s', async (papel, m, u, b, passa, tabelas) => {
       _definirPapelParaTestes(usuario, papel);
       const res = await chamar(m, u, b);
       if (passa) expect(res.status).not.toBe(403);
       else {
         expect(res.status).toBe(403);
         expect(res.body.error).toBe('Seu perfil não tem acesso a esta função');
-        // Barrado antes de qualquer leitura/escrita na tabela da rota. DDL da auto-migração do
-        // boot (assíncrona, ao importar o server) pode cair no meio do 1º teste: não conta.
-        // Nem a checagem global da assinatura (#101, lê só o status da clínica).
-        const ddlDoBoot = /^\s*(ALTER|CREATE|DROP|COMMENT|DO)\b/i;
-        const assinatura = /FROM tenants WHERE id = \$1/;
-        expect(sqlLog.filter(q => !/FROM profiles p/.test(q.text) && !ddlDoBoot.test(q.text) && !assinatura.test(q.text))).toEqual([]);
+        // Barrado antes de qualquer leitura/escrita nas tabelas da rota. Só essas contam: rotinas
+        // do boot (auto-migração, segredo da Clinicorp) e a checagem global da assinatura rodam
+        // em paralelo e caem no registro conforme o tempo — não são da rota.
+        const daRota = new RegExp(`\\b(FROM|INTO|UPDATE|JOIN)\\s+(${tabelas.join('|')})\\b`, 'i');
+        expect(sqlLog.filter(q => daRota.test(q.text)).map(q => q.text)).toEqual([]);
       }
     });
 });
