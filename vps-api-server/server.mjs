@@ -43,6 +43,7 @@ import {
 import { createOpenWaAdapter } from './whatsapp/adapters/openwa.mjs';
 import { situacaoAssinatura, sqlTenantSemMarketing, rotaLiberadaNoBloqueio, permitidoNaEtapa, etapaAoMenos, ERRO_ASSINATURA_BLOQUEADA, ERRO_ASSINATURA_SOMENTE_LEITURA, EXPORTACAO_GRUPOS, EXPORTACAO_TABELAS, celulaCsv, linhaCsv } from './assinatura.mjs';
 import { validarPaciente, CAMPOS_PACIENTE, quantidadeEstoque, TIPOS_MOVIMENTO_ESTOQUE } from './cadastros-validacao.mjs';
+import { registrarRotasComercialLeads } from './comercial/rotas-leads.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
 // crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
@@ -2356,6 +2357,19 @@ app.get('/api/super-admin/stats', async (req, res) => {
     responderErroSaas(res, e, 'super-admin:stats');
   }
 });
+
+// ─── Comercial interno: buscador e base de leads (só super-admin e equipe comercial) ───
+// Google Places API oficial + CSV; tabelas com_* sem tenant_id (comercial/rotas-leads.mjs).
+const comercialLeads = registrarRotasComercialLeads(app, { pool, verifyUser });
+
+async function ensureComercialLeadsSchema() {
+  let sql;
+  try { sql = readFileSync(path.join(__dirname, 'migration-comercial-leads.sql'), 'utf8'); }
+  catch (e) { console.error('[comercial] migração não encontrada:', e.message); return; }
+  for (const st of splitSqlStatements(sql)) {
+    await pool.query(st).catch(e => console.error('[comercial-schema]', e.message, '→', st.split('\n')[0].slice(0, 90)));
+  }
+}
 
 // ─── Diagnostic Route ──────────────────────────────────────
 app.get('/api/debug/config', async (req, res) => {
@@ -20807,6 +20821,9 @@ if (process.env.NODE_ENV !== 'test') {
   await asSystemJob(ensureWaitlistSchema)();
   await asSystemJob(ensureWhatsAppHealthSchema)();
   await asSystemJob(ensureWhatsAppChannelsSchema)();
+  await asSystemJob(ensureComercialLeadsSchema)();
+  // Fila do scraper do comercial (engine do google-maps-scraper-kit em contêiner separado): um job por vez.
+  if (comercialLeads.scraperConfigurado) setInterval(asSystemJob(comercialLeads.tickScraper), 30 * 1000);
   asSystemJob(checkWhatsAppHealth)();
   setInterval(asSystemJob(checkWhatsAppHealth), WA_HEALTH_INTERVAL_MS);
   // Dedupe de webhooks (whatsapp_webhook_events): guarda 8 dias (a Meta reentrega por 7).
