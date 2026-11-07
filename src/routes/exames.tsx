@@ -133,13 +133,13 @@ function ExamesPage() {
       await examesApi.update(id, { status });
       toast.success("Status atualizado");
       load();
-    } catch { toast.error("Erro ao atualizar status"); }
+    } catch (e: unknown) { toast.error((e as Error).message || "Erro ao atualizar status"); }
   }
 
   async function remove(id: string) {
-    if (!confirm("Excluir este exame?")) return;
-    try { await examesApi.remove(id); toast.success("Excluído"); recarregar(); }
-    catch { toast.error("Erro ao excluir"); }
+    if (!confirm("Excluir este pedido de exame? Exames com laudo ou imagem não podem ser excluídos, só cancelados.")) return;
+    try { await examesApi.remove(id); toast.success("Pedido de exame excluído"); recarregar(); }
+    catch (e: unknown) { toast.error((e as Error).message || "Erro ao excluir"); }
   }
 
   return (

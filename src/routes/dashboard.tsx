@@ -253,6 +253,7 @@ function DashboardPage() {
               {sessions.map((s) => (
                 <ActiveAttendanceCard
                   key={s.id}
+                  leadId={s.lead_id}
                   patientName={s.lead_nome}
                   patientInitials={getInitials(s.lead_nome)}
                   attendantName={s.attendant_name || "—"}

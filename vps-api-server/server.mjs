@@ -917,6 +917,28 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   console.warn('⚠️ VAPID keys not set — push notifications disabled. Run: npx web-push generate-vapid-keys');
 }
 
+// ─── Payload do push de mensagem nova no chat ───────────────
+// A notificação aparece na tela bloqueada do celular/computador: não leva o
+// conteúdo da mensagem nem o telefone. O primeiro nome só entra se a clínica
+// ligar tenant_settings.push_privacidade.mostrarNome (padrão: desligado).
+function primeiroNomeSeguro(name) {
+  const first = String(name || '').trim().split(/\s+/)[0] || '';
+  // Nome com dígito pode ser o próprio telefone (pushName vazio vira número).
+  if (!first || /\d/.test(first)) return '';
+  return first.slice(0, 30);
+}
+
+function buildChatPushPayload({ leadId, name, mostrarNome = false }) {
+  const primeiro = mostrarNome ? primeiroNomeSeguro(name) : '';
+  return {
+    title: primeiro ? `Nova mensagem de ${primeiro}` : 'Nova mensagem',
+    body: 'Abra o Odonto Connect para ler',
+    tag: leadId ? `msg-${leadId}` : 'odonto-msg',
+    url: leadId ? `/chat?lead=${encodeURIComponent(leadId)}` : '/chat',
+    leadId: leadId || null,
+  };
+}
+
 // ─── Send push to all subscriptions ─────────────────────────
 async function sendPushToAll(payload, tenantId) {
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
@@ -1479,6 +1501,13 @@ app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
     const plan = planRows[0];
     if (!plan) return res.status(400).json({ error: 'Plano inválido' });
 
+    // Só a versão vigente (ou publicada em aviso) de cada documento; versão inventada no body → 400.
+    const versoesAceite = await validarVersoesNoCadastro(client, {
+      termosVersao: termos_versao ? String(termos_versao) : null,
+      politicaVersao: politica_versao ? String(politica_versao) : null,
+    });
+    if (versoesAceite.erro) return res.status(400).json({ error: versoesAceite.erro });
+
     await client.query('BEGIN');
 
     const baseSlug = slugify(clinic_name) || 'clinica';
@@ -1512,6 +1541,15 @@ app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
       `INSERT INTO user_roles (user_id, role) VALUES ($1,'admin') ON CONFLICT DO NOTHING`,
       [profile.id]
     );
+
+    // Prova do aceite (aceites_documentos, só inclusão); as colunas de tenants acima ficam por compatibilidade.
+    await registrarAceitesNoSignup(client, {
+      tenantId: tenant.id, usuarioId: profile.id,
+      termosVersao: termos_versao ? String(termos_versao) : null,
+      politicaVersao: politica_versao ? String(politica_versao) : null,
+      ip: ipDe(req),
+      userAgent: req.headers['user-agent'],
+    });
 
     await client.query(
       `INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_end, gateway)
@@ -9842,6 +9880,31 @@ app.put('/api/attendance-settings', async (req, res) => {
   }
 });
 
+// Configuração da clínica: mostrar ou não o primeiro nome no push.
+app.get('/api/push-privacidade', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json({ mostrarNome: false });
+    const cfg = await getTenantSetting(user.tenant_id, 'push_privacidade');
+    res.json({ mostrarNome: cfg?.mostrarNome === true });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao carregar a configuração' });
+  }
+});
+
+app.put('/api/push-privacidade', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const mostrarNome = req.body?.mostrarNome === true;
+    await setTenantSetting(user.tenant_id, 'push_privacidade', { mostrarNome });
+    res.json({ success: true, mostrarNome });
+  } catch (error) {
+    const status = tenantSettingsErrorStatus(error);
+    res.status(status).json({ error: status === 500 ? 'Erro ao salvar a configuração' : error.message });
+  }
+});
+
 // Lembrete/pedido de confirmação de consulta por clínica (tenant_settings
 // 'appointment_reminder' = { enabled }). Sem registro: ligado, como sempre foi.
 app.get('/api/appointment-reminder-settings', async (req, res) => {
@@ -10808,14 +10871,16 @@ async function handleInboundWhatsAppMessage({ res, tenantId, instance, body = {}
 
   console.log(`💬 New message from ${maskPhone(phone)} → saved + broadcast to ${sseClients.size} clients`);
 
-  // Send Web Push notification to all subscribed attendants
-  sendPushToAll({
-    title: `💬 ${pushName || phone}`,
-    body: msgContent || `[${msgType}]`,
-    tag: `msg-${lead.id}`,
-    url: `/chat?lead=${encodeURIComponent(lead.id)}`,
-    leadId: lead.id,
-  }, tenantId);
+  // Web Push para os atendentes: aparece na tela bloqueada, então nunca leva o
+  // texto da mensagem nem o telefone (LGPD art. 11). Ver buildChatPushPayload.
+  (async () => {
+    let mostrarNome = false;
+    try {
+      const cfg = await getTenantSetting(tenantId, 'push_privacidade');
+      mostrarNome = cfg?.mostrarNome === true;
+    } catch { /* padrão: sem nome */ }
+    await sendPushToAll(buildChatPushPayload({ leadId: lead.id, name: lead.name || pushName, mostrarNome }), tenantId);
+  })().catch(() => {});
 
   if (lead && !lead.avatar_url) {
     (async () => {
@@ -11201,7 +11266,10 @@ async function applyOpenWaChannelState(channel, state, { qr = null, phone = null
   ).catch(e => console.error('[openwa] estado do canal:', e.message));
   waChannels.invalidate(channel.instance_name);
   waOpenInstancesCache = { at: 0, names: waOpenInstancesCache.names };
-  broadcastSSE('whatsapp_channel_state', { channelId: channel.id, state, ...(qr ? { qr } : {}) }, tenantId);
+  // O QR nunca vai pelo SSE (que chega a todos os usuários da clínica, inclusive a recepção):
+  // só o aviso de que há QR novo. A tela do administrador busca a imagem pela rota /qr, que
+  // exige verifyAdmin (revisão F1.1, N1).
+  broadcastSSE('whatsapp_channel_state', { channelId: channel.id, state, ...(qr ? { qrAvailable: true } : {}) }, tenantId);
   if (allowPromote && state === 'open' && channel.role !== 'primary') {
     const primary = await waChannels.getPrimary(tenantId);
     const open = await getOpenEvolutionInstances();
@@ -11271,8 +11339,12 @@ app.post('/api/webhook/openwa/:channelId', async (req, res) => {
 
     // Chave de dedupe do CORPO (coberto pelo HMAC), com o canal na frente: um cabeçalho trocado
     // num replay assinado não escapa do dedupe, e canais diferentes não colidem (revisão F1, I2).
+    // Sem idempotencyKey no corpo: dedupe pelo hash do corpo bruto assinado (o reenvio do
+    // OpenWA repete o mesmo corpo; eventos reais trazem timestamp e diferem) (revisão F1.1, N4).
     const bodyKey = req.body?.idempotencyKey ? String(req.body.idempotencyKey) : '';
-    const eventId = bodyKey ? `${channel.id}:${bodyKey}` : null;
+    const eventId = bodyKey
+      ? `${channel.id}:${bodyKey}`
+      : `${channel.id}:sha256:${createHash('sha256').update(req.rawBody).digest('hex')}`;
     if (!(await claimWebhookEvent(pool, 'openwa', eventId))) return res.json({ duplicate: true });
     const events = validEvents(openWaProvider.parseWebhook(req.body))
       .filter(e => e.channelRef === String(channel.external_id));
@@ -11384,10 +11456,18 @@ app.get('/api/whatsapp/channels/:id/qr', async (req, res) => {
     if (!loaded.channel) return res.status(503).json({ error: 'Credenciais do canal indisponíveis. Desconecte e conecte de novo.' });
     let r = await openWaProvider.getQr(loaded.channel);
     if (!r.ok && r.state === 'close') { await openWaProvider.start(loaded.channel); r = await openWaProvider.getQr(loaded.channel); }
-    if (r.ok && r.qr) return res.json({ qr: r.qr, state: 'connecting' });
+    if (r.ok && r.qr) return res.json({ qr: r.qr, state: 'connecting', live: true });
     const st = await openWaProvider.getState(loaded.channel);
-    if (st.ok) await applyOpenWaChannelState(loaded.record, st.state, { phone: st.phone });
-    res.json({ qr: null, state: st.ok ? st.state : null });
+    // OpenWA fora do ar (ou sem responder): erro claro em vez de 200 {qr:null}, para a tela
+    // parar de girar "Gerando o código…" (revisão F1.1, C1).
+    if (!st.ok && (st.status === 401 || st.status === 403 || st.status === 404)) {
+      return res.status(502).json({ error: 'O servidor do número reserva recusou este canal. Remova o número reserva e conecte de novo.', live: false });
+    }
+    if (!st.ok) {
+      return res.status(502).json({ error: 'O servidor do número reserva não respondeu. Tente de novo em alguns minutos.', live: false });
+    }
+    await applyOpenWaChannelState(loaded.record, st.state, { phone: st.phone });
+    res.json({ qr: null, state: st.state, live: true });
   } catch (error) {
     const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
     res.status(status).json({ error: status === 500 ? 'Erro ao obter o QR' : error.message });
@@ -11430,7 +11510,9 @@ app.delete('/api/whatsapp/channels/:id', async (req, res) => {
     const { user } = await verifyAdmin(req);
     const loaded = await loadTenantOpenWaChannel(user, req.params.id);
     if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
-    if (loaded.channel) await openWaProvider.removeSession(loaded.channel);
+    // A sessão é apagada com a chave ADMIN: não depende de decifrar as credenciais do canal
+    // (sem elas, só a revogação da chave da sessão fica para trás) (revisão F1, I3).
+    await openWaProvider.removeSession(loaded.channel || { external_id: loaded.record.external_id, credentials: {} });
     await pool.query('DELETE FROM whatsapp_instances WHERE instance_name = $1 AND tenant_id = $2', [loaded.record.instance_name, String(user.tenant_id)]);
     await pool.query('DELETE FROM whatsapp_channels WHERE id = $1 AND tenant_id = $2', [loaded.record.id, String(user.tenant_id)]);
     waChannels.invalidate(loaded.record.instance_name);
@@ -16750,8 +16832,9 @@ app.get('/api/ai/settings', async (req, res) => {
       api_key: r.api_key ? (user.is_super_admin ? '...' + r.api_key.slice(-4) : '...configurada') : '',
       editable: !!user.is_super_admin,
     }));
-    // Meta Ads (provider 'manus'): o token é da clínica, não da plataforma
-    if (!user.is_super_admin) {
+    // Meta Ads (provider 'manus'): o token é sempre da clínica, inclusive para super-admin
+    // (não existe mais token global de Meta Ads).
+    {
       let own = null;
       if (user.tenant_id) {
         try {
@@ -16796,7 +16879,7 @@ app.post('/api/ai/settings', async (req, res) => {
     if (!provider) return res.status(400).json({ error: 'Provider é obrigatório' });
 
     // Meta Ads (provider 'manus'): token por clínica, gravado pelo admin da própria clínica
-    if (provider === 'manus' && !user.is_super_admin) {
+    if (provider === 'manus') {
       if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
       const isNewTenantKey = api_key && !String(api_key).includes('...');
       const tenantConfig = config && typeof config === 'object' && !Array.isArray(config) ? JSON.stringify(config) : null;
@@ -17570,9 +17653,8 @@ async function metaAdsUpsert(table, tenantId, keys, values) {
   }
 }
 
-// Token do Meta Ads da clínica (tenant_ai_settings). A configuração global (ai_settings)
-// só é usada como fallback para super-admin.
-async function getManusSettings(tenantId, allowGlobalFallback = false) {
+// Token do Meta Ads da clínica (tenant_ai_settings). Não há token global.
+async function getManusSettings(tenantId) {
   if (tenantId) {
     try {
       const { rows } = await pool.query(
@@ -17585,21 +17667,20 @@ async function getManusSettings(tenantId, allowGlobalFallback = false) {
       console.warn('[meta-ads] tenant_ai_settings não existe — aplique a migração de segurança P0');
     }
   }
-  if (!allowGlobalFallback) return null;
-  const result = await pool.query(`SELECT * FROM ai_settings WHERE provider = 'manus' AND enabled = true`);
-  return result.rows[0] ? { ...result.rows[0], _source: 'global' } : null;
+  return null;
 }
 
 /**
  * Helper: call Meta Graph API with access token from Manus config
  */
+// O token vai no header Authorization (aceito pela Graph API), não na URL, para não
+// aparecer em logs de proxy nem em mensagens de erro.
 async function metaGraphFetch(path, accessToken, params = {}) {
   const url = new URL(`https://graph.facebook.com/v19.0${path}`);
-  url.searchParams.set('access_token', accessToken);
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, String(v));
   }
-  const resp = await fetch(url.toString());
+  const resp = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
     throw new Error(`Meta API ${resp.status}: ${JSON.stringify(err.error || err)}`);
@@ -17644,7 +17725,7 @@ app.get('/api/ai/meta-ads/overview', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
 
-    const manus = await getManusSettings(user.tenant_id, false);
+    const manus = await getManusSettings(user.tenant_id);
     const connected = !!manus?.api_key;
 
     // Try to get cached insights from DB
@@ -17725,7 +17806,7 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
     const { user } = await verifyAdmin(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
 
-    const manus = await getManusSettings(user.tenant_id, false);
+    const manus = await getManusSettings(user.tenant_id);
     if (!manus?.api_key) {
       return res.status(400).json({ error: 'Manus AI não configurado. Vá em Configurações → IA e adicione a API key.' });
     }
@@ -17744,17 +17825,11 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
       if (meData.data && meData.data.length > 0) {
         adAccountId = meData.data[0].id;
         adAccountName = meData.data[0].name || adAccountId;
-        // Guarda a conta descoberta na configuração de quem forneceu o token
-        if (manus._source === 'global') {
-          await pool.query(`UPDATE ai_settings SET config = config || $1::jsonb WHERE provider = 'manus'`, [
-            JSON.stringify({ ad_account_id: adAccountId }),
-          ]);
-        } else {
-          await pool.query(
-            `UPDATE tenant_ai_settings SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb WHERE tenant_id = $2 AND provider = 'manus'`,
-            [JSON.stringify({ ad_account_id: adAccountId }), user.tenant_id]
-          ).catch(e => { if (e.code !== '42703') throw e; });
-        }
+        // Guarda a conta descoberta na configuração da clínica
+        await pool.query(
+          `UPDATE tenant_ai_settings SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb WHERE tenant_id = $2 AND provider = 'manus'`,
+          [JSON.stringify({ ad_account_id: adAccountId }), user.tenant_id]
+        ).catch(e => { if (e.code !== '42703') throw e; });
       } else {
         return res.status(400).json({ error: 'Nenhuma conta de anúncio encontrada. Verifique o token de acesso.' });
       }
@@ -17878,8 +17953,11 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
-import { registerClinicorp, reconciliationTick, clinicorpBaseUrlPermitida, clinicorpBaseUrlSegura } from './clinicorp.mjs';
+import { registerClinicorp, reconciliationTick, hashWebhookSecret, generateWebhookSecret, WEBHOOK_SECRET_GRACE_HOURS, clinicorpBaseUrlPermitida, clinicorpBaseUrlSegura } from './clinicorp.mjs';
+import { registerLegal, registrarAceitesNoSignup, validarVersoesNoCadastro, ipDe } from './legal.mjs';
 registerClinicorp(app, pool, { verifyUser });
+// Aceite de Termos/Política com prova (aceites_documentos) e pendências de versão nova.
+registerLegal(app, { pool, verifyUser, verifyAdmin, verifySuperAdmin });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
 // Each authenticated user has their own row in clinicorp_user_settings.
@@ -17892,6 +17970,21 @@ async function clinicorpUserOf(req) {
   return user;
 }
 
+// Alterar ou remover as credenciais e gerar o segredo do webhook: só admin da clínica.
+async function clinicorpAdminOf(req, res) {
+  try {
+    const { user } = await verifyAdmin(req);
+    return user;
+  } catch (e) {
+    if (e.message === 'Admin access required') {
+      res.status(403).json({ error: 'Apenas o administrador da clínica pode alterar a integração com a Clinicorp' });
+    } else {
+      res.status(401).json({ error: 'Unauthorized' });
+    }
+    return null;
+  }
+}
+
 app.get('/api/clinicorp/my-settings', async (req, res) => {
   let user;
   try { user = await clinicorpUserOf(req); }
@@ -17900,22 +17993,31 @@ app.get('/api/clinicorp/my-settings', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT enabled, subscriber_id, base_url,
               api_token IS NOT NULL AND api_token <> '' AS has_api_token,
-              webhook_secret IS NOT NULL AND webhook_secret <> '' AS has_webhook_secret,
-              CASE WHEN webhook_secret IS NOT NULL AND length(webhook_secret) >= 8
-                   THEN substring(webhook_secret from 1 for 4) || '…' || substring(webhook_secret from length(webhook_secret) - 3)
-                   ELSE '' END AS webhook_secret_preview,
+              webhook_secret_hash IS NOT NULL AS has_webhook_secret,
+              CASE WHEN webhook_secret_anterior_hash IS NOT NULL AND anterior_expira_em > NOW()
+                   THEN anterior_expira_em END AS previous_secret_expires_at,
+              CASE WHEN webhook_secret_hash IS NOT NULL THEN webhook_secret_legado_ate END AS legacy_secret_deadline,
               last_sync_at, last_sync_status, last_sync_error, sync_progress, updated_at
          FROM clinicorp_user_settings WHERE user_id = $1`,
       [user.id]
     );
     const s = rows[0] || {};
+    // Mesma regra do verifyAdmin, sem o aviso de segurança no log (a tela consulta isto em polling).
+    const canManage = Boolean(user.is_super_admin || user.role === 'admin') || (await pool.query(
+      'SELECT 1 FROM user_roles WHERE user_id = $1 AND role = $2', [user.id, 'admin']
+    ).then(r => r.rows.length > 0, () => false));
     res.json({
       enabled: s.enabled ?? false,
       subscriber_id: s.subscriber_id || '',
       base_url: s.base_url || CLINICORP_DEFAULT_BASE_URL,
       has_api_token: Boolean(s.has_api_token),
       has_webhook_secret: Boolean(s.has_webhook_secret),
-      webhook_secret_preview: s.webhook_secret_preview || '',
+      // O segredo não fica guardado em claro: a tela só mostra que existe.
+      webhook_secret_preview: s.has_webhook_secret ? '••••••••' : '',
+      previous_secret_expires_at: s.previous_secret_expires_at || null,
+      // Segredo antigo (escolhido à mão): vale até esta data; depois, é preciso gerar um novo.
+      legacy_secret_deadline: s.legacy_secret_deadline || null,
+      can_manage: canManage,
       last_sync_at: s.last_sync_at || null,
       last_sync_status: s.last_sync_status || null,
       last_sync_error: s.last_sync_error || null,
@@ -17925,14 +18027,13 @@ app.get('/api/clinicorp/my-settings', async (req, res) => {
     });
   } catch (e) {
     console.error('[clinicorp my-settings GET]', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Erro ao carregar as credenciais da Clinicorp' });
   }
 });
 
 app.put('/api/clinicorp/my-settings', async (req, res) => {
-  let user;
-  try { user = await clinicorpUserOf(req); }
-  catch { return res.status(401).json({ error: 'Unauthorized' }); }
+  const user = await clinicorpAdminOf(req, res);
+  if (!user) return;
   try {
     const { enabled, api_token, subscriber_id, webhook_secret, base_url } = req.body || {};
 
@@ -17950,49 +18051,87 @@ app.put('/api/clinicorp/my-settings', async (req, res) => {
         return res.status(400).json({ error: 'api_token inválido (8–2048 chars)' });
       }
     }
+    // O segredo do webhook é gerado só pelo servidor (POST /my-settings/rotate-secret).
     if (webhook_secret !== undefined && webhook_secret !== '' && webhook_secret !== null) {
-      if (typeof webhook_secret !== 'string' || webhook_secret.length < 8 || webhook_secret.length > 256) {
-        return res.status(400).json({ error: 'webhook_secret inválido (8–256 chars)' });
-      }
+      return res.status(400).json({ error: 'O segredo do webhook é gerado pelo sistema. Use "Gerar novo segredo".' });
     }
 
     await pool.query(
-      `INSERT INTO clinicorp_user_settings (user_id, enabled, api_token, subscriber_id, webhook_secret, base_url, updated_at)
-       VALUES ($1, COALESCE($2, FALSE), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), COALESCE(NULLIF($6, ''), '${CLINICORP_DEFAULT_BASE_URL}'), NOW())
+      `INSERT INTO clinicorp_user_settings (user_id, enabled, api_token, subscriber_id, base_url, updated_at)
+       VALUES ($1, COALESCE($2, FALSE), NULLIF($3, ''), NULLIF($4, ''), COALESCE(NULLIF($5, ''), '${CLINICORP_DEFAULT_BASE_URL}'), NOW())
        ON CONFLICT (user_id) DO UPDATE SET
          enabled = COALESCE($2, clinicorp_user_settings.enabled),
          api_token = COALESCE(NULLIF($3, ''), clinicorp_user_settings.api_token),
          subscriber_id = COALESCE(NULLIF($4, ''), clinicorp_user_settings.subscriber_id),
-         webhook_secret = COALESCE(NULLIF($5, ''), clinicorp_user_settings.webhook_secret),
-         base_url = COALESCE(NULLIF($6, ''), clinicorp_user_settings.base_url),
+         base_url = COALESCE(NULLIF($5, ''), clinicorp_user_settings.base_url),
          updated_at = NOW()`,
       [
         user.id,
         typeof enabled === 'boolean' ? enabled : null,
         typeof api_token === 'string' ? api_token.trim().replace(/^Bearer\s+/i, '') : '',
         typeof subscriber_id === 'string' ? subscriber_id.trim() : '',
-        webhook_secret ?? '',
         base_url ?? '',
       ]
     );
     res.json({ ok: true });
   } catch (e) {
-    // webhook_secret é usado para achar o tenant do webhook: precisa ser único.
-    if (e.code === '23505') return res.status(409).json({ error: 'Este webhook secret já está em uso. Gere outro.' });
     console.error('[clinicorp my-settings PUT]', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Erro ao salvar as credenciais da Clinicorp' });
+  }
+});
+
+// Gera um segredo novo para o webhook. Só o sha256 é gravado; o valor em claro
+// volta nesta resposta e não pode ser consultado depois. O segredo anterior
+// continua aceito por WEBHOOK_SECRET_GRACE_HOURS para dar tempo de trocar na Clinicorp.
+app.post('/api/clinicorp/my-settings/rotate-secret', async (req, res) => {
+  const user = await clinicorpAdminOf(req, res);
+  if (!user) return;
+  if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+  try {
+    // Colisão de 32 bytes aleatórios é improvável; o índice único garante e aqui só tentamos de novo.
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      const secret = generateWebhookSecret();
+      try {
+        await pool.query(
+          `INSERT INTO clinicorp_user_settings (user_id, enabled, base_url, webhook_secret_hash, updated_at)
+           VALUES ($1, FALSE, $3, $2, NOW())
+           ON CONFLICT (user_id) DO UPDATE SET
+             -- Só o hash atual vira o anterior. Segredo em claro sem hash (ex.: repetido
+             -- entre clínicas) não ganha prazo: poderia autenticar eventos de outra clínica.
+             -- Segredo legado já vencido também não volta a valer.
+             webhook_secret_anterior_hash = CASE
+               WHEN clinicorp_user_settings.webhook_secret_legado_ate IS NULL
+                 OR clinicorp_user_settings.webhook_secret_legado_ate > NOW()
+               THEN clinicorp_user_settings.webhook_secret_hash END,
+             anterior_expira_em = NOW() + make_interval(hours => $4::int),
+             webhook_secret_hash = EXCLUDED.webhook_secret_hash,
+             webhook_secret_legado_ate = NULL,
+             webhook_secret = NULL,
+             updated_at = NOW()`,
+          [user.id, hashWebhookSecret(secret), CLINICORP_DEFAULT_BASE_URL, WEBHOOK_SECRET_GRACE_HOURS]
+        );
+        res.set('Cache-Control', 'no-store');
+        return res.json({ ok: true, webhook_secret: secret, previous_valid_hours: WEBHOOK_SECRET_GRACE_HOURS });
+      } catch (e) {
+        if (e.code === '23505' && tentativa < 3) continue;
+        throw e;
+      }
+    }
+  } catch (e) {
+    console.error('[clinicorp rotate-secret]', e.message);
+    res.status(500).json({ error: 'Não foi possível gerar o segredo. Tente de novo.' });
   }
 });
 
 app.delete('/api/clinicorp/my-settings', async (req, res) => {
-  let user;
-  try { user = await clinicorpUserOf(req); }
-  catch { return res.status(401).json({ error: 'Unauthorized' }); }
+  const user = await clinicorpAdminOf(req, res);
+  if (!user) return;
   try {
     await pool.query('DELETE FROM clinicorp_user_settings WHERE user_id = $1', [user.id]);
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[clinicorp my-settings DELETE]', e.message);
+    res.status(500).json({ error: 'Erro ao remover as credenciais da Clinicorp' });
   }
 });
 
@@ -18247,6 +18386,38 @@ const clinicorpProbeSleep = (ms) => new Promise(resolve => setTimeout(resolve, m
 // ═══════════════════════════════════════════════════════════════
 
 // Listar tipos de exame do tenant
+const EXAME_STATUS = ['novo', 'em_andamento', 'aguardando_laudo', 'concluido', 'entregue', 'cancelado'];
+const EXAME_PRIORIDADE = ['baixa', 'normal', 'alta', 'urgente'];
+const EXAME_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Resposta de erro do módulo de exames: 401 para sessão inválida, 500 genérico
+// (sem repassar a mensagem do banco) para o resto. Nada de dado do paciente no log.
+function responderErroExame(res, err, tag) {
+  if (err?.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+  console.error(`[${tag}]`, err?.message);
+  return res.status(500).json({ error: 'Erro interno ao processar o exame' });
+}
+
+// Confere status/prioridade/tipo enviados pelo cliente antes de gravar.
+// Devolve a mensagem para 400 ou null.
+async function validarCamposExame(tenantId, body) {
+  if (body.status !== undefined && body.status !== null && !EXAME_STATUS.includes(body.status)) return 'Status inválido';
+  if (body.prioridade !== undefined && body.prioridade !== null && !EXAME_PRIORIDADE.includes(body.prioridade)) return 'Prioridade inválida';
+  if (body.tipo_exame_id) {
+    if (!EXAME_UUID_RE.test(String(body.tipo_exame_id))) return 'Tipo de exame não encontrado';
+    const { rows } = await pool.query('SELECT 1 FROM exame_tipos WHERE id = $1 AND tenant_id = $2', [body.tipo_exame_id, tenantId]);
+    if (!rows.length) return 'Tipo de exame não encontrado';
+  }
+  if (body.valor !== undefined && body.valor !== null && body.valor !== '' && !(Number.isFinite(Number(body.valor)) && Number(body.valor) >= 0)) return 'Valor inválido';
+  for (const campo of ['data_realizacao', 'data_entrega']) {
+    const v = body[campo];
+    if (v !== undefined && v !== null && v !== '' && Number.isNaN(Date.parse(String(v)))) return 'Data inválida';
+  }
+  return validarReferenciasDoTenant(tenantId, {
+    pacienteId: body.paciente_id, dentistaId: body.dentista_solicitante_id,
+  });
+}
+
 app.get('/api/exame-tipos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -18260,7 +18431,7 @@ app.get('/api/exame-tipos', async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(401).json({ error: err.message });
+    responderErroExame(res, err, 'exame-tipos:list');
   }
 });
 
@@ -18270,6 +18441,9 @@ app.post('/api/exame-tipos', async (req, res) => {
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
     const { nome, categoria, codigo_tiss, preco, ativo } = req.body || {};
     if (!nome?.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
+    if (preco !== undefined && preco !== null && preco !== '' && !(Number.isFinite(Number(preco)) && Number(preco) >= 0)) {
+      return res.status(400).json({ error: 'Preço inválido' });
+    }
     const { rows } = await pool.query(
       `INSERT INTO exame_tipos (tenant_id, nome, categoria, codigo_tiss, preco, ativo)
        VALUES ($1,$2,$3,$4,$5,COALESCE($6,true))
@@ -18279,12 +18453,11 @@ app.post('/api/exame-tipos', async (req, res) => {
              preco=EXCLUDED.preco,
              ativo=EXCLUDED.ativo
        RETURNING *`,
-      [user.tenant_id, nome.trim(), categoria || null, codigo_tiss || null, preco ?? 0, ativo]
+      [user.tenant_id, nome.trim(), categoria || null, codigo_tiss || null, preco || 0, ativo]
     );
     res.json(rows[0]);
   } catch (err) {
-    console.error('[exame-tipos:post]', err.message);
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exame-tipos:post');
   }
 });
 
@@ -18292,13 +18465,16 @@ app.delete('/api/exame-tipos/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
-    await pool.query(
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Tipo de exame não encontrado' });
+    // Os exames já pedidos guardam o nome (tipo_nome) e ficam com tipo_exame_id NULL (FK SET NULL).
+    const { rowCount } = await pool.query(
       `DELETE FROM exame_tipos WHERE id=$1 AND tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
+    if (!rowCount) return res.status(404).json({ error: 'Tipo de exame não encontrado' });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exame-tipos:delete');
   }
 });
 
@@ -18308,6 +18484,11 @@ app.get('/api/exames', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json([]);
     const { status, paciente_id, q, from, to, terceirizado } = req.query;
+    if (paciente_id && !EXAME_UUID_RE.test(String(paciente_id))) return res.json([]);
+    if (status && !EXAME_STATUS.includes(String(status))) return res.status(400).json({ error: 'Status inválido' });
+    if ((from && Number.isNaN(Date.parse(String(from)))) || (to && Number.isNaN(Date.parse(String(to))))) {
+      return res.status(400).json({ error: 'Data inválida' });
+    }
     const params = [user.tenant_id];
     const where = ['e.tenant_id = $1'];
     if (status)       { params.push(status);       where.push(`e.status = $${params.length}`); }
@@ -18333,8 +18514,7 @@ app.get('/api/exames', async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    console.error('[exames:list]', err.message);
-    res.status(401).json({ error: err.message });
+    responderErroExame(res, err, 'exames:list');
   }
 });
 
@@ -18351,7 +18531,7 @@ app.get('/api/exames/stats', async (req, res) => {
     for (const r of rows) { stats[r.status] = r.total; stats.total += r.total; }
     res.json(stats);
   } catch (err) {
-    res.status(401).json({ error: err.message });
+    responderErroExame(res, err, 'exames:stats');
   }
 });
 
@@ -18359,14 +18539,15 @@ app.post('/api/exames', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const body = req.body || {};
     const {
       paciente_id, dentista_solicitante_id, clinica_origem,
       tipo_exame_id, tipo_nome, prioridade, valor, modo_entrega,
       observacoes, terceirizado, fornecedor_terc, status
-    } = req.body || {};
+    } = body;
     if (!tipo_nome?.trim()) return res.status(400).json({ error: 'tipo_nome obrigatório' });
-    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_solicitante_id });
-    if (refErro) return res.status(400).json({ error: refErro });
+    const campoErro = await validarCamposExame(user.tenant_id, body);
+    if (campoErro) return res.status(400).json({ error: campoErro });
 
     // Gera código sequencial simples por tenant
     const { rows: [{ next_code }] } = await pool.query(
@@ -18387,14 +18568,13 @@ app.post('/api/exames', async (req, res) => {
         user.tenant_id, next_code,
         paciente_id || null, dentista_solicitante_id || null, clinica_origem || null,
         tipo_exame_id || null, tipo_nome.trim(),
-        status, prioridade, valor, modo_entrega || null,
+        status || null, prioridade || null, valor === '' ? null : valor, modo_entrega || null,
         observacoes || null, terceirizado, fornecedor_terc || null, user.id
       ]
     );
     res.json(rows[0]);
   } catch (err) {
-    console.error('[exames:create]', err.message);
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exames:create');
   }
 });
 
@@ -18402,18 +18582,30 @@ app.patch('/api/exames/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Exame não encontrado' });
+    const body = req.body || {};
     const allowed = ['status','prioridade','valor','modo_entrega','laudo_texto','arquivo_url',
                      'observacoes','terceirizado','fornecedor_terc','data_realizacao','data_entrega',
                      'paciente_id','dentista_solicitante_id','clinica_origem','tipo_exame_id','tipo_nome'];
+    // tipo_nome é NOT NULL: vazio apagaria o nome do exame (o banco recusaria com erro 500)
+    if (body.tipo_nome !== undefined && !String(body.tipo_nome ?? '').trim()) {
+      return res.status(400).json({ error: 'tipo_nome obrigatório' });
+    }
     const sets = []; const params = [];
     for (const k of allowed) {
-      if (req.body[k] !== undefined) { params.push(req.body[k]); sets.push(`${k}=$${params.length}`); }
+      if (body[k] !== undefined) {
+        // '' vira NULL nos campos opcionais (o banco recusaria '' em uuid/data/número)
+        const v = body[k] === '' ? null : body[k];
+        params.push(k === 'tipo_nome' ? String(v).trim() : v);
+        sets.push(`${k}=$${params.length}`);
+      }
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada a atualizar' });
-    const refErro = await validarReferenciasDoTenant(user.tenant_id, {
-      pacienteId: req.body.paciente_id, dentistaId: req.body.dentista_solicitante_id,
-    });
-    if (refErro) return res.status(400).json({ error: refErro });
+    for (const k of ['status', 'prioridade', 'terceirizado']) {
+      if (body[k] === null || body[k] === '') return res.status(400).json({ error: `${k} não pode ficar vazio` });
+    }
+    const campoErro = await validarCamposExame(user.tenant_id, body);
+    if (campoErro) return res.status(400).json({ error: campoErro });
     params.push(req.params.id, user.tenant_id);
     const { rows } = await pool.query(
       `UPDATE exames SET ${sets.join(', ')}
@@ -18424,8 +18616,7 @@ app.patch('/api/exames/:id', async (req, res) => {
     if (!rows[0]) return res.status(404).json({ error: 'Exame não encontrado' });
     res.json(rows[0]);
   } catch (err) {
-    console.error('[exames:patch]', err.message);
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exames:patch');
   }
 });
 
@@ -18433,15 +18624,31 @@ app.delete('/api/exames/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
-    await pool.query(
-      `DELETE FROM exames WHERE id=$1 AND tenant_id=$2`,
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Exame não encontrado' });
+    // Exame com laudo ou imagem é parte do prontuário (guarda mínima de 20 anos, Lei 13.787/2018):
+    // não é apagado; a clínica cancela o exame. Só pedidos sem resultado podem ser excluídos.
+    const { rows } = await pool.query(
+      `SELECT (COALESCE(btrim(laudo_texto), '') <> '' OR arquivo_url IS NOT NULL) AS tem_resultado
+         FROM exames WHERE id=$1 AND tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
+    if (!rows.length) return res.status(404).json({ error: 'Exame não encontrado' });
+    if (rows[0].tem_resultado) {
+      return res.status(409).json({ error: 'Este exame já tem laudo ou imagem e faz parte do prontuário. Em vez de excluir, mude o status para Cancelado.' });
+    }
+    const { rowCount } = await pool.query(
+      `DELETE FROM exames WHERE id=$1 AND tenant_id=$2
+          AND COALESCE(btrim(laudo_texto), '') = '' AND arquivo_url IS NULL`,
+      [req.params.id, user.tenant_id]
+    );
+    // Recebeu laudo/imagem entre a leitura e a exclusão: nada foi apagado
+    if (!rowCount) return res.status(409).json({ error: 'O exame mudou enquanto você excluía. Atualize a lista e tente de novo.' });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exames:delete');
   }
 });
+
 
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
@@ -18451,7 +18658,7 @@ if (process.env.NODE_ENV !== 'test') {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
   console.log(`   Webhook URL: ${WEBHOOK_URL}`);
-  console.log(`   Clinicorp webhook: ${APP_URL}/api/webhook/clinicorp?user_api=<secret>`);
+  console.log(`   Clinicorp webhook: ${APP_URL}/api/webhook/clinicorp (header x-user-api)`);
 
   // ─── Auto-migration: ensure required columns/tables exist ───
   let checkedStatements = 0;
@@ -18634,6 +18841,66 @@ if (process.env.NODE_ENV !== 'test') {
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
+
+      // ─── Exames (radiologia): tabelas base, depois de pacientes/dentistas (FKs). DDL igual ao de
+      // migration-schema-alinhamento.sql (#39): quem rodar primeiro cria, o outro vira no-op. ───
+      `CREATE TABLE IF NOT EXISTS exame_tipos (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id uuid NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+        nome text NOT NULL,
+        categoria text,
+        codigo_tiss text,
+        preco numeric(10,2) DEFAULT 0,
+        ativo boolean NOT NULL DEFAULT true,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (tenant_id, nome)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exame_tipos_tenant ON exame_tipos (tenant_id)`,
+      `CREATE TABLE IF NOT EXISTS exames (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id uuid NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+        codigo text,
+        paciente_id uuid REFERENCES pacientes(id) ON DELETE SET NULL,
+        dentista_solicitante_id uuid REFERENCES dentistas(id) ON DELETE SET NULL,
+        clinica_origem text,
+        tipo_exame_id uuid REFERENCES exame_tipos(id) ON DELETE SET NULL,
+        tipo_nome text NOT NULL,
+        status text NOT NULL DEFAULT 'novo'
+          CHECK (status IN ('novo','em_andamento','aguardando_laudo','concluido','entregue','cancelado')),
+        prioridade text NOT NULL DEFAULT 'normal'
+          CHECK (prioridade IN ('baixa','normal','alta','urgente')),
+        data_solicitacao timestamptz NOT NULL DEFAULT now(),
+        data_realizacao timestamptz,
+        data_entrega timestamptz,
+        valor numeric(10,2) DEFAULT 0,
+        modo_entrega text,
+        laudo_texto text,
+        arquivo_url text,
+        observacoes text,
+        terceirizado boolean NOT NULL DEFAULT false,
+        fornecedor_terc text,
+        created_by uuid REFERENCES profiles(id) ON DELETE SET NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_tenant ON exames (tenant_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_status ON exames (tenant_id, status)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_paciente ON exames (tenant_id, paciente_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_data_solic ON exames (tenant_id, data_solicitacao DESC)`,
+      // Função só é criada se faltar: se o deploy (postgres) já a criou, CREATE OR REPLACE
+      // pela API falharia ("must be owner") e geraria aviso em todo boot
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'exames_touch_updated_at') THEN
+           EXECUTE 'CREATE FUNCTION exames_touch_updated_at() RETURNS trigger AS $f$ BEGIN NEW.updated_at = now(); RETURN NEW; END; $f$ LANGUAGE plpgsql';
+         END IF;
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exames_updated' AND tgrelid = 'public.exames'::regclass) THEN
+           CREATE TRIGGER trg_exames_updated BEFORE UPDATE ON exames FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
+         END IF;
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exame_tipos_updated' AND tgrelid = 'public.exame_tipos'::regclass) THEN
+           CREATE TRIGGER trg_exame_tipos_updated BEFORE UPDATE ON exame_tipos FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
+         END IF;
+       END $$`,
 
       `CREATE TABLE IF NOT EXISTS agendamentos (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -18901,6 +19168,7 @@ export { app, pool };
 // Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
 export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation, processAppointmentReminders };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
+export { buildChatPushPayload };
 
 export { processCampaignScheduler, campaignPeriodStatus, processAutomationJobs as processAutomationJobsForCampaignTests };
 export { checkWhatsAppHealth, processAutomationJobs as processAutomationJobsForHealthTests };
