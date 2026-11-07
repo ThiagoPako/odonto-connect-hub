@@ -14,7 +14,8 @@
 //   Cada item guarda o "corte" (data-limite) do momento em que a lista foi gerada: a eliminação usa
 //   esse corte, então nada que venceu depois entra sem nova lista.
 //
-// Rotas (admin ou dentista da clínica; sempre pelo tenant do usuário; super-admin não executa):
+// Rotas (admin ou dentista da clínica; sempre pelo tenant do usuário; super-admin não executa;
+// prontuário: quem aprovou não executa):
 //   GET  /api/lgpd/expurgo/listas · GET /api/lgpd/expurgo/listas/:id
 //   POST /api/lgpd/expurgo/listas/gerar               (admin) gera a lista do mês agora
 //   POST /api/lgpd/expurgo/itens/:id/aprovar          { aprovar: true|false }
@@ -229,7 +230,10 @@ function erroHttp(res, err, tag) {
 }
 
 export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
-  // Papel na clínica: admin (perfil ou user_roles) e/ou dentista (cadastro em dentistas com o e-mail).
+  // Papel na clínica: admin (perfil ou user_roles) e/ou dentista (cadastro em dentistas VINCULADO ao
+  // usuário por dentistas.user_id, na mesma clínica). Não por e-mail: o e-mail do perfil pode ser
+  // trocado para o de um dentista (revisão do Igor, transversal). Sem a coluna user_id (criada pela
+  // migration-ia-revisao-humana.sql / boot do #79) ninguém é dentista aqui: falha fechada.
   const papel = async (req) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id || user.is_super_admin) return { user, admin: false, dentistaId: null };
@@ -239,11 +243,15 @@ export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
       admin = rows.length > 0;
     }
     let dentistaId = null;
-    if (user.email) {
-      const { rows } = await pool.query(
-        `SELECT id FROM dentistas WHERE tenant_id = $1 AND lower(email) = lower($2) AND COALESCE(ativo, true) LIMIT 1`,
-        [user.tenant_id, user.email]);
-      dentistaId = rows[0]?.id || null;
+    if (user.id) {
+      try {
+        const { rows } = await pool.query(
+          `SELECT id FROM dentistas WHERE tenant_id = $1 AND user_id = $2::uuid AND COALESCE(ativo, true) LIMIT 1`,
+          [user.tenant_id, user.id]);
+        dentistaId = rows[0]?.id || null;
+      } catch (e) {
+        if (e?.code !== '42703' && e?.code !== '22P02') throw e; // coluna ainda não criada / id inválido
+      }
     }
     return { user, admin, dentistaId };
   };
@@ -387,6 +395,12 @@ export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
         await client.query('ROLLBACK');
         return res.status(409).json({ error: 'Aprovação inválida: prontuário exige dentista' });
       }
+      // Duas pessoas para eliminar prontuário: quem executa não pode ser quem aprovou (revisão do Igor).
+      if (aprovados.some(i => i.categoria === 'prontuario' && i.acao !== 'devolver'
+          && i.aprovado_por && String(i.aprovado_por) === String(p.user.id))) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Eliminação de prontuário exige duas pessoas: quem aprovou não pode executar. Peça a outro administrador ou dentista da clínica.' });
+      }
       const cols = await colunas(client);
       const resultado = {};
       const coletores = {};
@@ -423,7 +437,7 @@ export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
       await client.query('COMMIT');
       // Arquivos só depois do COMMIT; o resultado (apagados e não alcançados) vai para o registro.
       for (const i of aprovados) {
-        const arquivos = await coletores[i.id].apagar();
+        const arquivos = await coletores[i.id].apagar(client);
         resultado[i.id] = { ...(resultado[i.id] || {}), arquivos };
         await pool.query('UPDATE lgpd_expurgo_itens SET resultado = $3 WHERE id = $1 AND tenant_id = $2',
           [i.id, p.user.tenant_id, JSON.stringify(resultado[i.id])]).catch(e => console.error('[lgpd-expurgo] registro de arquivos:', e.code || e.message));

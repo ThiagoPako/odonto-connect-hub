@@ -42,7 +42,9 @@ estrutura, e os ajustes pedidos estão aplicados. O que ainda depende de advogad
   prontuários com todos os prazos vencidos. Cada item guarda a data-limite do momento da geração;
 - a eliminação só roda depois de três passos:
   - aprovação item a item: o admin aprova as categorias em massa, e **só um dentista da clínica**
-    aprova cada prontuário;
+    aprova cada prontuário — o dentista é o cadastro vinculado ao usuário (`dentistas.user_id`, do #79),
+    nunca o "mesmo e-mail"; sem a coluna, ninguém aprova prontuário;
+  - **duas pessoas no prontuário:** quem aprovou um prontuário não pode executar a eliminação;
   - **simulação (dry-run) obrigatória**, válida por 1 hora e invalidada se alguma aprovação mudar;
   - a palavra `ELIMINAR`;
 - o registro fica em `lgpd_expurgo_listas`/`lgpd_expurgo_itens`: quem aprovou (e o papel), quem executou
@@ -50,6 +52,10 @@ estrutura, e os ajustes pedidos estão aplicados. O que ainda depende de advogad
 - **arquivos** (parecer do #76):
   - os ligados às linhas eliminadas saem do disco depois do COMMIT: exame (`arquivo_url`, `exame_arquivos`
     quando existir), anexos do prontuário, áudio de relatório e mídia do chat em `uploads/media`;
+  - **arquivo compartilhado fica:** antes de apagar, confere se alguma linha restante (de qualquer clínica:
+    outra mensagem da mesma campanha, outro paciente, avatar) ainda cita o arquivo; se citar, o arquivo fica
+    e o registro conta `arquivos_mantidos_em_uso`. Erro nessa conferência → nada sai do disco
+    (`arquivos_nao_verificados`, com aviso);
   - o que está fora do sistema (mídia no servidor da Evolution/WhatsApp, link externo) aparece como
     **não alcançado**, com o host e a ação manual, no dry-run e no registro;
   - vale também para o pedido de exclusão e de anonimização do titular;

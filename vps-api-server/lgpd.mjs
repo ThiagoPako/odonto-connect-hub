@@ -662,7 +662,7 @@ export function registerLgpd(app, { pool, verifyAdmin, optOutKey }) {
       await client.query('COMMIT');
       // Arquivos só depois do COMMIT (se a transação falhar, nada sai do disco). Resultado no registro.
       if (coletor) {
-        resumo.arquivos = await coletor.apagar();
+        resumo.arquivos = await coletor.apagar(client);
         await pool.query(`UPDATE lgpd_solicitacoes SET resumo = $3 WHERE id = $1 AND tenant_id = $2`,
           [s.id, user.tenant_id, JSON.stringify(resumo)]).catch(e => console.error('[lgpd] registro de arquivos:', e.code || e.message));
       }

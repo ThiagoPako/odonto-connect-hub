@@ -18,6 +18,44 @@ export const COLUNAS_ARQUIVO = {
   prontuarios: ['anexos'],
   clinical_reports: ['audio_url'],
 };
+// Onde mais um arquivo de uploads/media pode estar citado (de qualquer clínica). Antes do unlink,
+// depois do COMMIT, o arquivo só sai se NENHUMA linha restante o citar: a mesma mídia pode estar em
+// várias mensagens (campanha), em outro paciente, ou ter sido gravada por outra clínica com a URL de
+// um arquivo alheio (POST /api/messages aceita fileUrl). Revisão do Igor no #76.
+// ATENÇÃO (FORCE RLS): a verificação precisa enxergar TODAS as clínicas. Hoje a app é dona das
+// tabelas e a RLS não se aplica; se um dia ligar FORCE, rodar esta checagem em contexto de sistema.
+export const COLUNAS_REFERENCIA = [
+  ...Object.entries(COLUNAS_ARQUIVO).flatMap(([t, cs]) => cs.map(c => [t, c])),
+  ['profiles', 'avatar_url'],
+  ['crm_leads', 'avatar_url'],
+];
+
+const likeEsc = (s) => String(s).replace(/[\\%_]/g, (m) => `\\${m}`);
+
+// Devolve { citados: Set(abs), falhou: bool }. Tabela/coluna inexistente (42P01/42703) é ignorada;
+// qualquer outro erro → falhou = true e nada é apagado (falha fechada).
+export async function arquivosAindaCitados(db, absList) {
+  const citados = new Set();
+  if (!absList.length) return { citados, falhou: false };
+  const base = uploadsDir();
+  const rels = absList.map(a => path.relative(base, a).split(path.sep).join('/'));
+  const padroes = rels.map(r => `%${likeEsc(r)}%`);
+  for (const [t, c] of COLUNAS_REFERENCIA) {
+    try {
+      const { rows } = await db.query(
+        `SELECT u.i::int AS i FROM unnest($1::text[]) WITH ORDINALITY AS u(pat, i)
+          WHERE EXISTS (SELECT 1 FROM ${q(t)} x WHERE x.${q(c)}::text LIKE u.pat)`,
+        [padroes]
+      );
+      for (const r of rows) citados.add(absList[Number(r.i) - 1]);
+    } catch (e) {
+      if (e?.code === '42P01' || e?.code === '42703') continue;
+      return { citados, falhou: true };
+    }
+  }
+  return { citados, falhou: false };
+}
+
 // Retenção dos backups (docs/operacao/backup.md: 7 diários + 4 semanais + 6 mensais).
 export const BACKUP_RETENCAO_MESES = Number(process.env.BACKUP_RETENCAO_MESES || 6);
 
@@ -73,13 +111,23 @@ export function novoColetor() {
     previa() {
       return { arquivos_locais: locais.size, nao_alcancados: { ...externos } };
     },
-    // Depois do COMMIT. Arquivo que já não existe conta como apagado.
-    async apagar() {
-      let apagados = 0, falhas = 0;
-      for (const abs of locais) {
+    // Depois do COMMIT. Arquivo que já não existe conta como apagado. Arquivo ainda citado por
+    // outra linha (qualquer clínica) fica no disco. Sem db ou com erro na verificação, nada sai.
+    async apagar(db) {
+      let apagados = 0, falhas = 0, mantidos = 0;
+      const lista = [...locais];
+      const ver = db ? await arquivosAindaCitados(db, lista) : { citados: new Set(), falhou: true };
+      if (ver.falhou) {
+        return { arquivos_apagados: 0, falhas_ao_apagar: 0, arquivos_mantidos_em_uso: 0,
+          arquivos_nao_verificados: lista.length,
+          aviso_arquivos: 'Não foi possível conferir se os arquivos são usados por outro registro: nenhum foi apagado do disco. O registro no banco já foi eliminado; apagar os arquivos manualmente depois de conferir.',
+          ...registroNaoAlcancados(externos) };
+      }
+      for (const abs of lista) {
+        if (ver.citados.has(abs)) { mantidos++; continue; }
         try { await stat(abs); await unlink(abs); apagados++; } catch (e) { if (e?.code === 'ENOENT') apagados++; else falhas++; }
       }
-      return { arquivos_apagados: apagados, falhas_ao_apagar: falhas, ...registroNaoAlcancados(externos) };
+      return { arquivos_apagados: apagados, falhas_ao_apagar: falhas, arquivos_mantidos_em_uso: mantidos, ...registroNaoAlcancados(externos) };
     },
   };
 }

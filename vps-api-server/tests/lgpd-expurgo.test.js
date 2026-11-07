@@ -15,12 +15,14 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 
 const { app, pool } = await import('../server.mjs');
 const { processarExpurgoLgpd } = await import('../lgpd-expurgo.mjs');
-const { classificar, novoColetor, avisoBackups } = await import('../lgpd-arquivos.mjs');
+const { classificar, novoColetor, avisoBackups, COLUNAS_REFERENCIA } = await import('../lgpd-arquivos.mjs');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const tenantA = '11111111-1111-1111-1111-111111111111';
 const tenantB = '22222222-2222-2222-2222-222222222222';
 const adminA = '44444444-4444-4444-4444-444444444444';
+const dentistaA = '55555555-5555-5555-5555-555555555555'; // perfil vinculado a dentistas.user_id
+const adminA2 = '66666666-6666-6666-6666-666666666666';
 const listaA = 'aaaaaaaa-0000-0000-0000-000000000001';
 const listaB = 'bbbbbbbb-0000-0000-0000-000000000001';
 const token = (extra = {}) => jwt.sign({ sub: adminA, email: 'admin@a.test', role: 'admin', tenant_id: tenantA, is_super_admin: false, ...extra }, JWT_SECRET);
@@ -33,7 +35,7 @@ const INV = {
   lgpd_solicitacoes: ['id', 'tenant_id', 'solicitado_em', 'status'],
   pacientes: ['id', 'tenant_id', 'nome'],
 };
-let sqlLog, listas, itens, dentistaEmail, spyQ, spyC, refsMidia, falharDelete;
+let sqlLog, listas, itens, dentistaUser, semColunaUserId, spyQ, spyC, refsMidia, falharDelete, aindaCitado;
 const assinatura = (its) => crypto.createHash('sha256').update(its.filter(i => i.aprovado).map(i => `${i.id}:${i.aprovado_em}`).sort().join('|')).digest('hex');
 
 function responder(sql, params = []) {
@@ -41,9 +43,11 @@ function responder(sql, params = []) {
   sqlLog.push({ text, params });
   if (/FROM information_schema\.columns/.test(text)) return { rows: Object.entries(INV).flatMap(([t, cs]) => cs.map(c => ({ table_name: t, column_name: c }))) };
   if (/FROM user_roles WHERE user_id/.test(text)) return { rows: [] };
-  if (/FROM dentistas WHERE tenant_id = \$1 AND lower\(email\)/.test(text)) {
-    return { rows: dentistaEmail && params[1] === dentistaEmail && params[0] === tenantA ? [{ id: 'd1' }] : [] };
+  if (/FROM dentistas WHERE tenant_id = \$1 AND user_id = \$2::uuid/.test(text)) {
+    if (semColunaUserId) throw Object.assign(new Error('column "user_id" does not exist'), { code: '42703' });
+    return { rows: dentistaUser && params[1] === dentistaUser && params[0] === tenantA ? [{ id: 'd1' }] : [] };
   }
+  if (/FROM dentistas/.test(text) && /email/.test(text)) throw new Error('dentista não pode ser identificado por e-mail');
   if (/^SELECT id FROM tenants WHERE/.test(text)) return { rows: [{ id: tenantA }, { id: tenantB }] };
   if (/^SELECT id FROM lgpd_expurgo_listas WHERE tenant_id = \$1 AND competencia = \$2/.test(text)) return { rows: [] };
   if (/^SELECT l\.id::text AS id FROM crm_leads/.test(text)) return { rows: [{ id: `lead-${params[0].slice(0, 4)}` }] };
@@ -63,7 +67,7 @@ function responder(sql, params = []) {
   }
   if (/^UPDATE lgpd_expurgo_itens SET aprovado =/.test(text)) {
     const i = itens.find(x => String(x.id) === String(params[0]) && x.tenant_id === params[1]);
-    if (i) { i.aprovado = params[2]; i.aprovado_papel = params[4]; i.aprovado_em = new Date().toISOString(); }
+    if (i) { i.aprovado = params[2]; i.aprovado_por = params[3]; i.aprovado_papel = params[4]; i.aprovado_em = new Date().toISOString(); }
     return { rowCount: i ? 1 : 0, rows: [] };
   }
   if (/^UPDATE lgpd_expurgo_listas SET dry_run =/.test(text)) {
@@ -77,6 +81,10 @@ function responder(sql, params = []) {
     return { rowCount: 1, rows: [] };
   }
   if (/^SELECT "media_url" FROM "chat_messages"/.test(text)) return { rows: refsMidia.map(m => ({ media_url: m })) };
+  // Verificação "ainda citado por outra linha" (depois do COMMIT): aindaCitado = tabela que ainda cita
+  if (/FROM unnest\(\$1::text\[\]\) WITH ORDINALITY/.test(text)) {
+    return { rows: aindaCitado && text.includes(`FROM "${aindaCitado}"`) ? params[0].map((_, i) => ({ i: i + 1 })) : [] };
+  }
   if (/^DELETE/.test(text)) { if (falharDelete) throw Object.assign(new Error('falha simulada'), { code: 'XX000' }); return { rowCount: 3, rows: [] }; }
   return { rows: [], rowCount: 0 };
 }
@@ -90,7 +98,7 @@ beforeAll(() => {
   jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
 beforeEach(() => {
-  sqlLog = []; dentistaEmail = null; refsMidia = []; falharDelete = false;
+  sqlLog = []; dentistaUser = null; semColunaUserId = false; refsMidia = []; falharDelete = false; aindaCitado = null;
   listas = [
     { id: listaA, tenant_id: tenantA, status: 'pendente' },
     { id: listaB, tenant_id: tenantB, status: 'pendente' },
@@ -196,16 +204,47 @@ describe('papéis e isolamento', () => {
     const r1 = await chamar('post', '/api/lgpd/expurgo/itens/2/aprovar', token(), { aprovar: true });
     expect(r1.status).toBe(403);
     expect(itens[1].aprovado).toBe(false);
-    dentistaEmail = 'dra@a.test';
-    const r2 = await chamar('post', '/api/lgpd/expurgo/itens/2/aprovar', token({ role: 'dentista', email: 'dra@a.test' }), { aprovar: true });
+    dentistaUser = dentistaA;
+    const r2 = await chamar('post', '/api/lgpd/expurgo/itens/2/aprovar', token({ role: 'dentista', email: 'dra@a.test', sub: dentistaA }), { aprovar: true });
     expect(r2.status).toBe(200);
     expect(itens[1].aprovado_papel).toBe('dentista');
   });
 
   test('dentista não aprova categoria em massa; quem não é admin nem dentista: 403', async () => {
-    dentistaEmail = 'dra@a.test';
-    expect((await chamar('post', '/api/lgpd/expurgo/itens/1/aprovar', token({ role: 'dentista', email: 'dra@a.test' }), { aprovar: true })).status).toBe(403);
+    dentistaUser = dentistaA;
+    expect((await chamar('post', '/api/lgpd/expurgo/itens/1/aprovar', token({ role: 'dentista', email: 'dra@a.test', sub: dentistaA }), { aprovar: true })).status).toBe(403);
     expect((await chamar('get', '/api/lgpd/expurgo/listas', token({ role: 'recepcionista' }))).status).toBe(403);
+  });
+
+  test('dentista é o perfil vinculado (dentistas.user_id), não quem tem o mesmo e-mail', async () => {
+    dentistaUser = dentistaA;
+    // perfil com o e-mail do dentista (trocou o próprio e-mail), mas sem vínculo: não é dentista
+    const r = await chamar('post', '/api/lgpd/expurgo/itens/2/aprovar', token({ role: 'dentista', email: 'dra@a.test', sub: adminA2 }), { aprovar: true });
+    expect(r.status).toBe(403);
+    expect(itens[1].aprovado).toBe(false);
+    const q = sqlLog.find(x => /FROM dentistas/.test(x.text));
+    expect(q.params).toEqual([tenantA, adminA2]);
+  });
+
+  test('coluna dentistas.user_id ainda não criada: ninguém aprova prontuário (falha fechada)', async () => {
+    dentistaUser = dentistaA; semColunaUserId = true;
+    const r = await chamar('post', '/api/lgpd/expurgo/itens/2/aprovar', token({ role: 'dentista', email: 'dra@a.test', sub: dentistaA }), { aprovar: true });
+    expect(r.status).toBe(403);
+    expect(itens[1].aprovado).toBe(false);
+  });
+
+  test('prontuário exige duas pessoas: quem aprovou não executa; outra pessoa executa', async () => {
+    dentistaUser = dentistaA;
+    const tkDent = token({ role: 'dentista', email: 'dra@a.test', sub: dentistaA });
+    expect((await chamar('post', '/api/lgpd/expurgo/itens/2/aprovar', tkDent, { aprovar: true })).status).toBe(200);
+    expect(itens[1].aprovado_por).toBe(dentistaA);
+    expect((await chamar('post', `/api/lgpd/expurgo/listas/${listaA}/dry-run`, tkDent)).status).toBe(200);
+    const mesma = await chamar('post', `/api/lgpd/expurgo/listas/${listaA}/executar`, tkDent, { frase: 'ELIMINAR' });
+    expect(mesma.status).toBe(409);
+    expect(mesma.body.error).toMatch(/duas pessoas/);
+    expect(deletes()).toHaveLength(0);
+    const outra = await chamar('post', `/api/lgpd/expurgo/listas/${listaA}/executar`, token(), { frase: 'ELIMINAR' });
+    expect(outra.body.error || '').not.toMatch(/duas pessoas/);
   });
 
   test('super-admin da plataforma não opera o expurgo da clínica', async () => {
@@ -244,15 +283,76 @@ describe('arquivos, backups e idade (parecer do #76)', () => {
 
   test('coletor apaga o local e lista o que não alcançou, só por contagem e host', async () => {
     const c = novoColetor();
-    const db = { query: async () => ({ rows: [{ media_url: '/uploads/media/2026-11/foto.jpg' }, { media_url: 'https://mmg.whatsapp.net/x.enc' }] }) };
+    const db = { query: async (sql) => (/unnest/.test(sql) ? { rows: [] } : { rows: [{ media_url: '/uploads/media/2026-11/foto.jpg' }, { media_url: 'https://mmg.whatsapp.net/x.enc' }] }) };
     await c.coletar(db, { tabela: 'chat_messages', where: 'tenant_id = $1', params: [tenantA] });
     expect(c.previa()).toEqual({ arquivos_locais: 1, nao_alcancados: { 'mmg.whatsapp.net': 1 } });
-    const r = await c.apagar();
+    const r = await c.apagar(db);
     expect(r.arquivos_apagados).toBe(1);
     expect(r.nao_alcancados).toEqual({ total: 1, por_host: { 'mmg.whatsapp.net': 1 } });
     expect(r.acao_manual).toMatch(/Evolution/);
     expect(fs.existsSync(path.join(dir, '2026-11', 'foto.jpg'))).toBe(false);
     expect(JSON.stringify(r)).not.toMatch(/foto\.jpg/);
+  });
+
+  // Revisão do Igor no #76: o coletor apagava qualquer /uploads/media citado na linha que sai, sem ver
+  // se outra linha (da mesma ou de outra clínica) usava o arquivo.
+  const coletarFoto = async () => {
+    const c = novoColetor();
+    await c.coletar({ query: async () => ({ rows: [{ media_url: '/uploads/media/2026-11/foto.jpg' }] }) },
+      { tabela: 'chat_messages', where: 'tenant_id = $1', params: [tenantA] });
+    return c;
+  };
+
+  test('arquivo ainda citado por outra linha (qualquer clínica) NÃO é apagado', async () => {
+    const c = await coletarFoto();
+    const consultas = [];
+    const db = { query: async (sql, params) => {
+      consultas.push({ sql, params });
+      // outra mensagem (ex.: de outra clínica, gravada com a mesma URL) ainda cita o arquivo
+      return /FROM "chat_messages"/.test(sql) ? { rows: [{ i: 1 }] } : { rows: [] };
+    } };
+    const r = await c.apagar(db);
+    expect(r).toMatchObject({ arquivos_apagados: 0, arquivos_mantidos_em_uso: 1 });
+    expect(fs.existsSync(path.join(dir, '2026-11', 'foto.jpg'))).toBe(true);
+    // a busca não filtra por clínica (tem que enxergar todas) e procura pelo caminho relativo
+    const q = consultas.find(x => /FROM "chat_messages"/.test(x.sql));
+    expect(q.sql).not.toMatch(/tenant_id/);
+    expect(q.params[0]).toEqual(['%2026-11/foto.jpg%']);
+  });
+
+  test('confere todas as colunas de referência, inclusive avatares', async () => {
+    const c = await coletarFoto();
+    const tabelas = [];
+    await c.apagar({ query: async (sql) => { tabelas.push(/FROM "([a-z_]+)" x/.exec(sql)?.[1]); return { rows: [] }; } });
+    expect(tabelas).toEqual(COLUNAS_REFERENCIA.map(([t]) => t));
+    expect(COLUNAS_REFERENCIA).toEqual(expect.arrayContaining([['profiles', 'avatar_url'], ['exames', 'arquivo_url'], ['prontuarios', 'anexos']]));
+  });
+
+  test('tabela/coluna ausente é ignorada; outro erro na verificação → nada sai do disco', async () => {
+    const c1 = await coletarFoto();
+    const r1 = await c1.apagar({ query: async (sql) => { if (/clinical_reports/.test(sql)) throw Object.assign(new Error('x'), { code: '42P01' }); return { rows: [] }; } });
+    expect(r1.arquivos_apagados).toBe(1);
+    fs.writeFileSync(path.join(dir, '2026-11', 'foto.jpg'), 'x');
+    const c2 = await coletarFoto();
+    const r2 = await c2.apagar({ query: async () => { throw Object.assign(new Error('timeout'), { code: '57014' }); } });
+    expect(r2).toMatchObject({ arquivos_apagados: 0, arquivos_nao_verificados: 1 });
+    expect(r2.aviso_arquivos).toMatch(/nenhum foi apagado/);
+    expect(fs.existsSync(path.join(dir, '2026-11', 'foto.jpg'))).toBe(true);
+    const c3 = await coletarFoto();
+    expect((await c3.apagar()).arquivos_apagados).toBe(0); // sem db: falha fechada
+    expect(fs.existsSync(path.join(dir, '2026-11', 'foto.jpg'))).toBe(true);
+  });
+
+  test('execução: mídia compartilhada com outra linha fica no disco e o registro diz por quê', async () => {
+    refsMidia = ['/uploads/media/2026-11/foto.jpg'];
+    aindaCitado = 'chat_messages';
+    itens.push({ ...itens[0], id: 4, categoria: 'conversas' });
+    await chamar('post', '/api/lgpd/expurgo/itens/4/aprovar', token(), { aprovar: true });
+    await chamar('post', `/api/lgpd/expurgo/listas/${listaA}/dry-run`, token());
+    const res = await chamar('post', `/api/lgpd/expurgo/listas/${listaA}/executar`, token(), { frase: 'ELIMINAR' });
+    expect(res.status).toBe(200);
+    expect(res.body.resultado['4'].arquivos).toMatchObject({ arquivos_apagados: 0, arquivos_mantidos_em_uso: 1 });
+    expect(fs.existsSync(path.join(dir, '2026-11', 'foto.jpg'))).toBe(true);
   });
 
   test('backups: data prevista = execução + 6 meses', () => {
@@ -289,9 +389,9 @@ describe('arquivos, backups e idade (parecer do #76)', () => {
   });
 
   test('prontuário sem data de nascimento: dentista precisa confirmar a idade para aprovar', async () => {
-    dentistaEmail = 'dra@a.test';
+    dentistaUser = dentistaA;
     itens[1].detalhe = { alertas: ['idade_desconhecida'], alerta: 'Idade desconhecida' };
-    const tk = token({ role: 'dentista', email: 'dra@a.test' });
+    const tk = token({ role: 'dentista', email: 'dra@a.test', sub: dentistaA });
     const r1 = await chamar('post', '/api/lgpd/expurgo/itens/2/aprovar', tk, { aprovar: true });
     expect(r1.status).toBe(422);
     expect(r1.body.exige).toBe('confirmo_idade');
@@ -301,6 +401,6 @@ describe('arquivos, backups e idade (parecer do #76)', () => {
     expect(itens[1].aprovado).toBe(true);
     const upd = sqlLog.filter(q => /^UPDATE lgpd_expurgo_itens SET aprovado =/.test(q.text)).pop();
     expect(upd.text).toMatch(/idade_confirmada_por = \$4, idade_confirmada_em = NOW\(\)/);
-    expect(upd.params[3]).toBe(adminA);
+    expect(upd.params[3]).toBe(dentistaA);
   });
 });
