@@ -68,8 +68,9 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
       toast.error("Cole o token de acesso do Meta Ads");
       return;
     }
-    // O servidor ainda não usa o ID digitado: o campo é opcional até o backend gravar o config
-    // 1. Salvar token (+ ad_account_id, se preenchido) em ai_settings
+    // O token e as campanhas são só desta clínica. O ID digitado (opcional) vai no config
+    // e é usado no sync; sem ele, o servidor usa a primeira conta que o token acessa.
+    // 1. Salvar token (+ ad_account_id, se preenchido) na configuração da clínica
     setSaving(true);
     const idDigitado = adAccountId.trim();
     const normalizedId = !idDigitado ? "" : idDigitado.startsWith("act_") ? idDigitado : `act_${idDigitado}`;
@@ -251,10 +252,8 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
         <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-[11px] text-foreground">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-warning" />
           <p>
-            <strong>Atenção:</strong> por enquanto o ID digitado não é usado. Na primeira sincronização o sistema fixa
-            a primeira conta de anúncios que o token acessa e continua usando essa conta, mesmo se você colar outro
-            token depois. Esta conexão ainda é única para todo o sistema: o token vale para todas as clínicas, e as
-            campanhas e os gastos ficam visíveis para os usuários de todas elas.
+            O token e as campanhas são só desta clínica. Se você informar o ID da conta, ele é usado na
+            sincronização; sem o ID, o sistema usa a primeira conta de anúncios que o token acessa.
           </p>
         </div>
       </div>

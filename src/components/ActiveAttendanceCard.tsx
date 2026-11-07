@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
 interface ActiveAttendanceCardProps {
+  /** id do lead: é o que vai na URL do chat (LGPD — nunca o nome). */
+  leadId: string;
   patientName: string;
   patientInitials: string;
   attendantName: string;
@@ -12,6 +14,7 @@ interface ActiveAttendanceCardProps {
 }
 
 export function ActiveAttendanceCard({
+  leadId,
   patientName,
   patientInitials,
   attendantName,
@@ -80,7 +83,7 @@ export function ActiveAttendanceCard({
         )}
         <Link
           to="/chat"
-          search={{ lead: patientName }}
+          search={{ lead: leadId }}
           className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-semibold text-primary bg-primary/10 hover:bg-primary/15 transition-colors"
         >
           <ExternalLink className="h-3 w-3" />
