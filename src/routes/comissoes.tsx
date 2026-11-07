@@ -298,13 +298,13 @@ function ComissoesPage() {
                             <div className="flex flex-wrap items-center justify-center gap-1">
                               {entry.status === "pendente" && (
                                 <button onClick={() => setStatusTarget({ entry, status: "aprovado" })}
-                                  className="h-8 px-3 rounded-lg text-xs font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25 whitespace-nowrap">
+                                  className="min-h-8 py-1 px-3 rounded-lg text-xs font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25">
                                   Aprovar
                                 </button>
                               )}
                               {entry.status === "aprovado" && (
                                 <button onClick={() => setStatusTarget({ entry, status: "pago" })}
-                                  className="h-8 px-3 rounded-lg text-xs font-medium bg-success/15 text-success hover:bg-success/25 whitespace-nowrap">
+                                  className="min-h-8 py-1 px-3 rounded-lg text-xs font-medium bg-success/15 text-success hover:bg-success/25">
                                   Marcar como paga
                                 </button>
                               )}
