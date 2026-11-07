@@ -15,6 +15,8 @@ interface ServerSearchResult {
 interface ConversationViewProps {
   messages: ChatMessage[];
   leadName: string;
+  /** Identifica a conversa aberta (o nome pode se repetir entre leads). */
+  leadId?: string;
   isTyping?: boolean;
   isRecording?: boolean;
   onReaction?: (messageId: string, emoji: string) => void;
@@ -255,7 +257,7 @@ function shouldShowTimestamp(messages: ChatMessage[], idx: number): boolean {
 
 const REACTION_EMOJIS = ["👍", "❤️", "😁", "🦷", "✨", "🙏", "💪", "😊"];
 
-export function ConversationView({ messages, leadName, isTyping, isRecording, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false, onFileDrop, unreadCount = 0, onServerSearch }: ConversationViewProps) {
+export function ConversationView({ messages, leadName, leadId, isTyping, isRecording, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false, onFileDrop, unreadCount = 0, onServerSearch }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
@@ -389,6 +391,16 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     setSearchError(false);
     setSearchNotice(null);
   };
+
+  // Trocou de conversa: fecha a busca para não mostrar resultados (ou o termo) da conversa anterior.
+  const chaveConversa = leadId ?? leadName;
+  const prevChaveConversa = useRef(chaveConversa);
+  useEffect(() => {
+    if (prevChaveConversa.current === chaveConversa) return;
+    prevChaveConversa.current = chaveConversa;
+    closeSearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- closeSearch só chama setters estáveis
+  }, [chaveConversa]);
 
   // Debounced server search
   useEffect(() => {
