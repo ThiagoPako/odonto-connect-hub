@@ -160,7 +160,7 @@ function ContatosPage() {
               <div
                 key={contato.id}
                 className="bg-card border border-border rounded-xl p-4 flex flex-wrap items-center gap-x-4 gap-y-2 hover:border-primary/30 transition-colors group cursor-pointer"
-                onClick={() => navigate({ to: "/chat", search: { lead: contato.telefone || contato.nome } })}
+                onClick={() => navigate({ to: "/chat", search: { contato: contato.id } })}
               >
                 {/* Avatar */}
                 <div className="h-11 w-11 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm shrink-0">
@@ -221,7 +221,7 @@ function ContatosPage() {
                       className="h-8 w-8"
                       title="Abrir Chat"
                       aria-label="Abrir chat"
-                      onClick={() => navigate({ to: "/chat", search: { lead: contato.telefone || contato.nome } })}
+                      onClick={() => navigate({ to: "/chat", search: { contato: contato.id } })}
                     >
                       <MessageSquare className="h-4 w-4 text-primary" />
                     </Button>
