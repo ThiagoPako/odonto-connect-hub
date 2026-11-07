@@ -223,11 +223,13 @@ jobs:
             # Matriz de papéis (#86): 'user' → 'recepcionista' e clínica nas linhas antigas de user_roles
             cat /root/odonto-connect/vps-api-server/migration-papel-user-recepcionista.sql | sudo -u postgres env PGOPTIONS='-c lock_timeout=5s' psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
               || echo "::warning::migration-papel-user-recepcionista.sql falhou: perfis com papel 'user' ficam sem acesso a pacientes; confira profiles.role e user_roles"
+            # Relatório clínico de IA com revisão humana (cria exportacoes_relatorios_ia: antes do dono das tabelas)
+            cat /root/odonto-connect/vps-api-server/migration-ia-revisao-humana.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             # Dono das tabelas criadas acima pelo deploy (postgres) → dono das tabelas da API; senão a
             # RLS vale para o odonto_app e jobs sem contexto de clínica são bloqueados em silêncio.
             # Só de deploy (bloco DO; o boot não roda). Fica DEPOIS de lista de espera e saúde do WhatsApp.
             cat /root/odonto-connect/vps-api-server/migration-dono-tabelas-deploy.sql | sudo -u postgres env PGOPTIONS='-c lock_timeout=5s' psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
-              || echo "::warning::migration-dono-tabelas-deploy.sql falhou: confira o dono (pg_tables.tableowner) de lista_espera, lista_espera_ofertas, whatsapp_instance_health_log, whatsapp_opt_outs, whatsapp_channels, whatsapp_webhook_events e prontuario_versoes"
+              || echo "::warning::migration-dono-tabelas-deploy.sql falhou: confira o dono (pg_tables.tableowner) de lista_espera, lista_espera_ofertas, whatsapp_instance_health_log, whatsapp_opt_outs, whatsapp_channels, whatsapp_webhook_events, prontuario_versoes e exportacoes_relatorios_ia"
             # B2/B3: orçamentos (titulo/print_config/odontograma_snapshot), catálogo de procedimentos
             # + versões, tenant_id da reativação. Só de deploy (blocos DO). Depois da schema-alinhamento.
             cat /root/odonto-connect/vps-api-server/migration-schema-b2-b3.sql | sudo -u postgres env PGOPTIONS='-c lock_timeout=5s' psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
