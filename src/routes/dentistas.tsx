@@ -157,7 +157,7 @@ function DentistasPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Gestão de Dentistas" />
-      <main className="flex-1 p-4 sm:p-8 space-y-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-8 space-y-6 overflow-auto">
         {loadError && (
           <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             <span>Não foi possível carregar os dentistas. {loadError}</span>
@@ -349,7 +349,7 @@ function DentistasPage() {
             onClose={() => { setShowForm(false); setEditingDentista(null); }}
           />
         )}
-      </main>
+      </div>
     </div>
   );
 }

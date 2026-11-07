@@ -42,6 +42,11 @@ const statuses: Patient["status"][] = ["lead", "ativo", "inativo", "paciente"];
 // A tela mostra "Lead"/"Ativo", mas o banco grava "novo"/"em_contato" (ver o mapeamento em loadPatients).
 const STATUS_API: Record<string, string> = { lead: "novo", ativo: "em_contato", inativo: "inativo", paciente: "paciente" };
 
+/** id de HTML sem espaço/acento: "Funil de Vendas" → "funil-de-vendas" (o id ia com espaço). */
+function slugId(texto: string): string {
+  return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 function SyncAvatarsButton() {
   const [syncing, setSyncing] = useState(false);
   const handleSync = async () => {
@@ -199,7 +204,7 @@ function GenericKanbanBoard<T extends string>({
           <BarraFiltros
             className="flex-1 min-w-[min(100%,18rem)]"
             busca={{ valor: buscaFunil, onChange: setBuscaFunil, placeholder: "Nome ou telefone", rotulo: "Buscar lead no funil por nome ou telefone" }}
-            filtros={assignees.length > 0 ? [{ id: `responsavel-${title}`, rotulo: "Responsável", valor: responsavelEfetivo, onChange: setAssignedFilter, opcoes: assignees.map((a) => ({ valor: a, rotulo: a })) }] : []}
+            filtros={assignees.length > 0 ? [{ id: `responsavel-${slugId(title)}`, rotulo: "Responsável", valor: responsavelEfetivo, onChange: setAssignedFilter, opcoes: assignees.map((a) => ({ valor: a, rotulo: a })) }] : []}
             onLimpar={() => { setAssignedFilter(""); setBuscaFunil(""); }}
             resultado={`${visibleList.length} lead${visibleList.length !== 1 ? "s" : ""}`}
           />
@@ -209,6 +214,22 @@ function GenericKanbanBoard<T extends string>({
           <CreateLeadDialog open={showNewLead} onOpenChange={setShowNewLead} onCreated={() => { toast.success("Lead cadastrado!"); onRefresh?.(); }} />
         </div>
       </div>
+
+      {(termoFunil || responsavelEfetivo) && visibleList.length === 0 && (
+        <div role="status" className="mx-4 mt-4 rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center">
+          <p className="text-sm font-medium text-foreground break-words">
+            {termoFunil ? <>Nenhum lead encontrado para “{buscaFunil.trim()}”.</> : "Nenhum lead com esse responsável."}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">Confira a grafia, busque pelo telefone ou limpe os filtros.</p>
+          <button
+            type="button"
+            onClick={() => { setAssignedFilter(""); setBuscaFunil(""); }}
+            className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-border px-4 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Limpar busca e filtros
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 flex gap-3 p-4 overflow-x-auto min-w-0">
         {stages.map((stage) => {
@@ -858,7 +879,7 @@ function PatientTableView() {
 
 
   return (
-    <main className="flex-1 flex overflow-hidden">
+    <div className="flex-1 flex overflow-hidden">
       <div className={`flex-col border-r border-border bg-card ${selectedPatient ? "hidden md:flex md:w-[55%]" : "flex flex-1"}`}>
         <div className="px-4 py-3 border-b border-border">
           <BarraFiltros
@@ -1020,7 +1041,7 @@ function PatientTableView() {
       {selectedPatient && (
         <PatientDetail patient={selectedPatient} onClose={() => setSelectedPatient(null)} />
       )}
-    </main>
+    </div>
   );
 }
 
