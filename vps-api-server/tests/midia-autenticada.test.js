@@ -103,6 +103,7 @@ describe('mídia autenticada (L7)', () => {
     const ok = await request(app).get(`/uploads/media/${relA}`).set('Authorization', `Bearer ${token()}`);
     expect(ok.status).toBe(200);
     expect(ok.headers['cache-control']).toMatch(/private/);
+    expect(ok.headers['vary']).toMatch(/Authorization/); // proxy/CDN não reaproveita entre usuários
     expect(ok.headers['x-content-type-options']).toBe('nosniff');
     const outra = await request(app).get(`/uploads/media/${relA}`).set('Authorization', `Bearer ${token(tenantB)}`);
     expect(outra.status).toBe(404);

@@ -1,3 +1,4 @@
+import { useAtalhoBusca } from "@/hooks/useAtalhoBusca";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Command as CommandPrimitive } from "cmdk";
@@ -70,6 +71,7 @@ function formatMsgTime(ts: string) {
 
 export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogProps) {
   const [query, setQuery] = useState("");
+  const atalhoBusca = useAtalhoBusca();
   const navigate = useNavigate();
   const [results, setResults] = useState<SearchResults>(EMPTY);
   const [chatResults, setChatResults] = useState<ChatMessageApi[]>([]);
@@ -170,7 +172,7 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
                 <Search className="h-8 w-8 mx-auto mb-3 opacity-40" />
                 <p>Digite nome, telefone ou CPF para buscar pacientes, leads, agendamentos e mensagens</p>
                 <p className="text-xs mt-1 opacity-70">
-                  Ctrl+K abre · ↑↓ escolhe · Enter abre · Esc fecha
+                  {atalhoBusca} abre · ↑↓ escolhe · Enter abre · Esc fecha
                 </p>
               </div>
             ) : (
@@ -208,7 +210,7 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
                         className="cursor-pointer"
                       >
                         <Users className="h-4 w-4 text-primary shrink-0" />
-                        <span className="flex-1 min-w-0 truncate font-medium">{p.nome}</span>
+                        <span className="flex-1 min-w-0 break-words font-medium">{p.nome}</span>
                         {p.telefone && (
                           <span className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
                             <Phone className="h-3 w-3" /> {p.telefone}
@@ -232,8 +234,8 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
                         >
                           <CalendarDays className="h-4 w-4 text-primary shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <p className="truncate font-medium">{a.paciente_nome}</p>
-                            <p className="truncate text-xs text-muted-foreground">
+                            <p className="break-words font-medium">{a.paciente_nome}</p>
+                            <p className="break-words text-xs text-muted-foreground">
                               {formatDate(a.data)} às {String(a.hora).slice(0, 5)}
                               {a.dentista_nome ? ` · ${a.dentista_nome}` : ""}
                             </p>
@@ -260,8 +262,8 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
                         >
                           <UserCheck className="h-4 w-4 text-primary shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <p className="truncate font-medium">{l.nome}</p>
-                            <p className="truncate text-xs text-muted-foreground">
+                            <p className="break-words font-medium">{l.nome}</p>
+                            <p className="break-words text-xs text-muted-foreground">
                               {STAGE_LABEL[l.kanban_stage || "lead"] || l.kanban_stage}
                             </p>
                           </div>
@@ -289,8 +291,9 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
                         >
                           <MessageSquare className="h-4 w-4 text-primary shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm truncate">{m.content}</p>
-                            <p className="text-[11px] text-muted-foreground truncate">
+                            {/* Mensagem longa: 2 linhas e o texto inteiro no title; ao abrir, vai para a conversa. */}
+                            <p className="text-sm line-clamp-2 break-words" title={m.content}>{m.content}</p>
+                            <p className="text-[11px] text-muted-foreground break-words">
                               {m.sender === "lead" ? "Recebida" : "Enviada"} · {m.lead_name || "Contato"}
                             </p>
                           </div>

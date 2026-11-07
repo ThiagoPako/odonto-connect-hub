@@ -113,7 +113,7 @@ function SuperAdminPage() {
     <div className="flex-1 flex flex-col min-h-screen bg-muted/30">
       <DashboardHeader title="Painel do Super Administrador" icon={Crown} />
       
-      <main className="flex-1 p-4 sm:p-6 overflow-auto space-y-6 max-w-7xl mx-auto w-full">
+      <div className="flex-1 p-4 sm:p-6 overflow-auto space-y-6 max-w-7xl mx-auto w-full">
         <div className="flex justify-end">
           <Button variant="outline" size="sm" onClick={reload} disabled={loading} className="h-9 px-4 gap-2">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Atualizar dados
@@ -383,7 +383,7 @@ function SuperAdminPage() {
           plan={selectedPlan} 
           onSuccess={reload} 
         />
-      </main>
+      </div>
     </div>
   );
 }

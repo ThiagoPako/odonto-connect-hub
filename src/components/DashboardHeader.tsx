@@ -1,6 +1,7 @@
 import { Bell, Search, CalendarDays, LucideIcon } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
+import { useAtalhoBusca } from "@/hooks/useAtalhoBusca";
 import { useAuth } from "@/hooks/useAuth";
 import { GlobalSearchDialog } from "@/components/GlobalSearchDialog";
 
@@ -8,6 +9,7 @@ export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: L
   const { user } = useAuth();
   const [today, setToday] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const atalhoBusca = useAtalhoBusca();
 
   useEffect(() => {
     setToday(
@@ -48,7 +50,7 @@ export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: L
           <button
             type="button"
             onClick={() => setSearchOpen(true)}
-            className="relative group flex items-center justify-center md:justify-start h-10 w-10 md:w-56 lg:w-72 md:pl-10 md:pr-3 rounded-xl bg-muted/60 border border-border/50 text-sm text-muted-foreground hover:bg-muted/80 hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 transition-colors cursor-pointer"
+            className="relative group flex items-center justify-center md:justify-start h-10 w-10 md:w-56 lg:w-80 md:pl-10 md:pr-3 rounded-xl bg-muted/60 border border-border/50 text-sm text-muted-foreground hover:bg-muted/80 hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 transition-colors cursor-pointer"
             aria-label="Buscar no sistema"
           >
             <Search className="md:absolute md:left-3 md:top-1/2 md:-translate-y-1/2 h-4 w-4 shrink-0 text-muted-foreground group-hover:text-primary transition-colors" />
@@ -56,7 +58,7 @@ export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: L
               Buscar<span className="hidden lg:inline"> paciente, orçamento...</span>
             </span>
             <kbd className="pointer-events-none hidden lg:inline-flex h-5 shrink-0 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
-              ⌘K
+              {atalhoBusca}
             </kbd>
           </button>
           <button
