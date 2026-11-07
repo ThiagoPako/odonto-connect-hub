@@ -13,7 +13,7 @@ function EquipePage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Equipe" />
-      <main className="flex-1 p-4 sm:p-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 overflow-auto">
         <EmBreve
           titulo="Monitoramento da equipe em tempo real"
           descricao="Em breve você verá aqui quem está online e em atendimento. Para gerenciar quem tem acesso ou ver o desempenho do atendimento, use as telas abaixo."
@@ -22,7 +22,7 @@ function EquipePage() {
             { to: "/metricas", label: "Métricas de atendimento" },
           ]}
         />
-      </main>
+      </div>
     </div>
   );
 }

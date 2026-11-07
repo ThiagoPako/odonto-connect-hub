@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
+import { useConfirm } from "@/hooks/useConfirm";
 import { Users, RefreshCcw, Pencil, UserX, UserCheck, Search, Camera, Loader2 } from "lucide-react";
 
 interface UserRow {
@@ -29,12 +31,15 @@ export function AdminUserListPanel() {
   const [editEmail, setEditEmail] = useState("");
   const [editRole, setEditRole] = useState("");
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const { user: currentUser } = useAuth();
+  const [confirm, confirmDialog] = useConfirm();
 
   const fetchUsers = async () => {
     setLoading(true);
     const { data, error } = await adminListUsers();
-    if (error) toast.error("Erro ao carregar usuários: " + error);
-    else if (data) setUsers(data);
+    setLoadError(error);
+    if (!error && data) setUsers(data);
     setLoading(false);
   };
 
@@ -65,6 +70,15 @@ export function AdminUserListPanel() {
   };
 
   const toggleActive = async (u: UserRow) => {
+    if (u.active) {
+      const ok = await confirm({
+        title: `Desativar ${u.name}?`,
+        description: "Essa pessoa não conseguirá fazer um novo login. Se já estiver conectada, a sessão aberta pode continuar funcionando por até 7 dias. Você pode reativar depois.",
+        confirmLabel: "Desativar",
+        destructive: true,
+      });
+      if (!ok) return;
+    }
     const { error } = await adminUpdateUser(u.id, { active: !u.active });
     if (error) toast.error("Erro: " + error);
     else {
@@ -98,6 +112,7 @@ export function AdminUserListPanel() {
 
   return (
     <>
+      {confirmDialog}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between flex-wrap gap-3">
@@ -129,6 +144,11 @@ export function AdminUserListPanel() {
 
           {loading ? (
             <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>
+          ) : loadError ? (
+            <div role="alert" className="text-sm text-destructive text-center py-8 space-y-2">
+              <p>Não foi possível carregar os usuários. {loadError}</p>
+              <Button variant="outline" size="sm" onClick={fetchUsers}>Tentar de novo</Button>
+            </div>
           ) : filtered.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">Nenhum usuário encontrado</p>
           ) : (
@@ -158,7 +178,7 @@ export function AdminUserListPanel() {
                       <Badge variant="destructive" className="text-[10px] shrink-0">Inativo</Badge>
                     )}
                     <div className="flex gap-1 shrink-0">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(u)} title="Editar">
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(u)} title="Editar" aria-label={`Editar ${u.name}`}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
                       <Button
@@ -166,7 +186,9 @@ export function AdminUserListPanel() {
                         size="icon"
                         className="h-8 w-8"
                         onClick={() => toggleActive(u)}
-                        title={u.active ? "Desativar" : "Reativar"}
+                        disabled={u.id === currentUser?.id}
+                        title={u.id === currentUser?.id ? "Você não pode desativar a si mesmo" : u.active ? "Desativar" : "Reativar"}
+                        aria-label={u.active ? `Desativar ${u.name}` : `Reativar ${u.name}`}
                       >
                         {u.active ? <UserX className="h-3.5 w-3.5 text-destructive" /> : <UserCheck className="h-3.5 w-3.5 text-primary" />}
                       </Button>
@@ -195,7 +217,7 @@ export function AdminUserListPanel() {
             </div>
             <div className="space-y-2">
               <Label>Função</Label>
-              <Select value={editRole} onValueChange={setEditRole}>
+              <Select value={editRole} onValueChange={setEditRole} disabled={editUser?.id === currentUser?.id}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>

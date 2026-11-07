@@ -50,6 +50,15 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
+  /* Avisos e selos de estado com contraste AA (fundo suave + texto escuro), ver DESIGN.md */
+  --color-success-soft: var(--success-soft);
+  --color-success-ink: var(--success-ink);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-ink: var(--warning-ink);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-ink: var(--danger-ink);
+  --color-info-soft: var(--info-soft);
+  --color-info-ink: var(--info-ink);
   --color-dental-cyan: var(--dental-cyan);
   --color-primary-glow: var(--primary-glow);
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
@@ -94,6 +103,14 @@
   --warning-foreground: hsl(30, 30%, 15%);
   --info: hsl(217, 91%, 60%);
   --info-foreground: hsl(0, 0%, 100%);
+  --success-soft: hsl(152, 60%, 95%);
+  --success-ink: hsl(152, 60%, 24%);
+  --warning-soft: hsl(38, 92%, 94%);
+  --warning-ink: hsl(30, 80%, 26%);
+  --danger-soft: hsl(0, 72%, 96%);
+  --danger-ink: hsl(0, 65%, 38%);
+  --info-soft: hsl(217, 91%, 96%);
+  --info-ink: hsl(217, 70%, 36%);
   --dental-cyan: hsl(190, 70%, 55%);
   --chart-1: hsl(187, 85%, 43%);
   --chart-2: hsl(217, 91%, 60%);
@@ -138,6 +155,14 @@
   --warning-foreground: hsl(30, 30%, 10%);
   --info: hsl(217, 91%, 65%);
   --info-foreground: hsl(0, 0%, 100%);
+  --success-soft: hsl(152, 40%, 14%);
+  --success-ink: hsl(152, 60%, 70%);
+  --warning-soft: hsl(38, 60%, 14%);
+  --warning-ink: hsl(38, 92%, 72%);
+  --danger-soft: hsl(0, 50%, 15%);
+  --danger-ink: hsl(0, 80%, 78%);
+  --info-soft: hsl(217, 50%, 16%);
+  --info-ink: hsl(217, 91%, 78%);
   --dental-cyan: hsl(190, 70%, 50%);
   --chart-1: hsl(187, 85%, 48%);
   --chart-2: hsl(217, 91%, 65%);
@@ -516,4 +541,17 @@
   0% { transform: scale(1); opacity: 0.6; }
   70% { transform: scale(1.15); opacity: 0; }
   100% { transform: scale(1.15); opacity: 0; }
+}
+
+/* Shell: as páginas usam "min-h-screen" na raiz, mas elas vivem dentro do <main id="conteudo">,
+   que já desconta a barra do celular e o aviso do WhatsApp. Com 100vh a página ficava sempre
+   mais alta que a área visível e o <main> rolava sem necessidade. */
+#conteudo > .min-h-screen {
+  min-height: 100%;
+}
+
+/* Usada no menu lateral e em listas; não existia (a classe não fazia nada). */
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 35%, transparent) transparent;
 }
