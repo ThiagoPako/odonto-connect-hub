@@ -13,7 +13,7 @@ import {
 import { crmApi, sessionsApi, pacientesApi } from "@/lib/vpsApi";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
+  Plus, Phone, Mail, Calendar, DollarSign,
   ChevronRight, MoreHorizontal, UserPlus, ExternalLink,
   Clock, MessageSquare, GripVertical, RefreshCw, RotateCcw,
   TrendingUp, Target, Loader2, UserCheck, Link2, History, X,

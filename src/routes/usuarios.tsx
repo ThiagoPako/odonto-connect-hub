@@ -22,7 +22,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { Users, UserPlus, Pencil, UserX, UserCheck, KeyRound, RefreshCcw, Search, AlertTriangle } from "lucide-react";
+import { Users, UserPlus, Pencil, UserX, UserCheck, KeyRound, RefreshCcw, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/usuarios")({
@@ -361,7 +361,8 @@ function UsuariosPage() {
             </div>
             <div className="space-y-2">
               <Label>Perfil de acesso</Label>
-              <Select value={eRole} onValueChange={setERole}>
+              {/* O admin não pode tirar o próprio acesso de admin por engano */}
+              <Select value={eRole} onValueChange={setERole} disabled={editing?.id === currentUser?.id}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {ROLES.map((r) => (
@@ -369,6 +370,9 @@ function UsuariosPage() {
                   ))}
                 </SelectContent>
               </Select>
+              {editing?.id === currentUser?.id && (
+                <p className="text-xs text-muted-foreground">Você não pode mudar o seu próprio perfil. Peça a outro administrador.</p>
+              )}
             </div>
           </div>
           <DialogFooter>

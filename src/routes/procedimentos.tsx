@@ -37,6 +37,7 @@ function ProcedimentosCatalogoPage() {
   const [historicoNome, setHistoricoNome] = useState<string>("");
 
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,14 +64,21 @@ function ProcedimentosCatalogoPage() {
   const editar = (p: ProcedimentoCatalogo) => { setEditing({ ...p }); setMotivoVersao(""); setOpen(true); };
 
   const salvar = async () => {
-    if (!editing) return;
-    if (!editing.nome.trim()) { toast.error("Nome obrigatório"); return; }
+    if (!editing || saving) return;
+    if (!editing.nome.trim()) { toast.error("Informe o nome do procedimento."); return; }
+    if (!(Number(editing.valor_particular) >= 0) || !(Number(editing.valor_convenio) >= 0)) {
+      toast.error("Os valores não podem ser negativos."); return;
+    }
+    if (!(Number(editing.duracao_minutos) > 0)) { toast.error("A duração precisa ser maior que zero."); return; }
+    setSaving(true);
     const body: any = { ...editing };
     if (editing.id && motivoVersao.trim()) body.motivo_versao = motivoVersao.trim();
     const res = editing.id
       ? await procedimentosCatalogoApi.update(editing.id, body)
       : await procedimentosCatalogoApi.create(body);
-    if ((res as any).error) { toast.error((res as any).error); return; }
+    setSaving(false);
+    // Clique duplo em "Salvar" criava dois procedimentos iguais
+    if ((res as any).error) { toast.error("Erro ao salvar: " + (res as any).error); return; }
     const novaVersao = (res as any).data?._nova_versao || (res as any)._nova_versao;
     toast.success(
       editing.id
@@ -323,7 +331,10 @@ function ProcedimentosCatalogoPage() {
             </div>
             <DialogFooter>
               <Button variant="ghost" size="sm" onClick={() => setOpen(false)} className="h-9 text-xs">Cancelar</Button>
-              <Button size="sm" onClick={salvar} className="h-9 text-xs">Salvar</Button>
+              <Button size="sm" onClick={salvar} disabled={saving} className="h-9 text-xs">
+                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+                {saving ? "Salvando…" : "Salvar"}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

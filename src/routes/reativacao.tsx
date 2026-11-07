@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   RefreshCcw, MessageSquare, Send, Clock, Users, Plus, X,
-  Instagram, Facebook, Globe, Phone, Search,
+  Instagram, Facebook, Globe, Phone, 
   CheckCircle2, AlertCircle, Loader2, Trash2, PlayCircle, PauseCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";

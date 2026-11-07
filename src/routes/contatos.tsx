@@ -1,10 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
-  Plus, Search, Star, Phone, Mail, Building2, Loader2, Trash2,
+  Plus, Star, Phone, Mail, Building2, Loader2, Trash2,
   Pencil, UserPlus, Users, StarOff, MessageSquare, Download, MessageCircle
 
 } from "lucide-react";

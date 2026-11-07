@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { agendaApi, pacientesApi, dentistasApi, type AgendamentoVPS, type MarcadorAgenda } from "@/lib/vpsApi";
 import { AnalogTimePicker } from "./AnalogTimePicker";
 import { MarcadoresSelector } from "./MarcadoresSelector";
-import { cn } from "@/lib/utils";
+import { cn, localDateISO } from "@/lib/utils";
 
 interface Props {
   open: boolean;
@@ -220,6 +220,11 @@ export function NovoAgendamentoModal({
       if (!pacienteId) setShowSugg(true);
       return;
     }
+    // Data no passado costuma ser engano de dia/mês: pergunta antes de gravar
+    const hojeIso = localDateISO();
+    if (data < hojeIso && !window.confirm(
+      `A data ${data.split("-").reverse().join("/")} já passou. Agendar mesmo assim (por exemplo, para registrar um atendimento já feito)?`
+    )) return;
     // Confirma conflito só depois de o formulário estar válido
     if (conflitos.length > 0 && !window.confirm(
       `Este profissional já tem ${conflitos.length === 1 ? "um agendamento" : `${conflitos.length} agendamentos`} nesse horário (${conflitos.map((c) => `${(c.hora || "").slice(0, 5)} ${c.paciente_nome || ""}`.trim()).join(", ")})${multiplo ? " na primeira sessão (as outras sessões não foram verificadas)" : ""}. Agendar mesmo assim?`

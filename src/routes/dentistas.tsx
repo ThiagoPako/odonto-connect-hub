@@ -9,7 +9,7 @@ import {
 } from "@/data/dentistasMockData";
 import {
   UserPlus,
-  Search,
+  
   MoreVertical,
   Edit,
   Trash2,
