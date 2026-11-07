@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Plus, RefreshCw, Loader2, WifiOff, Smartphone, Wifi, Star } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
-import { vpsApiFetch, whatsappApi } from "@/lib/vpsApi";
+import { vpsApiFetch, whatsappApi, type WhatsAppHealthInstance } from "@/lib/vpsApi";
 import { ImportWhatsAppDialog } from "@/components/contatos/ImportWhatsAppDialog";
 import { toast } from "sonner";
 
@@ -37,6 +37,17 @@ function CanaisPage() {
   const [switchMsg, setSwitchMsg] = useState(DEFAULT_SWITCH_MSG);
   const [switching, setSwitching] = useState(false);
   const [importContactsOpen, setImportContactsOpen] = useState(false);
+  // Saúde gravada pelo servidor (tempo desconectado, loop, envios aguardando), a cada 60 s.
+  const [health, setHealth] = useState<Record<string, WhatsAppHealthInstance>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => whatsappApi.health().then(({ data }) => {
+      if (!cancelled && data) setHealth(Object.fromEntries(data.instances.map((h) => [h.instance, h])));
+    });
+    void load();
+    const t = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
 
 
   const handleCreated = (name: string) => {
@@ -211,6 +222,7 @@ function CanaisPage() {
                   onConnect={(name) => setQrInstance(name)}
                   onRefresh={() => void loadInstances()}
                   onSetPrimary={handleSetPrimary}
+                  health={health[inst.instanceName]}
                 />
               </div>
             ))}

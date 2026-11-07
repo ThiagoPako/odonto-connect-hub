@@ -287,12 +287,18 @@ function QueueForm({
       {/* Name + Icon */}
       <div className="grid grid-cols-[1fr_auto] gap-3">
         <div>
-          <Label>Nome da Fila</Label>
+          <Label htmlFor="fila-nome">Nome da Fila</Label>
           <Input
+            id="fila-nome"
             value={queue.name}
             onChange={(e) => onChange({ ...queue, name: e.target.value })}
             placeholder="Ex: Agendamento"
+            aria-describedby="fila-aviso-nome"
           />
+          {/* Parecer da Helena (T12): Lei 5.081/66 art. 7º, a e g; Res. CFO 271/2025. */}
+          <p id="fila-aviso-nome" className="mt-1 text-[11px] text-muted-foreground">
+            Aparece para o paciente no WhatsApp. Use o setor (ex.: Agendamento, Financeiro), não nomes de tratamentos.
+          </p>
         </div>
         <div>
           <Label>Ícone</Label>
@@ -342,12 +348,17 @@ function QueueForm({
 
       {/* WhatsApp Button Label */}
       <div>
-        <Label>Texto do Botão no WhatsApp</Label>
+        <Label htmlFor="fila-botao">Texto do Botão no WhatsApp</Label>
         <Input
+          id="fila-botao"
           value={queue.whatsappButtonLabel}
           onChange={(e) => onChange({ ...queue, whatsappButtonLabel: e.target.value })}
           placeholder="Ex: 📅 Agendar Consulta"
+          aria-describedby="fila-aviso-texto"
         />
+        <p id="fila-aviso-texto" className="mt-1 text-[11px] text-muted-foreground">
+          O paciente vê este texto no menu do WhatsApp. Não use nomes de tratamentos, preços nem promoções.
+        </p>
       </div>
 
       {/* Contact Numbers */}

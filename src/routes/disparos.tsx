@@ -122,7 +122,7 @@ function DisparosPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Disparos Programados" />
-      <main className="flex-1 p-6 space-y-6 overflow-auto">
+      <main className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto">
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <MiniKpi icon={Send} label="Total Enviadas" value={totalEnviadas.toString()} />
@@ -132,17 +132,18 @@ function DisparosPage() {
         </div>
 
         {/* Header + controls */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">Disparos Programados</h2>
+        <div className="flex flex-wrap items-start sm:items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-semibold text-foreground">Disparos programados</h2>
             <p className="text-sm text-muted-foreground">Configure mensagens automáticas em massa via WhatsApp</p>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="inline-flex h-8 items-center rounded-lg bg-muted p-0.5 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <div role="group" aria-label="Filtrar disparos por situação" className="inline-flex h-auto min-h-8 flex-wrap items-center rounded-lg bg-muted p-0.5 text-sm">
               {(["all", "ativos", "inativos"] as const).map((f) => (
                 <button
                   key={f}
                   onClick={() => setFilterStatus(f)}
+                  aria-pressed={filterStatus === f}
                   className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
                     filterStatus === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                   }`}
@@ -153,7 +154,7 @@ function DisparosPage() {
             </div>
             <button
               onClick={openNewWizard}
-              className="flex items-center gap-2 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+              className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
             >
               <Plus className="h-3.5 w-3.5" /> Novo disparo
             </button>

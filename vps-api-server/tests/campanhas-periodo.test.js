@@ -153,9 +153,9 @@ describe('Campanhas: período de envio', () => {
     expect(res.status).toBe(200);
     const [ins] = inserts();
     expect(new Date(col(ins, 'scheduled_at')).toISOString()).toBe('2026-11-07T12:30:00.000Z');
-    const [val] = q(/UPDATE automation_jobs SET expires_at = \$3 WHERE tenant_id = \$1 AND id = ANY/);
-    expect(val.params[0]).toBe(tenantA);
-    expect(new Date(val.params[2]).toISOString()).toBe('2026-11-09T02:59:00.000Z'); // dia seguinte, 23:59 em SP
+    // Validade = horário de término marcado (12:00 em SP), não o fim da janela da fila.
+    expect(new Date(col(ins, 'expires_at')).toISOString()).toBe('2026-11-07T15:00:00.000Z');
+    expect(q(/UPDATE automation_jobs SET expires_at = \$3/)).toHaveLength(0);
     expect(res.body).toMatchObject({ inicio: '2026-11-07', porDia: 500, previsaoTermino: '2026-11-07', naoCabem: 0 });
   });
 
@@ -170,19 +170,35 @@ describe('Campanhas: período de envio', () => {
       const dia = d.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
       porDia[dia] = (porDia[dia] || 0) + 1;
     }
-    // Sex 400, Sáb 166 (janela 8h–13h), Dom 0, Seg–Sex 400: 7 dias com janela.
+    // Horário marcado 8h–18h: Sex 333 (10 h de 12), Sáb 166 (janela da fila 8h–13h), Dom 0,
+    // Seg–Sex 333: 7 dias com janela.
     expect(porDia).toEqual({
-      '2026-11-06': 400, '2026-11-07': 166, '2026-11-09': 400, '2026-11-10': 400,
-      '2026-11-11': 400, '2026-11-12': 400, '2026-11-13': 400,
+      '2026-11-06': 333, '2026-11-07': 166, '2026-11-09': 333, '2026-11-10': 333,
+      '2026-11-11': 333, '2026-11-12': 333, '2026-11-13': 333,
     });
     expect(Object.values(porDia).every(n => n <= 500 * 0.8)).toBe(true); // folga para lembretes
     expect(porDia['2026-11-08']).toBeUndefined(); // domingo
-    expect(res.body).toMatchObject({ enqueued: 2566, naoCabem: 934, porDia: 500, cotaDiaUtil: 400, previsaoTermino: '2026-11-13' });
-    const [val] = q(/UPDATE automation_jobs SET expires_at = \$3/);
-    const validade = new Date(val.params[2]);
-    expect(validade.toISOString()).toBe('2026-11-15T02:59:00.000Z'); // 14/11 23:59: último dia + 1
-    const ultimo = Math.max(...inserts().map(i => new Date(col(i, 'scheduled_at')).getTime()));
-    expect(validade.getTime()).toBeGreaterThan(ultimo + 12 * 3600_000);
+    expect(res.body).toMatchObject({ enqueued: 2164, naoCabem: 1336, porDia: 500, cotaDiaUtil: 400, previsaoTermino: '2026-11-13' });
+    // Cada envio vale só até o horário de término do próprio dia (18h; sábado 13h).
+    for (const i of inserts()) {
+      const ag = new Date(col(i, 'scheduled_at'));
+      const dia = ag.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+      const fim = dia === '2026-11-07' ? '13:00' : '18:00';
+      expect(new Date(col(i, 'expires_at')).toISOString()).toBe(new Date(`${dia}T${fim}:00-03:00`).toISOString());
+    }
+    expect(q(/UPDATE automation_jobs SET expires_at = \$3/)).toHaveLength(0);
+  });
+
+  test('disparo único sem horário de término: validade de todos = último dia + 1 (folga da fila)', async () => {
+    contatos = Array.from({ length: 900 }, (_, i) => ({ nome: `P${i}`, telefone: `5511${String(920000000 + i)}` }));
+    campanhas = [camp({ tipo: 'unico', data_inicio: '2026-11-06', horario_inicio: '08:00' })];
+    const res = await request(app).post('/api/campaigns/camp-1/execute').set(auth());
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ enqueued: 900, previsaoTermino: '2026-11-09' }); // sex 400, sáb 166, seg 334
+    const [val] = q(/UPDATE automation_jobs SET expires_at = \$3 WHERE tenant_id = \$1 AND id = ANY/);
+    expect(val.params[0]).toBe(tenantA);
+    expect(val.params[1]).toHaveLength(900);
+    expect(new Date(val.params[2]).toISOString()).toBe('2026-11-11T02:59:00.000Z'); // 10/11 23:59 em SP
   });
 
   test('1º dia usa só o que resta da janela de hoje', async () => {
