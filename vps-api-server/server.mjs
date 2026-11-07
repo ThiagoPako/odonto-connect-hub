@@ -1501,6 +1501,13 @@ app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
     const plan = planRows[0];
     if (!plan) return res.status(400).json({ error: 'Plano inválido' });
 
+    // Só a versão vigente (ou publicada em aviso) de cada documento; versão inventada no body → 400.
+    const versoesAceite = await validarVersoesNoCadastro(client, {
+      termosVersao: termos_versao ? String(termos_versao) : null,
+      politicaVersao: politica_versao ? String(politica_versao) : null,
+    });
+    if (versoesAceite.erro) return res.status(400).json({ error: versoesAceite.erro });
+
     await client.query('BEGIN');
 
     const baseSlug = slugify(clinic_name) || 'clinica';
@@ -1534,6 +1541,15 @@ app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
       `INSERT INTO user_roles (user_id, role) VALUES ($1,'admin') ON CONFLICT DO NOTHING`,
       [profile.id]
     );
+
+    // Prova do aceite (aceites_documentos, só inclusão); as colunas de tenants acima ficam por compatibilidade.
+    await registrarAceitesNoSignup(client, {
+      tenantId: tenant.id, usuarioId: profile.id,
+      termosVersao: termos_versao ? String(termos_versao) : null,
+      politicaVersao: politica_versao ? String(politica_versao) : null,
+      ip: ipDe(req),
+      userAgent: req.headers['user-agent'],
+    });
 
     await client.query(
       `INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_end, gateway)
@@ -17904,7 +17920,10 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
 import { registerClinicorp, reconciliationTick, hashWebhookSecret, generateWebhookSecret, WEBHOOK_SECRET_GRACE_HOURS, clinicorpBaseUrlPermitida, clinicorpBaseUrlSegura } from './clinicorp.mjs';
+import { registerLegal, registrarAceitesNoSignup, validarVersoesNoCadastro, ipDe } from './legal.mjs';
 registerClinicorp(app, pool, { verifyUser });
+// Aceite de Termos/Política com prova (aceites_documentos) e pendências de versão nova.
+registerLegal(app, { pool, verifyUser, verifyAdmin, verifySuperAdmin });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
 // Each authenticated user has their own row in clinicorp_user_settings.

@@ -205,6 +205,13 @@ jobs:
             # Canais de WhatsApp por clínica (camada de provedor, F0): depois da saúde (copia o estado)
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-canais.sql | sudo -u postgres env PGOPTIONS='-c lock_timeout=5s' psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
               || echo "::warning::migration-whatsapp-canais.sql falhou: confira whatsapp_channels, whatsapp_webhook_events e as colunas channel_id de automation_jobs/chat_messages"
+            # Prova do aceite de Termos/Política (aceites_documentos) e versões publicadas. Depois da
+            # schema-alinhamento (importa o aceite das colunas de tenants) e antes do dono-tabelas.
+            # O próprio arquivo passa as tabelas novas ao dono da API e dá só SELECT/INSERT ao odonto_app (só inclusão).
+            if ! cat /root/odonto-connect/vps-api-server/migration-aceites-documentos.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+              echo "::warning title=Aceites não aplicados::migration-aceites-documentos.sql falhou (lock ou erro). O cadastro segue gravando nas colunas de tenants; ver log acima."
+              echo "!!! ATENÇÃO: migration-aceites-documentos.sql NÃO foi aplicada."
+            fi
             # Dono das tabelas criadas acima pelo deploy (postgres) → dono das tabelas da API; senão a
             # RLS vale para o odonto_app e jobs sem contexto de clínica são bloqueados em silêncio.
             # Só de deploy (bloco DO; o boot não roda). Fica DEPOIS de lista de espera e saúde do WhatsApp.
