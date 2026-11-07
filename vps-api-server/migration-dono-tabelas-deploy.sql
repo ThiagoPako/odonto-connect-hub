@@ -10,7 +10,7 @@
 --
 -- Idempotente: tabela ausente é pulada (to_regclass); dono já certo não muda; GRANT repetido
 -- não dá erro. ALTER TABLE ... OWNER leva junto as sequências da tabela (BIGSERIAL).
--- Rodar logo depois de migration-lista-espera.sql e migration-whatsapp-saude.sql, com
+-- Rodar logo depois de migration-lista-espera.sql, migration-whatsapp-saude.sql e migration-whatsapp-canais.sql, com
 -- PGOPTIONS='-c lock_timeout=5s'.
 -- Rollback: ALTER TABLE <tabela> OWNER TO postgres; (volta a RLS a valer para o odonto_app).
 \set ON_ERROR_STOP on
@@ -21,7 +21,7 @@ DECLARE
   t TEXT;
   seq TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['lista_espera', 'lista_espera_ofertas', 'whatsapp_instance_health_log', 'whatsapp_opt_outs', 'whatsapp_opt_out_reversals', 'prontuario_versoes'] LOOP
+  FOREACH t IN ARRAY ARRAY['lista_espera', 'lista_espera_ofertas', 'whatsapp_instance_health_log', 'whatsapp_opt_outs', 'whatsapp_opt_out_reversals', 'whatsapp_channels', 'whatsapp_webhook_events', 'prontuario_versoes'] LOOP
     CONTINUE WHEN to_regclass('public.' || t) IS NULL;
     IF dono IS NOT NULL AND dono <> 'postgres'
        AND (SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = t) = 'postgres' THEN

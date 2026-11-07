@@ -229,7 +229,7 @@ function AutomacoesPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Automação de Relacionamento" />
-      <main className="flex-1 p-6 space-y-6 overflow-auto">
+      <div className="flex-1 p-6 space-y-6 overflow-auto">
         {/* Hero header with gradient */}
         <div className="relative overflow-hidden rounded-2xl gradient-primary p-6 shadow-glow-primary">
           <div className="absolute inset-0 opacity-10">
@@ -435,7 +435,7 @@ function AutomacoesPage() {
             </div>
           )}
         </div>
-      </main>
+      </div>
     </div>
   );
 }
