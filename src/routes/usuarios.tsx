@@ -172,7 +172,7 @@ function UsuariosPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Usuários" />
-      <main className="flex-1 p-6 overflow-auto">
+      <div className="flex-1 p-6 overflow-auto">
         <div className="flex items-center gap-3 mb-6">
           <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
             <Users className="h-5 w-5 text-primary" />
@@ -317,7 +317,7 @@ function UsuariosPage() {
             )}
           </CardContent>
         </Card>
-      </main>
+      </div>
 
       {/* Confirmar desativação */}
       <AlertDialog open={!!deactivating} onOpenChange={(o) => { if (!o) setDeactivating(null); }}>
