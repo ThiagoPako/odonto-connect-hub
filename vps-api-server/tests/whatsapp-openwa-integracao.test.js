@@ -573,6 +573,15 @@ describe('Lido e "digitando" pelo canal OpenWA', () => {
 });
 
 describe('Mídia na fila pelo canal OpenWA', () => {
+  // Job 'transactional' respeita a janela de envio (seg–sex 8h–20h, sáb 8h–13h): sem relógio fixo o
+  // teste falha fora dela (ex.: sábado à tarde a fila só reagenda). Só o Date é falso; timers reais.
+  beforeAll(() => {
+    jest.useFakeTimers({
+      now: new Date('2026-11-04T13:00:00Z'), // quarta-feira, 10h em Brasília
+      doNotFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate', 'nextTick', 'queueMicrotask', 'hrtime', 'performance'],
+    });
+  });
+  afterAll(() => { jest.useRealTimers(); });
   const sub = '2099-01';
   const created = [];
   async function storeFile(ext, content) {
