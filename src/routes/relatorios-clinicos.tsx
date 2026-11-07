@@ -156,19 +156,8 @@ function RelatoriosClinicosPage() {
       toast.error("Nenhum relatório para exportar");
       return;
     }
-    const { data, error } = await aiApi.exportReportsCsv(buildFilters());
-    if (error || !data) {
-      toast.error(error || "Não foi possível exportar");
-      return;
-    }
-    const url = URL.createObjectURL(data);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `relatorios-clinicos-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    const { error } = await aiApi.downloadReportsCsv(buildFilters());
+    if (error) toast.error("Não foi possível exportar o CSV: " + error);
   };
 
   return (

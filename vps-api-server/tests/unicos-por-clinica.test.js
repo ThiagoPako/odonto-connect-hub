@@ -48,6 +48,11 @@ beforeEach(() => {
       if (falhaNoInsert) throw falhaNoInsert;
       return { rows: [], rowCount: 1 };
     }
+    // PUT /api/pacientes/:id lê o cadastro atual (validação só do que mudou) antes de gravar.
+    if (/SELECT cpf, telefone, email, data_nascimento FROM pacientes WHERE id = \$1 AND tenant_id = \$2/.test(text)) {
+      return params[0] === pacienteDaA && params[1] === tenantA
+        ? { rows: [{ cpf: null, telefone: null, email: null, data_nascimento: null }] } : { rows: [] };
+    }
     if (/FROM crm_leads WHERE id = \$1 AND tenant_id = \$2/.test(text)) {
       return params[1] === tenantA
         ? { rows: [{ id: leadDaA, nome: 'Lead Teste', telefone: null, cpf: '123.456.789-00' }] }
@@ -68,9 +73,9 @@ const naoVaza = (body) => {
 describe('CPF por clínica', () => {
   test('POST /api/pacientes grava o CPF só com dígitos', async () => {
     const res = await request(app).post('/api/pacientes').set('Authorization', `Bearer ${token()}`)
-      .send({ nome: 'Fulana', cpf: '123.456.789-00' });
+      .send({ nome: 'Fulana', cpf: '529.982.247-25' });
     expect(res.status).toBe(200);
-    expect(gravacao().params[2]).toBe('12345678900');
+    expect(gravacao().params[2]).toBe('52998224725');
   });
 
   test('CPF vazio vira NULL', async () => {
@@ -85,7 +90,7 @@ describe('CPF por clínica', () => {
   ])('%s %s: CPF repetido na clínica → 409 com mensagem neutra', async (method, url) => {
     falhaNoInsert = erroUnico('uq_pacientes_tenant_cpf');
     const res = await request(app)[method](url).set('Authorization', `Bearer ${token()}`)
-      .send({ nome: 'Fulana', cpf: '123.456.789-00' });
+      .send({ nome: 'Fulana', cpf: '529.982.247-25' });
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('Já existe um paciente com este CPF nesta clínica');
     naoVaza(res.body);
@@ -94,7 +99,7 @@ describe('CPF por clínica', () => {
   test('chave global antiga: 409 sem dizer que o CPF existe em outra clínica', async () => {
     falhaNoInsert = erroUnico('pacientes_cpf_key');
     const res = await request(app).post('/api/pacientes').set('Authorization', `Bearer ${token()}`)
-      .send({ nome: 'Fulana', cpf: '12345678900' });
+      .send({ nome: 'Fulana', cpf: '52998224725' });
     expect(res.status).toBe(409);
     expect(res.body.error).not.toMatch(/nesta clínica|outra clínica/);
     naoVaza(res.body);
@@ -103,7 +108,7 @@ describe('CPF por clínica', () => {
   test('outro erro de banco: 500 genérico, sem error.message', async () => {
     falhaNoInsert = Object.assign(new Error('invalid input syntax for type date: "1990-13-45"'), { code: '22007' });
     const res = await request(app).post('/api/pacientes').set('Authorization', `Bearer ${token()}`)
-      .send({ nome: 'Fulana', data_nascimento: '1990-13-45' });
+      .send({ nome: 'Fulana', data_nascimento: '1990-01-15' });
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'Erro interno' });
   });

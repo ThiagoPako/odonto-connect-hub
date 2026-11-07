@@ -134,7 +134,8 @@ describe('GET /api/dashboard', () => {
     const res = await chamar('get', '/api/dashboard/kpis', token(tenantA));
     expect(res.status).toBe(200);
     const txt = sqlLog.map(q => q.text).join('\n');
-    expect(txt).toMatch(/SUM\(valor_total\)/);
+    // Valor aprovado é líquido do desconto (valor_total é o subtotal bruto)
+    expect(txt).toMatch(/SUM\(valor_total - COALESCE\(desconto, 0\)\)/);
     expect(txt).toMatch(/kanban_stage AS stage/);
     expect(txt).toMatch(/quantidade AS current_stock/);
     expect(txt).toMatch(/valor_unitario AS unit_cost/);

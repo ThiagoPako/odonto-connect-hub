@@ -1378,11 +1378,11 @@ export const aiApi = {
     }>('/ai/reports', { params });
   },
 
-  // Baixa o CSV com o token no cabeçalho (nunca na URL: ia para histórico e log de acesso).
-  exportReportsCsv: async (filters?: {
+  /** Baixa o CSV com o JWT no cabeçalho (nunca na URL: ficaria no histórico e no log do servidor). */
+  downloadReportsCsv: async (filters?: {
     from?: string; to?: string; status?: 'todos' | 'com_prescricao' | 'sem_prescricao';
     patientId?: string; attendantId?: string; q?: string;
-  }): Promise<{ data: Blob | null; error: string | null }> => {
+  }): Promise<{ error: string | null }> => {
     const params = new URLSearchParams();
     if (filters?.from) params.set('from', filters.from);
     if (filters?.to) params.set('to', filters.to);
@@ -1390,18 +1390,25 @@ export const aiApi = {
     if (filters?.patientId) params.set('patientId', filters.patientId);
     if (filters?.attendantId) params.set('attendantId', filters.attendantId);
     if (filters?.q) params.set('q', filters.q);
-    const token = getToken();
     try {
-      const res = await fetch(`${VPS_API_BASE}/ai/reports/export.csv?${params.toString()}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const headers = await getAuthHeaders();
+      delete headers['Content-Type'];
+      const res = await fetch(`${VPS_API_BASE}/ai/reports/export.csv?${params.toString()}`, { headers });
       if (!res.ok) {
-        const body = await res.json().catch(() => null) as { error?: string } | null;
-        return { data: null, error: body?.error || `Erro ${res.status} ao exportar` };
+        const body = await res.json().catch(() => ({} as { error?: string }));
+        return { error: body?.error || `HTTP ${res.status}` };
       }
-      return { data: await res.blob(), error: null };
-    } catch {
-      return { data: null, error: 'Sem conexão com o servidor' };
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `relatorios-clinicos-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      return { error: null };
+    } catch (error: unknown) {
+      return { error: error instanceof Error ? error.message : 'Erro de rede' };
     }
   },
 
