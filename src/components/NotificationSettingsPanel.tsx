@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Bell, Volume2, VolumeX, MonitorSmartphone, Flame, Play, Volume1, RefreshCw } from "lucide-react";
+import { Bell, Volume2, VolumeX, MonitorSmartphone, Flame, Play, Volume1, RefreshCw, ShieldCheck } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -13,6 +13,8 @@ import {
 import { isPushEnabled, setPushEnabled, requestNotificationPermission } from "@/lib/browserNotification";
 import { fetchPreferences, savePreferences, type NotificationPreferences } from "@/lib/preferencesSync";
 import { toast } from "sonner";
+import { pushPrivacidadeApi } from "@/lib/vpsApi";
+import { useAuth } from "@/hooks/useAuth";
 
 export function NotificationSettingsPanel() {
   const [soundOn, setSoundOn] = useState(isSoundEnabled);
@@ -22,6 +24,28 @@ export function NotificationSettingsPanel() {
   const [vol, setVol] = useState(getVolume);
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState(false);
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin" || !!user?.is_super_admin;
+  const [mostrarNome, setMostrarNome] = useState(false);
+  const [salvandoNome, setSalvandoNome] = useState(false);
+
+  useEffect(() => {
+    pushPrivacidadeApi.get().then(({ data }) => {
+      if (data) setMostrarNome(data.mostrarNome === true);
+    });
+  }, []);
+
+  const handleMostrarNomeToggle = async (checked: boolean) => {
+    setSalvandoNome(true);
+    const { error } = await pushPrivacidadeApi.update({ mostrarNome: checked });
+    setSalvandoNome(false);
+    if (error) {
+      toast.error(`Não foi possível salvar: ${error}`);
+      return;
+    }
+    setMostrarNome(checked);
+    toast.success(checked ? "As notificações vão mostrar o primeiro nome" : "As notificações não vão mostrar o nome");
+  };
 
   // Load preferences from server on mount
   useEffect(() => {
@@ -220,6 +244,26 @@ export function NotificationSettingsPanel() {
             checked={pushOn}
             onCheckedChange={handlePushToggle}
             disabled={pushDenied || syncing}
+          />
+        </div>
+
+        {/* Privacidade do push (configuração da clínica) */}
+        <div className="flex items-center justify-between py-3">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+            <div>
+              <p className="text-sm font-medium text-foreground">Mostrar o primeiro nome no push</p>
+              <p className="text-xs text-muted-foreground">
+                A notificação nunca mostra o texto da mensagem nem o telefone, porque aparece na tela bloqueada.
+                {isAdmin ? " Vale para toda a clínica." : " Só o administrador da clínica pode alterar."}
+              </p>
+            </div>
+          </div>
+          <Switch
+            checked={mostrarNome}
+            onCheckedChange={handleMostrarNomeToggle}
+            disabled={!isAdmin || salvandoNome}
+            aria-label="Mostrar o primeiro nome no push"
           />
         </div>
       </div>
