@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AgendamentoVPS } from "@/lib/vpsApi";
-import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2, Users, Info } from "lucide-react";
+import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2, Users, Info, CalendarClock, MessageCircleQuestion } from "lucide-react";
 import { CategoriaBadge } from "./CategoriaBadge";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -37,11 +37,23 @@ const STATUS_STYLE: Record<
 > = {
   agendado:        { chip: "bg-primary/15 text-primary",                                              icon: Clock,        label: "Agendado",      ring: "ring-primary/30" },
   confirmado:      { chip: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",                icon: CheckCircle2, label: "Confirmado",    ring: "ring-emerald-500/40" },
+  remarcar:        { chip: "bg-orange-500/15 text-orange-600 dark:text-orange-400",                   icon: CalendarClock, label: "Pediu remarcação", ring: "ring-orange-500/40" },
   em_atendimento:  { chip: "bg-blue-500/15 text-blue-600 dark:text-blue-400",                         icon: PlayCircle,   label: "Em atendimento",ring: "ring-blue-500/40" },
   finalizado:      { chip: "bg-muted text-muted-foreground",                                          icon: CheckCircle2, label: "Finalizado",    ring: "ring-muted-foreground/30" },
   faltou:          { chip: "bg-amber-500/15 text-amber-600 dark:text-amber-400",                      icon: AlertCircle,  label: "Faltou",        ring: "ring-amber-500/40" },
   cancelado:       { chip: "bg-destructive/15 text-destructive",                                      icon: XCircle,      label: "Cancelado",     ring: "ring-destructive/40" },
 };
+
+// Estado do pedido de confirmação pelo WhatsApp (só para consulta ainda "agendado").
+const LEMBRETE_LABEL: Record<string, string> = {
+  na_fila: "Pedido de confirmação na fila",
+  aguardando: "Aguardando confirmação",
+  falhou: "Pedido de confirmação não enviado",
+};
+function lembreteLabel(a: AgendamentoVPS): string | null {
+  if ((a.status || "agendado") !== "agendado" || !a.lembrete_status) return null;
+  return LEMBRETE_LABEL[a.lembrete_status] || null;
+}
 
 // hex helpers para cor da categoria (procedimento)
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -278,16 +290,16 @@ export function AgendaGrid({
                 key={p.id}
                 className="px-3 py-2.5 border-r border-border/60 flex items-center gap-2.5"
               >
-                <div className={`h-10 w-10 rounded-xl ${c.soft} ${c.text} flex items-center justify-center text-[10px] font-bold ring-1 ring-border/20 shadow-inner overflow-hidden`}>
+                <div className={`h-10 w-10 shrink-0 rounded-xl ${c.soft} ${c.text} flex items-center justify-center text-[10px] font-bold ring-1 ring-border/20 shadow-inner overflow-hidden`}>
                   {initials(p.nome) || <User2 className="h-5 w-5" />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[13px] font-bold text-foreground tracking-tight truncate leading-tight uppercase">{p.nome}</div>
+                  <div className="text-[13px] font-bold text-foreground tracking-tight break-words leading-tight uppercase">{p.nome}</div>
                   {p.especialidade && (
-                    <div className="text-[9px] font-medium text-muted-foreground/60 uppercase tracking-wider truncate leading-tight">{p.especialidade}</div>
+                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide break-words leading-tight">{p.especialidade}</div>
                   )}
                 </div>
-                <div className={`h-1.5 w-1.5 rounded-full ${c.bar}`} />
+                <div className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.bar}`} />
               </div>
             );
           })}
@@ -376,6 +388,7 @@ export function AgendaGrid({
                   const height = Math.max(SLOT_HEIGHT, ((a.duracao || 30) / intervalo) * SLOT_HEIGHT);
                   const status = STATUS_STYLE[a.status] || STATUS_STYLE.agendado;
                   const StatusIcon = status.icon;
+                  const confirmacao = lembreteLabel(a);
                   const lanePos = lanes.get(a.id) || { lane: 0, lanes: 1 };
                   const compact = height < 50 || lanePos.lanes > 2;
                   
@@ -410,7 +423,7 @@ export function AgendaGrid({
                             e.stopPropagation();
                             onAppointmentClick(a);
                           }}
-                          aria-label={`${(a.hora || "").slice(0, 5)} · ${a.paciente_nome || "Sem paciente"}${a.procedimento ? ` · ${a.procedimento}` : ""} · ${status.label}`}
+                          aria-label={`${(a.hora || "").slice(0, 5)} · ${a.paciente_nome || "Sem paciente"}${a.procedimento ? ` · ${a.procedimento}` : ""} · ${status.label}${confirmacao ? ` · ${confirmacao}` : ""}`}
                           className={cn(
                             "absolute rounded-xl border shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden text-left group/apt",
                             validHex
@@ -451,7 +464,11 @@ export function AgendaGrid({
                               <StatusIcon className="h-2.5 w-2.5" />
                             </span>
                           )}
-                          <span className="text-[12px] font-bold text-foreground tracking-tight truncate flex-1 uppercase">
+                          {/* Altura do cartão é a duração da consulta: o nome pode ser cortado, mas o texto completo fica no title/leitor de tela */}
+                          <span
+                            className="text-[12px] font-bold text-foreground tracking-tight truncate flex-1 uppercase"
+                            title={(isShared && a.evento_titulo) || a.paciente_nome || a.evento_titulo || a.procedimento || "Sem paciente"}
+                          >
                             {compact && <span className="font-medium text-muted-foreground mr-1">{(a.hora || "").slice(0, 5)}</span>}
                             {(isShared && a.evento_titulo) || a.paciente_nome || a.evento_titulo || a.procedimento || "Sem paciente"}
                           </span>
@@ -485,6 +502,15 @@ export function AgendaGrid({
                                   <span>{a.duracao} min</span>
                                 </div>
                               ) : null}
+                              {confirmacao && (
+                                <div
+                                  className={`flex items-center gap-1 before:content-['·'] before:mr-1 ${a.lembrete_status === "falhou" ? "text-destructive" : "text-amber-600 dark:text-amber-400"}`}
+                                  title={confirmacao}
+                                >
+                                  <MessageCircleQuestion className="h-3 w-3" />
+                                  <span className="truncate">{confirmacao}</span>
+                                </div>
+                              )}
                               {isShared && (
                                 <div className="flex items-center gap-1 before:content-['·'] before:mr-1 text-primary animate-pulse">
                                   <Users className="h-3 w-3" />

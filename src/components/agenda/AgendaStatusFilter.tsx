@@ -1,21 +1,16 @@
-import { CheckCircle2, Clock, XCircle, PlayCircle, AlertCircle } from "lucide-react";
-
-const STATUS_OPTIONS = [
-  { id: "agendado", label: "Agendado", icon: Clock, color: "bg-primary" },
-  { id: "confirmado", label: "Confirmado", icon: CheckCircle2, color: "bg-emerald-500" },
-  { id: "em_atendimento", label: "Em atendimento", icon: PlayCircle, color: "bg-blue-500" },
-  { id: "finalizado", label: "Finalizado", icon: CheckCircle2, color: "bg-muted-foreground" },
-  { id: "faltou", label: "Faltou", icon: AlertCircle, color: "bg-amber-500" },
-  { id: "cancelado", label: "Cancelado / Desmarcado", icon: XCircle, color: "bg-destructive" },
-];
+import { STATUS_OPTIONS, UNCONFIRMED_STATUSES } from "./agendaStatus";
 
 interface Props {
   selected: string[];
   onToggle: (id: string) => void;
   onSelectAll: () => void;
+  /** Mostra só o que ainda não foi confirmado (agendado + pediu remarcação). */
+  onOnlyUnconfirmed?: () => void;
 }
 
-export function AgendaStatusFilter({ selected, onToggle, onSelectAll }: Props) {
+
+export function AgendaStatusFilter({ selected, onToggle, onSelectAll, onOnlyUnconfirmed }: Props) {
+  const onlyUnconfirmed = selected.length === UNCONFIRMED_STATUSES.length && UNCONFIRMED_STATUSES.every((s) => selected.includes(s));
   return (
     <div className="glass-card rounded-2xl p-4 shadow-lg animate-in fade-in slide-in-from-left-7 duration-800">
       <div className="flex items-center justify-between mb-2">
@@ -42,7 +37,7 @@ export function AgendaStatusFilter({ selected, onToggle, onSelectAll }: Props) {
                 }`}
               >
                 <Icon className={`h-3.5 w-3.5 ${checked ? "text-foreground" : "text-muted-foreground/40"}`} />
-                <span className={`truncate ${checked ? "text-foreground" : "text-muted-foreground"}`}>
+                <span className={`break-words min-w-0 ${checked ? "text-foreground" : "text-muted-foreground"}`}>
                   {s.label}
                 </span>
               </button>
@@ -50,6 +45,17 @@ export function AgendaStatusFilter({ selected, onToggle, onSelectAll }: Props) {
           );
         })}
       </ul>
+      {onOnlyUnconfirmed && (
+        <button
+          onClick={onOnlyUnconfirmed}
+          aria-pressed={onlyUnconfirmed}
+          className={`mt-2 w-full rounded px-2 py-1.5 text-left text-xs font-medium transition-colors ${
+            onlyUnconfirmed ? "bg-primary/15 text-primary" : "text-primary hover:bg-muted/40"
+          }`}
+        >
+          Só não confirmados
+        </button>
+      )}
     </div>
   );
 }

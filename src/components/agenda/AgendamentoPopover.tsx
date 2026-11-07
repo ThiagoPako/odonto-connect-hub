@@ -7,6 +7,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
 import { EditarAgendamentoModal } from "./EditarAgendamentoModal";
+import { EncaixeListaEspera } from "./EncaixeListaEspera";
 
 interface Props {
   appointment: AgendamentoVPS | null;
@@ -19,6 +20,7 @@ interface Props {
 const STATUS_OPTIONS: { value: string; label: string; icon: React.ElementType; color: string }[] = [
   { value: "agendado", label: "Agendado", icon: Clock, color: "text-primary" },
   { value: "confirmado", label: "Confirmado", icon: CheckCircle2, color: "text-success" },
+  { value: "remarcar", label: "Pediu remarcação", icon: Clock, color: "text-warning" },
   { value: "em_atendimento", label: "Em atendimento", icon: UserCheck, color: "text-primary" },
   { value: "finalizado", label: "Finalizado", icon: CheckCircle2, color: "text-muted-foreground" },
   { value: "faltou", label: "Faltou", icon: XCircle, color: "text-destructive" },
@@ -44,8 +46,10 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
     else { toast.success(serie ? "Série excluída" : "Agendamento excluído"); onChanged(); onOpenChange(false); }
   };
 
-  const wppLink = appointment.telefone
-    ? `https://wa.me/${appointment.telefone.replace(/\D/g, "")}`
+  // wa.me exige o código do país: "(11) 98888-7777" virava wa.me/11988887777 (outro país)
+  const wppDigits = (appointment.telefone || "").replace(/\D/g, "");
+  const wppLink = wppDigits.length >= 10
+    ? `https://wa.me/${wppDigits.length <= 11 ? `55${wppDigits}` : wppDigits}`
     : null;
 
   return (
@@ -110,6 +114,8 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
             })}
           </div>
         </div>
+
+        <EncaixeListaEspera agendamentoId={appointment.id} status={appointment.status} onChanged={onChanged} />
 
         <div className="p-3 border-t border-border/60 space-y-1.5">
           {appointment.telefone && (

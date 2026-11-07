@@ -1,7 +1,14 @@
 import { Button } from "@/components/ui/button";
 import { Smartphone, Wifi, WifiOff, QrCode, Trash2, RotateCcw, Loader2, LogOut, Star, StarOff } from "lucide-react";
 import { useState } from "react";
-import { whatsappApi } from "@/lib/vpsApi";
+import { whatsappApi, type WhatsAppHealthInstance } from "@/lib/vpsApi";
+
+function tempoDesconectado(min: number): string {
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 48) return `${h} h`;
+  return `${Math.floor(h / 24)} dias`;
+}
 
 interface InstanceCardProps {
   instanceName: string;
@@ -11,9 +18,11 @@ interface InstanceCardProps {
   onConnect: (name: string) => void;
   onRefresh: () => void;
   onSetPrimary?: (name: string) => void;
+  /** Saúde gravada pelo servidor: tempo desconectado, loop de reconexão e envios aguardando. */
+  health?: WhatsAppHealthInstance;
 }
 
-export function InstanceCard({ instanceName, instanceId, status, isPrimary, onConnect, onRefresh, onSetPrimary }: InstanceCardProps) {
+export function InstanceCard({ instanceName, instanceId, status, isPrimary, onConnect, onRefresh, onSetPrimary, health }: InstanceCardProps) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const handleAction = async (action: string, fn: () => Promise<unknown>) => {
@@ -93,15 +102,27 @@ export function InstanceCard({ instanceName, instanceId, status, isPrimary, onCo
           isConnected ? "text-success" : isConnecting ? "text-warning" : "text-muted-foreground/60"
         }`}>
           {isConnected ? "Conectado" : isConnecting ? "Conectando..." : "Desconectado"}
+          {!isConnected && health && health.downForMinutes > 0 && ` há ${tempoDesconectado(health.downForMinutes)}`}
         </span>
       </div>
+
+      {!isConnected && health && (
+        <div className="mb-4 space-y-1 text-[11px]" role="status">
+          {health.reconnectLoop && (
+            <p className="text-warning">O número fica caindo e voltando (loop de reconexão). Leia o QR Code de novo pelo celular da clínica.</p>
+          )}
+          {health.pendingJobs > 0 && (
+            <p className="text-muted-foreground">{health.pendingJobs} mensagem(ns) automática(s) aguardando: saem quando o número voltar.</p>
+          )}
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex flex-wrap gap-2 pt-3 border-t border-border/50">
         {!isConnected && (
           <Button variant="default" size="sm" className="flex-1" onClick={() => onConnect(instanceName)}>
             <QrCode className="h-3.5 w-3.5 mr-1.5" />
-            QR Code
+            Reconectar com QR
           </Button>
         )}
 
