@@ -49,12 +49,12 @@ interface TabDef {
 }
 
 const TABS: TabDef[] = [
-  { id: "clinica", label: "Clínica", description: "Endereço e dados da unidade", icon: Building2 },
+  { id: "clinica", label: "Clínica", description: "Endereço e localização enviados no chat", icon: Building2 },
   { id: "agenda", label: "Agenda", description: "Horários de funcionamento e regras de agendamento", icon: CalendarClock },
   { id: "atendimento", label: "Atendimento", description: "Fila, regras e tempo de atendimento", icon: Headphones },
-  { id: "ia", label: "Inteligência Artificial", description: "Provedor, chave e modelos da IA", icon: Bot },
+  { id: "ia", label: "Inteligência Artificial", description: "Chave e modelo da IA (transcrição e relatórios)", icon: Bot },
   { id: "integracoes", label: "Integrações", description: "Clinicorp e outras integrações externas", icon: Plug },
-  { id: "tags", label: "Tags", description: "Etiquetas usadas em leads e contatos", icon: Tag },
+  { id: "tags", label: "Etiquetas", description: "Etiquetas usadas em leads e contatos", icon: Tag },
   { id: "notificacoes", label: "Notificações", description: "Som, push e alertas do sistema", icon: Bell },
   { id: "usuarios", label: "Usuários", description: "Equipe e permissões de acesso", icon: Users },
   { id: "avancado", label: "Avançado", description: "Reset e operações administrativas", icon: ShieldAlert },
@@ -74,7 +74,7 @@ function ConfiguracoesPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Configurações" />
-      <main className="flex-1 p-6 overflow-auto">
+      <div className="flex-1 p-6 overflow-auto">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -92,7 +92,8 @@ function ConfiguracoesPage() {
         <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
           {/* Sidebar de abas */}
           <aside className="bg-card rounded-xl border border-border/60 shadow-card p-2 h-fit lg:sticky lg:top-6">
-            <nav className="flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-visible">
+            {/* Celular/tablet: as abas quebram em linhas (antes rolavam de lado sem indicação). */}
+            <nav aria-label="Seções das configurações" className="flex flex-row flex-wrap lg:flex-col lg:flex-nowrap gap-1">
               {TABS.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = tab.id === activeTab;
@@ -100,14 +101,15 @@ function ConfiguracoesPage() {
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left whitespace-nowrap lg:whitespace-normal ${
+                    aria-current={isActive ? "true" : undefined}
+                    className={`flex items-center gap-2 lg:gap-3 min-h-10 px-3 py-2 lg:py-2.5 rounded-lg text-sm font-medium transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                       isActive
                         ? "bg-primary/10 text-primary"
                         : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                     }`}
                   >
                     <Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-primary" : ""}`} />
-                    <span>{tab.label}</span>
+                    <span className="break-words">{tab.label}</span>
                   </button>
                 );
               })}
@@ -172,7 +174,7 @@ function ConfiguracoesPage() {
             </div>
           </section>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

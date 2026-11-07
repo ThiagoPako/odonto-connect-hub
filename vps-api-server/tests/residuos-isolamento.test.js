@@ -68,7 +68,7 @@ describe('ids do corpo precisam ser da clínica do usuário', () => {
   test.each([
     ['post', '/api/exames', { tipo_nome: 'Panorâmica', paciente_id: pacienteB }, /INSERT INTO exames/],
     ['post', '/api/exames', { tipo_nome: 'Panorâmica', dentista_solicitante_id: dentistaB }, /INSERT INTO exames/],
-    ['patch', '/api/exames/ex1', { paciente_id: pacienteB }, /UPDATE exames/],
+    ['patch', '/api/exames/eeeeeeee-0000-4000-8000-00000000000a', { paciente_id: pacienteB }, /UPDATE exames/],
     ['post', '/api/agenda', { paciente_id: pacienteB, data: '2026-11-10', hora: '09:00' }, /INSERT INTO agendamentos/],
     ['post', '/api/agenda', { dentista_id: dentistaB, data: '2026-11-10', hora: '09:00' }, /INSERT INTO agendamentos/],
     ['post', '/api/agenda/serie', { paciente_id: pacienteB, dentista_id: dentistaA, data_inicio: '2026-11-10', hora: '09:00' }, /INSERT INTO agendamentos/],
@@ -105,8 +105,9 @@ describe('painel comercial', () => {
   test('follow-ups de um attendantId qualquer ficam na clínica do admin', async () => {
     const res = await chamar('get', '/api/comercial/painel?attendantId=99999999-9999-9999-9999-999999999999');
     expect(res.status).toBe(200);
-    const q = sqlLog.find(x => /follow_up_at IS NOT NULL/.test(x.text));
-    expect(q.text).toMatch(/AND tenant_id = \$2/);
+    const q = sqlLog.find(x => /FROM chat_messages cm/.test(x.text));
+    expect(q.text).toMatch(/AND l\.tenant_id = \$2/);
+    expect(q.text).toMatch(/cm\.tenant_id = l\.tenant_id/);
     expect(q.params[1]).toBe(tenantA);
   });
 });

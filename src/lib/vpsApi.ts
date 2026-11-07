@@ -274,6 +274,8 @@ export async function adminUploadUserAvatar(userId: string, file: File) {
 
 export const pacientesApi = {
   list: () => vpsApiFetch('/pacientes'),
+  /** Um paciente da clínica do usuário (erro "Paciente não encontrado" se for de outra). */
+  get: (id: string) => vpsApiFetch(`/pacientes/${encodeURIComponent(id)}`),
   create: (body: unknown) => vpsApiFetch('/pacientes', { method: 'POST', body }),
   update: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}`, { method: 'PUT', body }),
   delete: (id: string) => vpsApiFetch(`/pacientes/${id}`, { method: 'DELETE' }),
@@ -282,6 +284,38 @@ export const pacientesApi = {
   getOdontograma: (id: string) => vpsApiFetch(`/pacientes/${id}/odontograma`),
   saveOdontograma: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}/odontograma`, { method: 'PUT', body }),
   getHistorico: (id: string) => vpsApiFetch<HistoricoConsulta[]>(`/pacientes/${id}/historico`),
+};
+
+// ─── Lista de espera e encaixe (horário liberado → oferta por clique da recepção) ───
+export interface ListaEsperaItem {
+  id: string;
+  paciente_id: string;
+  paciente_nome: string;
+  dentista_id: string | null;
+  dentista_nome: string | null;
+  periodo: "manha" | "tarde" | "noite" | "qualquer";
+  observacao: string | null;
+  status: "aguardando" | "oferecido";
+  created_at: string;
+}
+export interface EncaixeInfo {
+  disponivel: boolean;
+  liberado: boolean;
+  futuro: boolean;
+  candidatos: number;
+  dentroDaJanela?: boolean;
+  oferta: { id: string; status: "enviada" | "aceita"; expires_at: string; paciente_nome: string } | null;
+}
+export const listaEsperaApi = {
+  list: () => vpsApiFetch<ListaEsperaItem[]>('/lista-espera'),
+  add: (body: { paciente_id: string; dentista_id?: string | null; periodo: ListaEsperaItem["periodo"]; observacao?: string }) =>
+    vpsApiFetch<{ id: string }>('/lista-espera', { method: 'POST', body }),
+  remove: (id: string) => vpsApiFetch(`/lista-espera/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  liberarHorario: (agendamentoId: string) =>
+    vpsApiFetch<{ success: boolean }>(`/agenda/${encodeURIComponent(agendamentoId)}/liberar-horario`, { method: 'POST' }),
+  encaixe: (agendamentoId: string) => vpsApiFetch<EncaixeInfo>(`/agenda/${encodeURIComponent(agendamentoId)}/encaixe`),
+  oferecer: (agendamentoId: string) =>
+    vpsApiFetch<{ oferta: { id: string; paciente_nome: string; expires_at: string } }>(`/agenda/${encodeURIComponent(agendamentoId)}/oferecer-horario`, { method: 'POST' }),
 };
 
 export const agendaApi = {
@@ -383,6 +417,8 @@ export interface AgendamentoVPS {
   categoria_cor?: string;
   confirmacao_canal?: string;
   confirmacao_quando?: string;
+  /** Pedido de confirmação pelo WhatsApp: na_fila · aguardando · confirmado · remarcar · falhou (só leitura). */
+  lembrete_status?: "na_fila" | "aguardando" | "confirmado" | "remarcar" | "falhou" | null;
   alerta_retorno_canal?: string;
   alerta_retorno_quando?: string;
   evento_titulo?: string;
@@ -756,7 +792,26 @@ export const execucoesApi = {
 
 // ─── WhatsApp (via proxy) ───────────────────────────────────
 
+/** Estado de cada número da clínica gravado pelo job de saúde (a cada 5 min). */
+export interface WhatsAppHealthInstance {
+  instance: string;
+  state: "open" | "connecting" | "close" | "ausente" | "desconhecido";
+  since: string | null;
+  downForMinutes: number;
+  reconnectLoop: boolean;
+  pendingJobs: number;
+  lastCheckedAt: string | null;
+}
+
+export const optOutApi = {
+  status: (leadId: string) =>
+    vpsApiFetch<{ optedOut: boolean; since?: string; keyword?: string | null }>('/whatsapp/opt-out', { params: { leadId }, background: true }),
+  revogar: (leadId: string, solicitacao: string) =>
+    vpsApiFetch<{ success: boolean }>('/whatsapp/opt-out/revogar', { method: 'POST', body: { leadId, solicitacao } }),
+};
+
 export const whatsappApi = {
+  health: () => vpsApiFetch<{ instances: WhatsAppHealthInstance[]; anyDown: boolean; pendingJobsWithoutInstance?: number; alertAfterMinutes?: number }>('/whatsapp/health', { background: true }),
   instances: () => vpsApiFetch('/whatsapp/instances'),
   create: (instanceName: string) => vpsApiFetch('/whatsapp/instances', { method: 'POST', body: { instanceName } }),
   connect: (instance: string) => vpsApiFetch(`/whatsapp/connect/${instance}`),
@@ -896,6 +951,15 @@ export const attendanceSettingsApi = {
   update: (body: unknown) => vpsApiFetch('/attendance-settings', { method: 'PUT', body }),
 };
 
+// ─── Privacidade do push (por clínica) ──────────────────────
+
+export interface PushPrivacidade { mostrarNome: boolean }
+
+export const pushPrivacidadeApi = {
+  get: () => vpsApiFetch<PushPrivacidade>('/push-privacidade', { background: true }),
+  update: (body: PushPrivacidade) => vpsApiFetch<PushPrivacidade & { success: boolean }>('/push-privacidade', { method: 'PUT', body }),
+};
+
 
 // ─── Attendance Queues ──────────────────────────────────────
 
@@ -932,7 +996,7 @@ export const sessionsApi = {
   firstResponse: (body: { leadId: string }) =>
     vpsApiFetch<{ success: boolean }>('/sessions/first-response', { method: 'POST', body, background: true }),
   close: (body: unknown) =>
-    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number }>('/sessions/close', { method: 'POST', body }),
+    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number; surveyQueued?: boolean }>('/sessions/close', { method: 'POST', body }),
   checkActive: (leadId: string) =>
     vpsApiFetch<{ active: boolean; attendantId?: string; attendantName?: string; isCurrentUser?: boolean }>(`/sessions/active/${leadId}`, { background: true }),
   list: (params?: { active?: boolean }) =>
@@ -1198,7 +1262,7 @@ export const campaignsApi = {
   duplicate: (id: string) =>
     vpsApiFetch<{ success: boolean; id: string }>(`/campaigns/${id}/duplicate`, { method: 'POST' }),
   execute: (id: string) =>
-    vpsApiFetch<{ success: boolean; enqueued: number; total: number; skipped: number }>(`/campaigns/${id}/execute`, { method: 'POST' }),
+    vpsApiFetch<{ success: boolean; enqueued: number; total?: number; skipped?: number; agendada?: boolean; inicio?: string; porDia?: number; cotaDiaUtil?: number; previsaoTermino?: string; naoCabem?: number }>(`/campaigns/${id}/execute`, { method: 'POST' }),
   jobs: (id: string) =>
     vpsApiFetch<{ summary: Record<string, number>; recent: Array<{ patient_name: string; patient_phone: string; status: string; sent_at: string; error: string; scheduled_at: string }> }>(`/campaigns/${id}/jobs`),
 };
@@ -1310,10 +1374,11 @@ export const aiApi = {
     }>('/ai/reports', { params });
   },
 
-  exportReportsCsvUrl: (filters?: {
+  /** Baixa o CSV com o JWT no cabeçalho (nunca na URL: ficaria no histórico e no log do servidor). */
+  downloadReportsCsv: async (filters?: {
     from?: string; to?: string; status?: 'todos' | 'com_prescricao' | 'sem_prescricao';
     patientId?: string; attendantId?: string; q?: string;
-  }) => {
+  }): Promise<{ error: string | null }> => {
     const params = new URLSearchParams();
     if (filters?.from) params.set('from', filters.from);
     if (filters?.to) params.set('to', filters.to);
@@ -1321,9 +1386,26 @@ export const aiApi = {
     if (filters?.patientId) params.set('patientId', filters.patientId);
     if (filters?.attendantId) params.set('attendantId', filters.attendantId);
     if (filters?.q) params.set('q', filters.q);
-    const token = getToken();
-    if (token) params.set('token', token);
-    return `${VPS_API_BASE}/ai/reports/export.csv?${params.toString()}`;
+    try {
+      const headers = await getAuthHeaders();
+      delete headers['Content-Type'];
+      const res = await fetch(`${VPS_API_BASE}/ai/reports/export.csv?${params.toString()}`, { headers });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({} as { error?: string }));
+        return { error: body?.error || `HTTP ${res.status}` };
+      }
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `relatorios-clinicos-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      return { error: null };
+    } catch (error: unknown) {
+      return { error: error instanceof Error ? error.message : 'Erro de rede' };
+    }
   },
 
   generateFollowupMessages: (body: { reportId: string; patientName?: string; patientPhone?: string }) =>

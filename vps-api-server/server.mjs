@@ -16,14 +16,27 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import webpush from 'web-push';
 import path from 'path';
-import { randomUUID, createHash, createHmac, timingSafeEqual } from 'crypto';
+import { randomUUID, randomBytes, createHash, createHmac, timingSafeEqual } from 'crypto';
 import { execFile } from 'child_process';
 import { mkdtemp, writeFile, readFile, rm, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
 import { promisify } from 'util';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
+import { sqlFoneIgual, foneIndexado, candidatosFone } from './telefone-sql.mjs';
+import { createLimiter, rateLimitMiddleware, sendTooMany, clientIp, ipKey, sleep } from './rate-limit.mjs';
+import { registerProvider, providerForChannel, sendResult } from './whatsapp/provider.mjs';
+import { credentialCipherFromEnv } from './whatsapp/crypto.mjs';
+import { createChannelStore, splitSqlStatements } from './whatsapp/channels.mjs';
+import { inboundMessageFromEvent, validEvents, claimWebhookEvent, pruneWebhookEvents, detachedResponse } from './whatsapp/inbound.mjs';
+import {
+  createEvolutionAdapter, extractEvolutionConnectionState, normalizeEvolutionConnectionState,
+  extractEvolutionMessageId, extractEvolutionInstanceName, normalizeEvolutionEventName, isEvolutionEvent,
+  extractEvolutionMessages, normalizeEvolutionAckStatus, maskWaIdentifiers,
+} from './whatsapp/adapters/evolution.mjs';
+import { createOpenWaAdapter } from './whatsapp/adapters/openwa.mjs';
+import { validarPaciente, CAMPOS_PACIENTE, quantidadeEstoque, TIPOS_MOVIMENTO_ESTOQUE } from './cadastros-validacao.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
 // crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
@@ -41,10 +54,122 @@ dotenv.config({
 const { Pool } = pg;
 const app = express();
 const PORT = process.env.API_PORT || 3002;
+// Escuta só no loopback: o acesso externo passa pelo nginx (HTTPS). Sobrescreva com API_HOST se precisar.
+const LISTEN_HOST = process.env.API_HOST || '127.0.0.1';
+
+// A API fica atrás do nginx na mesma máquina: só confia em X-Forwarded-For vindo
+// do loopback (nunca de sub-rede maior; ver GHSA-jqcg-44mw-7w3h do proxy-addr).
+// Para o IP do cliente use clientIp(req) (prefere o X-Real-IP do nginx).
+app.set('trust proxy', 'loopback');
 
 // ─── Middleware ──────────────────────────────────────────────
 app.use(cors());
-app.use(express.json({ limit: '64mb' }));
+// Rotas de webhook (/api/webhook/*, comparação em minúsculas): parser próprio com teto de
+// 2 MB e o corpo bruto guardado (referência ao buffer do parser, sem cópia) para conferir
+// assinatura HMAC (OpenWA X-OpenWA-Signature, Meta X-Hub-Signature-256). Demais rotas: igual.
+function isWebhookRequestPath(req) {
+  return String(req.originalUrl || req.url || '').toLowerCase().startsWith('/api/webhook/');
+}
+const webhookJsonParser = express.json({ limit: '2mb', verify: (req, _res, buf) => { req.rawBody = buf; } });
+const appJsonParser = express.json({ limit: '64mb' });
+app.use((req, res, next) => (isWebhookRequestPath(req) ? webhookJsonParser : appJsonParser)(req, res, next));
+
+// ─── Limites de taxa (rate-limit.mjs, memória do processo) ──
+// Login e reset contam por IP e por e-mail; signup por IP; busca, upload e envio
+// manual de WhatsApp por usuário; webhooks por instância/segredo (ver as rotas).
+const RL = {
+  // Bloqueio por e-mail + IP e por IP. O contador só por e-mail NÃO bloqueia (senão
+  // um atacante travaria a dona da conta de qualquer IP): serve só para o atraso progressivo.
+  loginFalhaEmailIp: createLimiter('login_email_ip', { windowMs: 15 * 60_000, max: 5 }),
+  loginFalhaEmail: createLimiter('login_email', { windowMs: 15 * 60_000, max: Number.MAX_SAFE_INTEGER }),
+  loginFalhaIp: createLimiter('login_ip', { windowMs: 15 * 60_000, max: 20 }),
+  resetEmail: createLimiter('reset_email', { windowMs: 15 * 60_000, max: 3 }),
+  resetIp: createLimiter('reset_ip', { windowMs: 15 * 60_000, max: 10 }),
+  signupIp: createLimiter('signup_ip', { windowMs: 60 * 60_000, max: 5 }),
+  busca: createLimiter('busca_usuario', { windowMs: 60_000, max: 30 }),
+  upload: createLimiter('upload_usuario', { windowMs: 60_000, max: 30 }),
+  envioManual: createLimiter('envio_usuario', { windowMs: 60_000, max: 60 }),
+  // Evolution: um evento de mensagem gera vários webhooks (upsert, update de status,
+  // presença, chats). Teto alto por instância para não perder tráfego legítimo.
+  evolutionInstancia: createLimiter('evolution_instancia', { windowMs: 60_000, max: 3000 }),
+  // Falhas de autenticação nos webhooks: por IP + credencial (ou só IP, sem credencial
+  // plausível). O bloqueio só troca a recusa por 429: credencial válida sempre passa.
+  evolutionFalha: createLimiter('evolution_falha', { windowMs: 15 * 60_000, max: 30 }),
+  // Teto só por IP, para quem troca a credencial a cada tentativa.
+  evolutionFalhaIpTotal: createLimiter('evolution_falha_ip_total', { windowMs: 15 * 60_000, max: 200 }),
+  // Clinicorp: eventos de agenda/paciente de uma clínica, bem abaixo disto.
+  clinicorpSegredo: createLimiter('clinicorp_segredo', { windowMs: 60_000, max: 600 }),
+  clinicorpFalha: createLimiter('clinicorp_falha', { windowMs: 15 * 60_000, max: 30 }),
+  clinicorpFalhaIpTotal: createLimiter('clinicorp_falha_ip_total', { windowMs: 15 * 60_000, max: 200 }),
+};
+const LOGIN_DELAY_BASE_MS = Number(process.env.RATE_LIMIT_LOGIN_DELAY_MS) >= 0 && process.env.RATE_LIMIT_LOGIN_DELAY_MS !== undefined
+  ? Number(process.env.RATE_LIMIT_LOGIN_DELAY_MS) : 500;
+const LOGIN_DELAY_MAX_MS = Number(process.env.RATE_LIMIT_LOGIN_DELAY_MAX_MS) > 0 ? Number(process.env.RATE_LIMIT_LOGIN_DELAY_MAX_MS) : 4000;
+
+// Chave por usuário: o `sub` do JWT com assinatura conferida. Token inválido ou sem
+// assinatura nossa (ex.: Supabase) cai na chave por IP: um `sub` forjado não gasta o
+// limite de outro usuário.
+function userRateKey(req) {
+  const h = req.headers.authorization || '';
+  if (h.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(h.slice(7), JWT_SECRET);
+      if (decoded && typeof decoded === 'object' && decoded.sub) return `u:${decoded.sub}`;
+    } catch { /* assinatura inválida: usa o IP */ }
+  }
+  const ip = ipKey(req);
+  return ip ? `ip:${ip}` : null;
+}
+
+const sha256Hex = (v) => createHash('sha256').update(String(v)).digest('hex');
+// Chave de falha de webhook: IP + credencial quando ela é plausível (uma clínica com
+// segredo vencido não bloqueia as outras que chegam do mesmo IP), senão só o IP.
+function chaveFalhaWebhook(ip, credencial, minLen = 8) {
+  if (!ip) return null;
+  return typeof credencial === 'string' && credencial.length >= minLen && credencial.length <= 512
+    ? `${ip}|${sha256Hex(credencial)}` : ip;
+}
+
+const MSG_LIMITE_USO = 'Muitas requisições em pouco tempo. Aguarde um instante e tente de novo.';
+const limiteBusca = rateLimitMiddleware(RL.busca, userRateKey, { message: MSG_LIMITE_USO });
+const limiteUpload = rateLimitMiddleware(RL.upload, userRateKey, { message: MSG_LIMITE_USO });
+const limiteSignup = rateLimitMiddleware(RL.signupIp, ipKey);
+// Busca: no topo, antes de GET /api/messages/:leadId (que confere o token primeiro).
+app.use('/api/messages/search', limiteBusca);
+
+// Webhook da Clinicorp (rota em clinicorp.mjs): teto por segredo (pelo hash, nunca o
+// valor) e bloqueio por IP + segredo depois de muitas respostas 401. O bloqueio só
+// troca a recusa (401) por 429: requisição com segredo válido sempre passa.
+app.use('/api/webhook/clinicorp', (req, res, next) => {
+  const h = req.headers['x-user-api'];
+  const secret = typeof h === 'string' && h ? h : (typeof req.query?.user_api === 'string' ? req.query.user_api : '');
+  if (secret) {
+    const r = RL.clinicorpSegredo.hit(sha256Hex(secret));
+    if (!r.allowed) return sendTooMany(res, r.retryAfterSec, 'Too many requests');
+  }
+  const ip = ipKey(req);
+  const falhaKey = chaveFalhaWebhook(ip, secret);
+  const json = res.json.bind(res);
+  res.json = (body) => {
+    if (res.statusCode !== 401) return json(body);
+    const b = [RL.clinicorpFalha.blocked(falhaKey), RL.clinicorpFalhaIpTotal.blocked(ip)].find(x => x.blocked);
+    if (b) {
+      res.status(429).set('Retry-After', String(b.retryAfterSec));
+      return json({ error: 'Too many requests' });
+    }
+    RL.clinicorpFalha.hit(falhaKey);
+    RL.clinicorpFalhaIpTotal.hit(ip);
+    return json(body);
+  };
+  next();
+});
+
+// Envio manual de WhatsApp (send-text, send-media, ...): proteção extra além da fila.
+// send-presence (digitando) e send-media-status (consulta) ficam de fora.
+// (A regex casa o segmento inteiro: o Express pula o app.use se o próximo caractere
+// depois do trecho casado não for '/' ou fim.)
+app.use(/^\/api\/whatsapp\/send-(?!presence(?:\/|$)|media-status(?:\/|$))[^/]+/,
+  rateLimitMiddleware(RL.envioManual, userRateKey, { message: MSG_LIMITE_USO }));
 
 // Contexto de clínica por requisição. verifyUser/webhook preenchem o store e
 // pool.query (abaixo) aplica o tenant dentro da mesma transação da consulta.
@@ -122,7 +247,8 @@ async function saveMediaToDisk(base64OrDataUri, mimeType, originalFileName) {
 
     // Return relative URL path
     const publicUrl = `/uploads/media/${subDir}/${fileName}`;
-    console.log(`💾 Media saved: ${publicUrl} (${(buffer.length / 1024).toFixed(1)} KB)`);
+    // Sem o caminho no log: quem tem o link abre o arquivo (dado de paciente).
+    console.log(`💾 Mídia salva (${resolvedMime.split(';')[0]}, ${(buffer.length / 1024).toFixed(1)} KB)`);
     return publicUrl;
   } catch (err) {
     console.error('Failed to save media to disk:', err.message);
@@ -152,7 +278,11 @@ const pool = new Pool({
   password: process.env.PG_PASSWORD,
 });
 
-// RLS da VPS lê app.tenant_id / app.is_super_admin. set_config de sessão num
+// RLS da VPS lê app.tenant_id / app.is_super_admin. Parte das políticas (tabelas
+// cujo dono é o postgres: tenants, plans, fin_*, anamneses, odontogramas, ...) usa a
+// função is_super_admin(), que lê app.jwt_payload — por isso o contexto de sistema e
+// de super-admin também grava esse payload; sem ele essas tabelas aparecem vazias.
+// set_config de sessão num
 // pool vaza entre requisições (cada query pode cair noutra conexão), então,
 // dentro de uma requisição autenticada, cada query roda numa transação curta
 // com o contexto local (is_local=true) na mesma conexão.
@@ -160,7 +290,8 @@ const rawPoolQuery = pool.query.bind(pool);
 const rawPoolConnect = pool.connect.bind(pool);
 const TENANT_SET_SQL = `SELECT set_config('app.tenant_id', $1, $3),
               set_config('app.current_tenant_id', $1, $3),
-              set_config('app.is_super_admin', $2, $3)`;
+              set_config('app.is_super_admin', $2, $3),
+              set_config('app.jwt_payload', CASE WHEN $2 = 'true' THEN '{"is_super_admin":true}' ELSE '' END, $3)`;
 const activeTenantCtx = () => {
   const ctx = tenantContext.getStore();
   return ctx && (ctx.tenantId || ctx.isSuperAdmin) ? ctx : null;
@@ -177,7 +308,11 @@ pool.connect = async (...args) => {
   const release = client.release;
   client.release = (err) => {
     client.release = release;
-    client.query(TENANT_SET_SQL, ['', 'false', false]).catch(() => {}).finally(() => release.call(client, err));
+    // Transação abortada impede o reset do contexto: desfaz antes e, se o reset ainda
+    // falhar, descarta a conexão em vez de devolvê-la ao pool com super-admin na sessão.
+    client.query('ROLLBACK').catch(() => {})
+      .then(() => client.query(TENANT_SET_SQL, ['', 'false', false]))
+      .then(() => release.call(client, err), () => release.call(client, true));
   };
   return client;
 };
@@ -695,6 +830,24 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const APP_URL = (process.env.APP_URL || 'https://odontoconnect.tech').replace(/\/$/, '').replace(':443', '');
 const WEBHOOK_PUBLIC_URL = process.env.WEBHOOK_PUBLIC_URL?.replace(/\/$/, '');
 const isLocalAppUrl = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(APP_URL);
+// Camada de provedor (docs/whatsapp/migracao-provedores.md): toda chamada HTTP à Evolution
+// passa pelo adaptador. redactWebhookToken é declaração de função (içada).
+const evolutionProvider = registerProvider(createEvolutionAdapter({
+  baseUrl: EVOLUTION_API_URL, apiKey: EVOLUTION_API_KEY, redact: (d) => redactWebhookToken(d),
+}));
+// Cifra das credenciais de canal (whatsapp_channels.credentials_enc). Sem chave: null; os
+// provedores que precisam de credencial (OpenWA, Cloud API) ficam indisponíveis.
+const waCredentialCipher = credentialCipherFromEnv();
+if (!waCredentialCipher && process.env.NODE_ENV !== 'test') {
+  console.warn('⚠️ WA_CREDENTIALS_KEY ausente ou inválida (32 bytes em base64/hex): canais OpenWA/Cloud API não poderão guardar credenciais.');
+}
+// OpenWA (reserva por QR, docs/operacao/openwa-vps.md): só no host, chave ADMIN só no .env.
+const OPENWA_ADMIN_KEY = String(process.env.OPENWA_ADMIN_KEY || '').trim();
+const OPENWA_WEBHOOK_BASE = String(process.env.OPENWA_WEBHOOK_BASE || '').trim().replace(/\/$/, '');
+const openWaProvider = registerProvider(createOpenWaAdapter({ baseUrl: process.env.OPENWA_URL || '', adminKey: OPENWA_ADMIN_KEY }));
+const openWaReady = () => !!(openWaProvider.configured() && OPENWA_ADMIN_KEY && OPENWA_WEBHOOK_BASE && waCredentialCipher);
+// Canais por clínica (whatsapp_channels). pool é declarado antes (const pool = new Pool).
+const waChannels = createChannelStore({ pool, cipher: waCredentialCipher });
 if (!EVOLUTION_API_KEY) {
   console.error('❌ EVOLUTION_API_KEY não definida no .env do VPS — envios do WhatsApp retornarão erro até configurar a chave.');
 }
@@ -762,6 +915,28 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   console.log('🔔 Web Push VAPID configured');
 } else {
   console.warn('⚠️ VAPID keys not set — push notifications disabled. Run: npx web-push generate-vapid-keys');
+}
+
+// ─── Payload do push de mensagem nova no chat ───────────────
+// A notificação aparece na tela bloqueada do celular/computador: não leva o
+// conteúdo da mensagem nem o telefone. O primeiro nome só entra se a clínica
+// ligar tenant_settings.push_privacidade.mostrarNome (padrão: desligado).
+function primeiroNomeSeguro(name) {
+  const first = String(name || '').trim().split(/\s+/)[0] || '';
+  // Nome com dígito pode ser o próprio telefone (pushName vazio vira número).
+  if (!first || /\d/.test(first)) return '';
+  return first.slice(0, 30);
+}
+
+function buildChatPushPayload({ leadId, name, mostrarNome = false }) {
+  const primeiro = mostrarNome ? primeiroNomeSeguro(name) : '';
+  return {
+    title: primeiro ? `Nova mensagem de ${primeiro}` : 'Nova mensagem',
+    body: 'Abra o Odonto Connect para ler',
+    tag: leadId ? `msg-${leadId}` : 'odonto-msg',
+    url: leadId ? `/chat?lead=${encodeURIComponent(leadId)}` : '/chat',
+    leadId: leadId || null,
+  };
 }
 
 // ─── Send push to all subscriptions ─────────────────────────
@@ -884,6 +1059,37 @@ function looksLikeSupabaseAccessToken(decoded) {
     || !!decoded.user_metadata;
 }
 
+// Cache curto do estado do usuário no banco (ativo, papel, super-admin) para não consultar a cada
+// requisição. O token legado vale 7 dias: sem isso, quem foi desativado ou rebaixado seguia com o
+// acesso antigo. Falha aberta: erro de consulta não derruba o login (registra e segue como antes).
+const USUARIO_ATIVO_TTL_MS = 30_000;
+const cacheUsuarioAtivo = new Map();
+function esquecerUsuarioAtivo(userId) { if (userId) cacheUsuarioAtivo.delete(String(userId)); }
+// { inativo, role, is_super_admin } ou null (sem perfil / falha na consulta)
+async function estadoDoUsuario(userId) {
+  if (!userId) return null;
+  const chave = String(userId);
+  const c = cacheUsuarioAtivo.get(chave);
+  if (c && c.ate > Date.now()) return c.estado;
+  let estado = null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT COALESCE(p.active, true) AS active, COALESCE(p.is_super_admin, false) AS is_super_admin,
+              COALESCE((SELECT ur.role::text FROM user_roles ur WHERE ur.user_id = p.id LIMIT 1), p.role::text) AS role
+         FROM profiles p WHERE p.id = $1 LIMIT 1`, [chave]);
+    if (rows[0]) estado = { inativo: rows[0].active === false, role: rows[0].role || null, is_super_admin: !!rows[0].is_super_admin };
+  } catch (err) {
+    if (err?.code !== '42703' && err?.code !== '22P02') console.warn('[auth] checagem de usuário ativo falhou:', err?.code || err?.message);
+    return null;
+  }
+  if (cacheUsuarioAtivo.size > 5000) cacheUsuarioAtivo.clear();
+  cacheUsuarioAtivo.set(chave, { estado, ate: Date.now() + USUARIO_ATIVO_TTL_MS });
+  return estado;
+}
+async function usuarioDesativado(userId) {
+  return (await estadoDoUsuario(userId))?.inativo === true;
+}
+
 async function verifyUser(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
@@ -939,7 +1145,13 @@ async function verifyUser(req) {
   // endpoints run with "sem tenant" and return empty messages.
   if (isValidTenantId(requestedTenantId)) {
     const validatedTenant = await validateRequestedTenantForUser(user, requestedTenantId);
-    if (validatedTenant) user.tenant_id = validatedTenant;
+    if (validatedTenant) {
+      // Super-admin entra em qualquer clínica pelo X-Tenant-Id: deixa rastro (sem query string).
+      if (user.is_super_admin && String(user.tenant_id || '') !== String(validatedTenant) && auditoriaSuperAdminNova(user.id, validatedTenant)) {
+        console.warn(`[AUDIT super-admin] user=${user.id} clinica=${validatedTenant} ${req.method} ${String(req.originalUrl || req.path || '').split('?')[0]}`);
+      }
+      user.tenant_id = validatedTenant;
+    }
   }
 
   // Set tenant context for RLS-backed queries. This must be session-level; the
@@ -950,7 +1162,30 @@ async function verifyUser(req) {
     payload: decoded,
   });
 
+  // Estado atual do banco vale mais que o token (que dura 7 dias), com até 30 s de atraso:
+  // desativado perde o acesso; rebaixado perde o papel; super-admin revogado precisa entrar de novo.
+  const estado = await estadoDoUsuario(user.id);
+  if (estado) {
+    if (estado.inativo) throw new Error('Unauthorized');
+    if (estado.role) user.role = estado.role;
+    if (user.is_super_admin && !estado.is_super_admin) throw new Error('Unauthorized');
+  }
+
   return { user };
+}
+
+// Um registro por super-admin + clínica a cada 10 min: com polling/SSE, registrar toda requisição
+// afogava o log de auditoria.
+const AUDITORIA_SUPER_ADMIN_JANELA_MS = 10 * 60_000;
+const auditoriaSuperAdminVista = new Map();
+function auditoriaSuperAdminNova(userId, tenantId) {
+  const chave = `${userId}:${tenantId}`;
+  const agora = Date.now();
+  const ultima = auditoriaSuperAdminVista.get(chave);
+  if (ultima && agora - ultima < AUDITORIA_SUPER_ADMIN_JANELA_MS) return false;
+  if (auditoriaSuperAdminVista.size > 2000) auditoriaSuperAdminVista.clear();
+  auditoriaSuperAdminVista.set(chave, agora);
+  return true;
 }
 
 async function getProfileDisplayName(userId, fallback = 'Atendente') {
@@ -1037,6 +1272,40 @@ async function assertCanManageUser(actor, targetUserId) {
   return target;
 }
 
+// true se `userId` é o único admin ativo da clínica: rebaixar ou desativar deixaria a clínica sem
+// ninguém para gerir usuários (só o suporte destravaria).
+async function eUltimoAdminAtivo(tenantId, userId) {
+  const { rows } = await pool.query(
+    `SELECT p.id FROM profiles p
+       LEFT JOIN user_roles ur ON ur.user_id = p.id
+      WHERE p.tenant_id = $1 AND COALESCE(p.active, true) = true AND COALESCE(p.is_super_admin, false) = false
+        AND COALESCE(ur.role::text, p.role::text) = 'admin'`,
+    [tenantId]
+  );
+  const ids = new Set(rows.map(r => String(r.id)));
+  return ids.has(String(userId)) && ids.size === 1;
+}
+
+// Regras comuns de PUT /api/auth/users/:id e PATCH /api/my-tenant/users/:id. Devolve { status, error } ou null.
+async function checarMudancaDeUsuario(actor, target, { role, active }) {
+  const tenantId = target.tenant_id;
+  if (String(target.id) === String(actor.id) && active === false) {
+    return { status: 400, error: 'Você não pode desativar o próprio usuário' };
+  }
+  const rebaixa = role !== undefined && role !== 'admin';
+  if ((rebaixa || active === false) && tenantId && await eUltimoAdminAtivo(tenantId, target.id)) {
+    return { status: 409, error: 'A clínica precisa de pelo menos um administrador ativo. Promova outro usuário antes.' };
+  }
+  if (active === true && tenantId) {
+    const { rows } = await pool.query('SELECT COALESCE(active, true) AS active FROM profiles WHERE id = $1', [target.id]);
+    if (rows[0] && rows[0].active === false) {
+      const limite = await limiteUsuariosAtingido(tenantId);
+      if (limite) return { status: 403, error: limite };
+    }
+  }
+  return null;
+}
+
 function httpStatusOf(error, fallback = 500) {
   if (error?.status) return error.status;
   if (error?.message === 'Unauthorized') return 401;
@@ -1085,16 +1354,33 @@ async function listProfilesWithRoles(tenantId = null) {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email e senha são obrigatórios' });
 
+    // Limite: bloqueia por falhas de e-mail + IP e por IP; login certo não conta.
+    // Falhas só do e-mail (de qualquer IP) não bloqueiam a dona da conta: só fazem a
+    // resposta de senha errada demorar cada vez mais depois da 3ª.
+    const emailKey = typeof email === 'string' ? email.toLowerCase().trim() : null;
+    const ipK = ipKey(req);
+    const emailIpKey = emailKey && ipK ? `${emailKey}|${ipK}` : null;
+    const bloqueio = [RL.loginFalhaEmailIp.blocked(emailIpKey), RL.loginFalhaIp.blocked(ipK)].find(b => b.blocked);
+    if (bloqueio) return sendTooMany(res, bloqueio.retryAfterSec);
+    const falhou = async (status, error) => {
+      const { count } = RL.loginFalhaEmail.hit(emailKey);
+      RL.loginFalhaEmailIp.hit(emailIpKey);
+      RL.loginFalhaIp.hit(ipK);
+      if (count >= 3 && LOGIN_DELAY_BASE_MS > 0) await sleep(Math.min(LOGIN_DELAY_BASE_MS * 2 ** (count - 3), LOGIN_DELAY_MAX_MS));
+      return res.status(status).json({ error });
+    };
+
     const profile = await getProfileByEmail(email);
-    if (!profile) return res.status(401).json({ error: 'Email ou senha inválidos' });
-    if (!profile.active) return res.status(403).json({ error: 'Conta desativada. Entre em contato com o administrador.' });
-    if (!profile.password_hash) return res.status(401).json({ error: 'Senha não configurada' });
+    if (!profile) return falhou(401, 'Email ou senha inválidos');
+    if (!profile.active) return falhou(403, 'Conta desativada. Entre em contato com o administrador.');
+    if (!profile.password_hash) return falhou(401, 'Senha não configurada');
 
     const valid = await bcrypt.compare(password, profile.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Email ou senha inválidos' });
+    if (!valid) return falhou(401, 'Email ou senha inválidos');
+    RL.loginFalhaEmailIp.reset(emailIpKey);
 
     const { rows: roles } = await pool.query(
       'SELECT role FROM user_roles WHERE user_id = $1 LIMIT 1',
@@ -1143,6 +1429,41 @@ function slugify(s) {
     .slice(0, 60);
 }
 
+const TENANT_STATUS_VALIDOS = ['trial', 'active', 'past_due', 'suspended', 'canceled'];
+const SAAS_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Usuários ativos (sem super-admin) da clínica.
+async function contarUsuariosAtivos(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM profiles
+      WHERE tenant_id = $1 AND COALESCE(active, true) = true AND COALESCE(is_super_admin, false) = false`,
+    [tenantId]
+  );
+  return rows[0]?.c ?? 0;
+}
+
+// Limite de usuários do plano, aplicado no backend em toda rota que cria ou reativa usuário.
+// Devolve a mensagem de erro, ou null se cabe mais um.
+async function limiteUsuariosAtingido(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT pl.max_usuarios FROM tenants t LEFT JOIN plans pl ON pl.id = t.plan_id WHERE t.id = $1`,
+    [tenantId]
+  );
+  const max = rows[0]?.max_usuarios;
+  if (max == null) return null;
+  return (await contarUsuariosAtivos(tenantId)) >= max ? `Limite de ${max} usuários do plano atingido` : null;
+}
+
+// Erro das rotas SaaS: 401/403 corretos, 400 para dado inválido, 500 sem texto do banco.
+function responderErroSaas(res, e, ctx) {
+  const status = httpStatusOf(e);
+  if (status !== 500) return res.status(status).json({ error: e.message });
+  if (e?.code === '22P02' || e?.code === '23514' || e?.code === '22007' || e?.code === '22008') return res.status(400).json({ error: 'Dados inválidos' });
+  if (e?.code === '23505') return res.status(409).json({ error: 'Já existe um registro com esse identificador' });
+  console.error(`[${ctx}]`, e?.message);
+  return res.status(500).json({ error: 'Erro interno' });
+}
+
 app.get('/api/plans', async (_req, res) => {
   try {
     const { rows } = await pool.query(
@@ -1158,8 +1479,8 @@ app.get('/api/plans', async (_req, res) => {
   }
 });
 
-app.post('/api/auth/signup-clinic', async (req, res) => {
-  const client = await pool.connect();
+app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
+  let client;
   try {
     const { clinic_name, admin_name, email, password, plan_slug, telefone, cnpj, termos_versao, politica_versao } = req.body || {};
     if (!clinic_name || !admin_name || !email || !password) {
@@ -1173,6 +1494,8 @@ app.post('/api/auth/signup-clinic', async (req, res) => {
     const existing = await getProfileByEmail(normalizedEmail);
     if (existing) return res.status(409).json({ error: 'Email já cadastrado' });
 
+    // Conexão só depois de validar a entrada, dentro do try (se o banco cair, responde 500).
+    client = await pool.connect();
     const planSlug = plan_slug || 'starter';
     const { rows: planRows } = await client.query('SELECT * FROM plans WHERE slug = $1 AND ativo = true', [planSlug]);
     const plan = planRows[0];
@@ -1194,7 +1517,7 @@ app.post('/api/auth/signup-clinic', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,'trial', NOW() + ($6 || ' days')::interval, $7, $8, $9, NOW(), $10) RETURNING *`,
       [clinic_name, slug, cnpj || null, telefone || null, normalizedEmail, String(trialDays), plan.id,
        termos_versao ? String(termos_versao) : null, politica_versao ? String(politica_versao) : null,
-       req.headers['x-forwarded-for'] || req.ip || null]
+       clientIp(req)]
     );
     const tenant = tRows[0];
 
@@ -1232,11 +1555,11 @@ app.post('/api/auth/signup-clinic', async (req, res) => {
       plan,
     });
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    console.error('Signup error:', error);
-    res.status(500).json({ error: error.message || 'Erro ao criar conta' });
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('Signup error:', error.message);
+    res.status(500).json({ error: 'Erro ao criar conta' });
   } finally {
-    client.release();
+    client?.release();
   }
 });
 
@@ -1264,7 +1587,7 @@ app.get('/api/my-tenant', async (req, res) => {
 
     res.json({ tenant: rows[0], subscription: subs[0] || null, invoices: invs });
   } catch (e) {
-    res.status(401).json({ error: e.message });
+    responderErroSaas(res, e, 'my-tenant');
   }
 });
 
@@ -1306,21 +1629,8 @@ app.post('/api/my-tenant/users', async (req, res) => {
     const { rows: existing } = await pool.query('SELECT id FROM profiles WHERE email = $1', [normalizedEmail]);
     if (existing.length > 0) return res.status(409).json({ error: 'Email já cadastrado' });
 
-    // Plan limit check
-    const { rows: planRows } = await pool.query(
-      `SELECT pl.max_usuarios FROM tenants t LEFT JOIN plans pl ON pl.id = t.plan_id WHERE t.id = $1`,
-      [user.tenant_id]
-    );
-    const maxUsers = planRows[0]?.max_usuarios;
-    if (maxUsers != null) {
-      const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*)::int as c FROM profiles WHERE tenant_id = $1 AND COALESCE(active, true) = true`,
-        [user.tenant_id]
-      );
-      if (countRows[0].c >= maxUsers) {
-        return res.status(403).json({ error: `Limite de ${maxUsers} usuários do plano atingido` });
-      }
-    }
+    const limite = await limiteUsuariosAtingido(user.tenant_id);
+    if (limite) return res.status(403).json({ error: limite });
 
     const id = crypto.randomUUID();
     const hash = await bcrypt.hash(password, 12);
@@ -1345,6 +1655,8 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
     if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { id } = req.params;
     const { name, email, role, active } = req.body || {};
+    // Só booleano de verdade: "false"/0 escapariam das travas (último admin, limite do plano)
+    if (active !== undefined && typeof active !== 'boolean') return res.status(400).json({ error: 'Campo "active" precisa ser true ou false' });
 
     // Mesma clínica e nunca um super-admin (assertCanManageUser), mesmo quando o ator é super-admin
     let target;
@@ -1359,9 +1671,9 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
       );
       if (taken.length) return res.status(409).json({ error: 'Email já em uso por outro usuário' });
     }
-    if (id === user.id && active === false) {
-      return res.status(400).json({ error: 'Você não pode desativar o próprio usuário' });
-    }
+    if (role !== undefined && !TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
+    const bloqueio = await checarMudancaDeUsuario(user, target, { role, active });
+    if (bloqueio) return res.status(bloqueio.status).json({ error: bloqueio.error });
 
     const updates = [];
     const values = [];
@@ -1373,12 +1685,14 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
       updates.push(`updated_at = NOW()`);
       values.push(id);
       await pool.query(`UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`, values);
+      esquecerUsuarioAtivo(id);
     }
     if (role !== undefined) {
       if (!TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
       await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
       await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
       await pool.query('UPDATE profiles SET role = $1, updated_at = NOW() WHERE id = $2', [role, id]);
+      esquecerUsuarioAtivo(id);
     }
     res.json({ success: true });
   } catch (e) {
@@ -1418,13 +1732,22 @@ app.post('/api/my-tenant/change-plan', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { plan_slug } = req.body || {};
     const { rows } = await pool.query('SELECT * FROM plans WHERE slug = $1 AND ativo = true', [plan_slug]);
     if (!rows[0]) return res.status(400).json({ error: 'Plano inválido' });
+    // Plano menor não pode ficar com mais usuários ativos do que permite.
+    if (rows[0].max_usuarios != null) {
+      const ativos = await contarUsuariosAtivos(user.tenant_id);
+      if (ativos > rows[0].max_usuarios) {
+        return res.status(409).json({ error: `O plano ${rows[0].nome} permite até ${rows[0].max_usuarios} usuários ativos e a clínica tem ${ativos}. Desative usuários antes de trocar.` });
+      }
+    }
     await pool.query('UPDATE tenants SET plan_id = $1, updated_at = NOW() WHERE id = $2', [rows[0].id, user.tenant_id]);
+    console.log(`[AUDIT saas] troca de plano clinica=${user.tenant_id} user=${user.id} plano=${rows[0].slug}`);
     res.json({ ok: true, plan: rows[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'my-tenant:change-plan');
   }
 });
 
@@ -1439,15 +1762,17 @@ app.get('/api/super-admin/tenants', async (req, res) => {
     `);
     res.json({ data: rows });
   } catch (e) {
-    res.status(403).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:tenants');
   }
 });
 
 app.patch('/api/super-admin/tenants/:id', async (req, res) => {
   try {
-    await verifySuperAdmin(req);
+    const { user: actor } = await verifySuperAdmin(req);
     const { id } = req.params;
+    if (!SAAS_UUID_RE.test(String(id))) return res.status(404).json({ error: 'Clínica não encontrada' });
     const { status, plan_slug, trial_ends_at, current_period_end } = req.body || {};
+    if (status && !TENANT_STATUS_VALIDOS.includes(status)) return res.status(400).json({ error: 'Status inválido' });
     const sets = [], vals = [];
     let i = 1;
     if (status) { sets.push(`status = $${i++}`); vals.push(status); }
@@ -1465,9 +1790,13 @@ app.patch('/api/super-admin/tenants/:id', async (req, res) => {
       `UPDATE tenants SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
       vals
     );
+    if (!rows[0]) return res.status(404).json({ error: 'Clínica não encontrada' });
+    const campos = Object.entries({ status, plan_slug, trial_ends_at, current_period_end })
+      .filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => `${k}=${v}`).join(' ');
+    console.log(`[AUDIT super-admin] alterou clinica=${id} actor=${actor.id} ${campos}`);
     res.json({ data: rows[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:tenant-update');
   }
 });
 
@@ -1477,7 +1806,7 @@ app.get('/api/super-admin/plans', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM plans ORDER BY display_order, preco_mensal');
     res.json({ data: rows });
   } catch (e) {
-    res.status(403).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:plans');
   }
 });
 
@@ -1496,15 +1825,18 @@ app.post('/api/super-admin/plans', async (req, res) => {
     );
     res.json({ data: rows[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:plan-create');
   }
 });
 
+const PLANO_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 app.patch('/api/super-admin/plans/:id', async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
     await verifySuperAdmin(req);
     const { id } = req.params;
+    if (!PLANO_UUID_RE.test(String(id))) return res.status(404).json({ error: 'Plano não encontrado' });
     const b = req.body || {};
     const fields = ['nome','descricao','preco_mensal','preco_anual','trial_days',
       'max_usuarios','max_dentistas','max_pacientes','max_whatsapp_instances','features','ativo','display_order'];
@@ -1514,7 +1846,8 @@ app.patch('/api/super-admin/plans/:id', async (req, res) => {
       if (b[f] !== undefined) { sets.push(`${f} = $${i++}`); vals.push(b[f]); }
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
-    
+
+    client = await pool.connect();
     await client.query('BEGIN');
     
     sets.push('updated_at = NOW()');
@@ -1524,6 +1857,10 @@ app.patch('/api/super-admin/plans/:id', async (req, res) => {
       vals
     );
     const updatedPlan = rows[0];
+    if (!updatedPlan) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Plano não encontrado' });
+    }
 
     // Synchronization logic: Notify or log the change for affected tenants
     // In this architecture, limits are checked against the current plan in real-time.
@@ -1543,11 +1880,15 @@ app.patch('/api/super-admin/plans/:id', async (req, res) => {
     await client.query('COMMIT');
     res.json({ data: updatedPlan, synced_tenants: affectedTenants });
   } catch (e) {
-    await client.query('ROLLBACK');
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (e.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (e.message === 'Super admin access required') return res.status(403).json({ error: e.message });
+    // id já validado acima: 22P02 aqui é valor inválido no corpo (ex.: preco_mensal "12,90").
+    if (e.code === '22P02') return res.status(400).json({ error: 'Dados inválidos' });
     console.error('Plan update sync error:', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Erro ao atualizar o plano' });
   } finally {
-    client.release();
+    client?.release();
   }
 });
 
@@ -1589,7 +1930,7 @@ app.get('/api/super-admin/stats', async (req, res) => {
       pix_total AS (
         SELECT COALESCE(SUM(amount), 0) as total
         FROM invoices
-        WHERE status = 'paid' AND (payment_url LIKE '%pix%' OR id IN (SELECT id FROM invoices WHERE status = 'paid'))
+        WHERE status = 'paid' AND payment_url ILIKE '%pix%'
       )
       SELECT 
         (SELECT COALESCE(mrr, 0) FROM mrr_calc) as mrr,
@@ -1603,7 +1944,7 @@ app.get('/api/super-admin/stats', async (req, res) => {
 
     res.json({ data: stats[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:stats');
   }
 });
 
@@ -1971,7 +2312,7 @@ app.get('/api/health', async (req, res) => {
         const ctrl = new AbortController();
         const to = setTimeout(() => ctrl.abort(), HEALTH_EVOLUTION_TIMEOUT_MS);
         try {
-          return await fetch(`${EVOLUTION_API_URL}/`, { signal: ctrl.signal });
+          return await evolutionProvider.rawFetch('/', { signal: ctrl.signal }, { withKey: false });
         } finally {
           clearTimeout(to);
         }
@@ -2112,6 +2453,8 @@ app.post('/api/auth/create-user', async (req, res) => {
       return res.status(400).json({ error: 'Perfil inválido' });
     }
     const userRole = role || 'user';
+    const limite = await limiteUsuariosAtingido(actor.tenant_id);
+    if (limite) return res.status(403).json({ error: limite });
 
     await pool.query('INSERT INTO profiles (id, name, email, role, password_hash, tenant_id) VALUES ($1, $2, $3, $4, $5, $6)', [id, name, email.toLowerCase().trim(), userRole, hash, actor.tenant_id]);
     await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, userRole]);
@@ -2223,8 +2566,12 @@ app.post('/api/auth/avatar', async (req, res) => {
 // ─── Forgot Password (notifica admin) ───────────────────────
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email obrigatório' });
+    const { email } = req.body || {};
+    if (!email || typeof email !== 'string') return res.status(400).json({ error: 'Email obrigatório' });
+    // Mesma resposta 429 exista ou não o e-mail (não revela cadastro).
+    const porIp = RL.resetIp.hit(ipKey(req));
+    const porEmail = RL.resetEmail.hit(email.toLowerCase().trim());
+    if (!porIp.allowed || !porEmail.allowed) return sendTooMany(res, Math.max(porIp.retryAfterSec, porEmail.retryAfterSec));
 
     const { rows } = await pool.query(
       'SELECT id, name FROM profiles WHERE email = $1 LIMIT 1',
@@ -2336,11 +2683,14 @@ app.put('/api/auth/users/:id', async (req, res) => {
   try {
     const { user: actor } = await verifyAdmin(req);
     const { id } = req.params;
-    const { name, email, role, active } = req.body;
-    await assertCanManageUser(actor, id);
+    const { name, email, role, active } = req.body || {};
+    if (active !== undefined && typeof active !== 'boolean') return res.status(400).json({ error: 'Campo "active" precisa ser true ou false' });
+    const target = await assertCanManageUser(actor, id);
     if (role !== undefined && !TENANT_ASSIGNABLE_ROLES.includes(role)) {
       return res.status(400).json({ error: 'Perfil inválido' });
     }
+    const bloqueio = await checarMudancaDeUsuario(actor, target, { role, active });
+    if (bloqueio) return res.status(bloqueio.status).json({ error: bloqueio.error });
     if (email !== undefined) {
       const { rows: taken } = await pool.query(
         'SELECT 1 FROM profiles WHERE email = $1 AND id <> $2 LIMIT 1', [String(email).toLowerCase().trim(), id]
@@ -2359,11 +2709,13 @@ app.put('/api/auth/users/:id', async (req, res) => {
 
     values.push(id);
     await pool.query(`UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`, values);
+    esquecerUsuarioAtivo(id);
 
     if (role !== undefined) {
       await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
       await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
       await pool.query('UPDATE profiles SET role = $1 WHERE id = $2', [role, id]);
+      esquecerUsuarioAtivo(id);
     }
 
     res.json({ success: true });
@@ -2378,57 +2730,9 @@ app.put('/api/auth/users/:id', async (req, res) => {
 
 const execFileAsync = promisify(execFile);
 
-async function evolutionFetch(path, options = {}) {
-  if (!EVOLUTION_API_KEY) {
-    return {
-      ok: false,
-      status: 500,
-      data: { error: 'EVOLUTION_API_KEY não configurada no VPS' },
-    };
-  }
-
-  // Defesa contra "path traversal": um nome de instância como "abc/../outra"
-  // seria normalizado pelo fetch para a instância de outra clínica.
-  const pathOnly = String(path || '').split('?')[0];
-  if (pathOnly.includes('\\') || pathOnly.split('/').some(seg => seg === '..' || seg === '.')) {
-    console.warn(`[evolutionFetch] caminho recusado: ${pathOnly.slice(0, 120)}`);
-    return { ok: false, status: 400, data: { error: 'Nome de instância inválido' } };
-  }
-  const url = `${EVOLUTION_API_URL}${path}`;
-  const timeoutMs = Number(options.timeoutMs || process.env.EVOLUTION_API_REQUEST_TIMEOUT_MS || 15000);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
-    const res = await fetch(url, {
-      ...fetchOptions,
-      signal: fetchOptions.signal || controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: EVOLUTION_API_KEY,
-        ...fetchOptions.headers,
-      },
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      console.warn(`⚠️ Evolution API ${res.status} for ${path}:`, JSON.stringify(redactWebhookToken(data)).slice(0, 500));
-    }
-    return { ok: res.ok, status: res.status, data };
-  } catch (err) {
-    console.error(`❌ Evolution fetch error (${path}):`, err.message);
-    return { ok: false, status: err.name === 'AbortError' ? 504 : 500, data: { error: err.name === 'AbortError' ? 'Evolution API timeout' : err.message } };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function extractEvolutionConnectionState(data) {
-  const state = data?.instance?.state
-    || data?.instance?.connectionStatus
-    || data?.state
-    || data?.connectionStatus
-    || data?.status;
-  return String(state || '').toLowerCase();
+// Fachada: o HTTP da Evolution mora em whatsapp/adapters/evolution.mjs (mesmo comportamento).
+function evolutionFetch(path, options = {}) {
+  return evolutionProvider.request(path, options);
 }
 
 async function ensureEvolutionInstanceOpen(instanceName) {
@@ -2531,49 +2835,6 @@ function isLikelyLidIdentifier(value) {
   const raw = String(value || '');
   const digits = normalizeWhatsappNumber(raw);
   return raw.includes('@lid') || digits.length > 13;
-}
-
-function extractEvolutionMessageId(data) {
-  if (!data) return null;
-  if (Array.isArray(data)) {
-    for (const item of data) {
-      const id = extractEvolutionMessageId(item);
-      if (id) return id;
-    }
-    return null;
-  }
-
-  const pick = (value) => {
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      // WhatsApp/Baileys message ids are string-like and normally contain more
-      // entropy than wrapper request ids. Avoid accepting plain numeric wrapper
-      // ids because ACK correlation then becomes impossible.
-      if (trimmed && (!/^\d+$/.test(trimmed) || trimmed.length >= 12)) return trimmed;
-    }
-    return null;
-  };
-
-  const candidates = [
-    data?.key?.id,
-    data?.message?.key?.id,
-    data?.data?.key?.id,
-    data?.data?.message?.key?.id,
-    data?.response?.key?.id,
-    data?.response?.message?.key?.id,
-    data?.messageId,
-    data?.data?.messageId,
-    data?.response?.messageId,
-    data?.data?.id,
-    data?.response?.id,
-    data?.id,
-  ];
-
-  for (const candidate of candidates) {
-    const id = pick(candidate);
-    if (id) return id;
-  }
-  return null;
 }
 
 function getEvolutionErrorMessage(result, fallback = 'Falha ao enviar mensagem') {
@@ -2972,53 +3233,6 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   }
 
   return lastResult || { ok: false, status: 502, data: { error: 'Falha ao enviar mensagem', attempted } };
-}
-
-function extractEvolutionInstanceName(body) {
-  const candidates = [
-    body?.instanceName,
-    body?.instance,
-    body?.instance?.instanceName,
-    body?.instance?.name,
-    body?.data?.instanceName,
-    body?.data?.instance,
-    body?.data?.instance?.instanceName,
-    body?.data?.instance?.name,
-  ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
-  }
-
-  return '';
-}
-
-function normalizeEvolutionEventName(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/-/g, '_')
-    .replace(/\./g, '_');
-}
-
-function isEvolutionEvent(event, ...names) {
-  const normalized = normalizeEvolutionEventName(event);
-  return names.some((name) => normalizeEvolutionEventName(name) === normalized);
-}
-
-function extractEvolutionMessages(data) {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.messages?.records)) return data.messages.records;
-  if (Array.isArray(data?.messages)) return data.messages;
-  if (Array.isArray(data?.data?.records)) return data.data.records;
-  if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.result?.records)) return data.result.records;
-  if (Array.isArray(data?.result)) return data.result;
-  if (Array.isArray(data?.message)) return data.message;
-  if (Array.isArray(data?.records)) return data.records;
-  if (data?.message?.key) return [data.message];
-  if (data?.key) return [data];
-  return [];
 }
 
 function extractEvolutionArray(data) {
@@ -3641,6 +3855,262 @@ app.use('/api/whatsapp', async (req, res, next) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Saúde do WhatsApp — estado de cada número por clínica (job a cada N min)
+// Grava o estado atual e o histórico de mudanças; quando o número cai, avisa a
+// clínica (painel via SSE e push, sem dado de paciente). A fila já segura os envios
+// de número desconectado (processOneWhatsAppJob) e o disjuntor WA_* segue valendo.
+// Este job SÓ LÊ a Evolution: nunca reconecta, faz logout nem reinicia instância.
+// ═══════════════════════════════════════════════════════════════════════════
+const WA_HEALTH_INTERVAL_MS = Math.max(1, Number(process.env.WA_HEALTH_INTERVAL_MIN || 5)) * 60_000;
+const WA_HEALTH_ALERT_AFTER_MS = 10 * 60_000;      // ignora quedas rápidas (< 10 min)
+const WA_HEALTH_ALERT_COOLDOWN_MS = 6 * 60 * 60_000; // no máximo 1 aviso a cada 6 h por número
+const WA_HEALTH_LOOP_MIN_CHANGES = 4;              // 4+ mudanças de estado em 1 h = loop de reconexão
+
+// Canais de WhatsApp por clínica (camada de provedor). Idempotente; mesmo SQL do deploy.
+async function ensureWhatsAppChannelsSchema() {
+  let sql;
+  try { sql = readFileSync(path.join(__dirname, 'migration-whatsapp-canais.sql'), 'utf8'); }
+  catch (e) { console.error('[wa-canais] migração não encontrada:', e.message); return; }
+  // Divide respeitando $$ ... $$ (a migração tem a função do gatilho de sincronia).
+  const statements = splitSqlStatements(sql);
+  for (const st of statements) {
+    await pool.query(st).catch(e => console.error('[wa-canais-schema]', e.message, '→', st.split('\n')[0].slice(0, 90)));
+  }
+}
+
+async function ensureWhatsAppHealthSchema() {
+  let sql;
+  try { sql = readFileSync(path.join(__dirname, 'migration-whatsapp-saude.sql'), 'utf8'); }
+  catch (e) { console.error('[wa-health] migração não encontrada:', e.message); return; }
+  const statements = sql.split(/;\s*\n/).map(t => t.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);
+  for (const st of statements) {
+    await pool.query(st).catch(e => console.error('[wa-health-schema]', e.message, '→', st.split('\n')[0].slice(0, 90)));
+  }
+}
+
+async function alertWhatsAppDown(tenantId, instanceName, since) {
+  // Sem dado de paciente: só o aviso e para onde ir.
+  sendPushToAll({
+    title: '⚠️ WhatsApp da clínica desconectado',
+    body: 'As mensagens automáticas estão aguardando. Abra Canais e reconecte o número com o QR Code.',
+    tag: `wa-down-${instanceName}`,
+    url: '/canais',
+  }, tenantId);
+  broadcastSSE('whatsapp_health_alert', { instance: instanceName, since }, tenantId);
+  // E-mail: o servidor ainda não tem envio de e-mail configurado (SMTP); quando tiver, avisar o admin aqui.
+}
+
+let waHealthRunning = false;
+async function checkWhatsAppHealth() {
+  if (waHealthRunning) return;
+  waHealthRunning = true;
+  try {
+    const result = await evolutionFetch('/instance/fetchInstances', { timeoutMs: 15_000 });
+    // Provedor fora do ar ou sem resposta: não grava nada dos números dele (evita marcar
+    // todas as clínicas como desconectadas por falha de leitura).
+    const evoOk = result.ok;
+    const owa = await getOpenWaLiveStates().catch(() => ({ ok: false, names: new Set(), byInstance: new Map() }));
+    if (!evoOk) console.warn(`[wa-health] Evolution sem resposta (HTTP ${result.status}); estado não atualizado`);
+    if (!evoOk && !owa.names.size) return;
+    const live = new Map();
+    for (const inst of evoOk ? extractEvolutionArray(result.data) : []) {
+      const name = inst.name || inst.instanceName || inst.instance?.instanceName;
+      if (name) live.set(name, normalizeEvolutionConnectionState(inst));
+    }
+    const { rows } = await pool.query(
+      `SELECT instance_name, tenant_id, connection_state, state_since, last_alert_at
+         FROM whatsapp_instances WHERE tenant_id IS NOT NULL`
+    );
+    const now = Date.now();
+    for (const row of rows) {
+      const tenantId = String(row.tenant_id);
+      // Número de canal OpenWA: estado do OpenWA; sem resposta dele, não mexe.
+      if (owa.names.has(row.instance_name) && !owa.ok) continue;
+      if (!owa.names.has(row.instance_name) && !evoOk) continue;
+      // Nome que não existe mais no provedor: 'ausente' (apagado ou nunca criado).
+      const state = (owa.names.has(row.instance_name) ? owa.byInstance.get(row.instance_name) : live.get(row.instance_name)) || 'ausente';
+      const changed = state !== row.connection_state;
+      if (changed) {
+        await pool.query(
+          `UPDATE whatsapp_instances SET connection_state = $3, state_since = NOW(), last_checked_at = NOW()
+            WHERE instance_name = $1 AND tenant_id = $2`,
+          [row.instance_name, tenantId, state]
+        );
+        await pool.query(
+          `INSERT INTO whatsapp_instance_health_log (tenant_id, instance_name, state, previous_state) VALUES ($1, $2, $3, $4)`,
+          [tenantId, row.instance_name, state, row.connection_state || null]
+        ).catch(e => console.error('[wa-health] histórico:', e.message));
+        broadcastSSE('whatsapp_health', { instance: row.instance_name, state, since: new Date(now).toISOString() }, tenantId);
+      } else {
+        await pool.query(
+          `UPDATE whatsapp_instances SET last_checked_at = NOW() WHERE instance_name = $1 AND tenant_id = $2`,
+          [row.instance_name, tenantId]
+        ).catch(() => {});
+      }
+      // "ausente" = o nome não existe mais na Evolution (apagado): não é queda, não alerta.
+      if (state === 'open' || state === 'ausente') continue;
+      const since = changed || !row.state_since ? now : new Date(row.state_since).getTime();
+      const lastAlert = row.last_alert_at ? new Date(row.last_alert_at).getTime() : 0;
+      const newOutage = lastAlert < since;
+      if (now - since >= WA_HEALTH_ALERT_AFTER_MS && (newOutage || now - lastAlert >= WA_HEALTH_ALERT_COOLDOWN_MS)) {
+        await pool.query(
+          `UPDATE whatsapp_instances SET last_alert_at = NOW() WHERE instance_name = $1 AND tenant_id = $2`,
+          [row.instance_name, tenantId]
+        ).catch(() => {});
+        await alertWhatsAppDown(tenantId, row.instance_name, new Date(since).toISOString());
+        console.warn(`⚠️ [wa-health] ${row.instance_name} (tenant ${tenantId}) ${state} há ${Math.round((now - since) / 60_000)} min`);
+      }
+    }
+  } catch (err) {
+    console.error('[wa-health] erro:', err.message);
+  } finally {
+    waHealthRunning = false;
+  }
+}
+
+// Estado ao vivo para a tela de Canais e o selo do dashboard (só números da clínica).
+app.get('/api/whatsapp/health', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.json({ instances: [], anyDown: false });
+    const { rows } = await pool.query(
+      `SELECT w.instance_name, w.connection_state, w.state_since, w.last_checked_at,
+              (SELECT COUNT(*)::int FROM whatsapp_instance_health_log l
+                WHERE l.tenant_id = w.tenant_id AND l.instance_name = w.instance_name
+                  AND l.changed_at > NOW() - INTERVAL '1 hour') AS changes_last_hour,
+              (SELECT COUNT(*)::int FROM automation_jobs j
+                WHERE j.tenant_id = w.tenant_id AND j.status = 'pending'
+                  AND j.instance = w.instance_name) AS pending_jobs
+         FROM whatsapp_instances w
+        WHERE w.tenant_id = $1
+        ORDER BY w.created_at ASC NULLS LAST`,
+      [user.tenant_id]
+    );
+    // Jobs ainda sem número definido: contados uma vez por clínica (não em cada número).
+    const { rows: [semNumero] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM automation_jobs WHERE tenant_id = $1 AND status = 'pending' AND instance IS NULL`,
+      [user.tenant_id]
+    );
+    const now = Date.now();
+    const instances = rows.map(r => {
+      const state = r.connection_state || 'desconhecido';
+      const since = r.state_since ? new Date(r.state_since).toISOString() : null;
+      const down = state === 'close' || state === 'connecting';
+      return {
+        instance: r.instance_name, state, since,
+        downForMinutes: down && since ? Math.max(0, Math.round((now - new Date(since).getTime()) / 60_000)) : 0,
+        reconnectLoop: Number(r.changes_last_hour || 0) >= WA_HEALTH_LOOP_MIN_CHANGES,
+        pendingJobs: Number(r.pending_jobs || 0),
+        lastCheckedAt: r.last_checked_at ? new Date(r.last_checked_at).toISOString() : null,
+      };
+    });
+    // anyDown (selo do dashboard): só queda real e com a mesma carência do push (10 min).
+    const alertAfterMin = WA_HEALTH_ALERT_AFTER_MS / 60_000;
+    res.json({
+      instances,
+      pendingJobsWithoutInstance: Number(semNumero?.n || 0),
+      anyDown: instances.some(i => (i.state === 'close' || i.state === 'connecting') && i.downForMinutes >= alertAfterMin),
+      alertAfterMinutes: alertAfterMin,
+    });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ wa health:', error.message);
+    res.status(500).json({ error: 'Erro ao consultar o estado do WhatsApp' });
+  }
+});
+
+app.get('/api/whatsapp/health/:instance/history', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query(
+      `SELECT state, previous_state, changed_at FROM whatsapp_instance_health_log
+        WHERE tenant_id = $1 AND instance_name = $2 ORDER BY changed_at DESC LIMIT 50`,
+      [user.tenant_id, req.params.instance]
+    );
+    res.json(rows);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: 'Erro ao consultar o histórico' });
+  }
+});
+
+// ─── Opt-out na conversa: ver e desfazer a pedido do paciente ───
+async function getLeadPhoneForTenant(tenantId, leadId) {
+  if (!isValidTenantId(tenantId) || !leadId) return null;
+  const { rows: [lead] } = await pool.query(
+    'SELECT telefone FROM crm_leads WHERE id::text = $1 AND tenant_id = $2 LIMIT 1',
+    [String(leadId), tenantId]
+  );
+  return lead ? normalizeWhatsappNumber(lead.telefone || '') || null : null;
+}
+
+app.get('/api/whatsapp/opt-out', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const phone = await getLeadPhoneForTenant(user.tenant_id, req.query.leadId);
+    if (!phone) return res.json({ optedOut: false });
+    const { rows: [row] } = await pool.query(
+      'SELECT created_at, keyword FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2 LIMIT 1',
+      [user.tenant_id, waPhoneKey(phone)]
+    );
+    res.json(row ? { optedOut: true, since: row.created_at, keyword: row.keyword || null } : { optedOut: false });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: 'Erro ao consultar o descadastro' });
+  }
+});
+
+// Só admin, e só a pedido do paciente: registra como ele pediu, quem desfez e quando.
+app.post('/api/whatsapp/opt-out/revogar', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { leadId } = req.body || {};
+    const requestedVia = String(req.body?.solicitacao || '').trim();
+    if (requestedVia.length < 3) return res.status(400).json({ error: 'Diga como o paciente pediu para voltar a receber (ex.: por telefone, no balcão)' });
+    const phone = await getLeadPhoneForTenant(user.tenant_id, leadId);
+    if (!phone) return res.status(404).json({ error: 'Conversa não encontrada' });
+    const key = waPhoneKey(phone);
+    // Registro e remoção na mesma transação: se o registro falhar, o descadastro fica
+    // (sem prova de que o paciente pediu para voltar, ele continua valendo).
+    // pool.connect já aplica o contexto da clínica na conexão (TENANT_SET_SQL).
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: [current] } = await client.query(
+        'SELECT phone, keyword, created_at FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2 FOR UPDATE',
+        [user.tenant_id, key]
+      );
+      if (!current) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Este paciente não está descadastrado' });
+      }
+      await client.query(
+        `INSERT INTO whatsapp_opt_out_reversals (tenant_id, phone_key, phone, opted_out_at, keyword, lead_id, requested_via, reverted_by, reverted_by_email)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [user.tenant_id, key, current.phone || null, current.created_at || null, current.keyword || null, String(leadId),
+          requestedVia.slice(0, 300), isValidTenantId(user.id) ? user.id : null, user.email || null]
+      );
+      await client.query('DELETE FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2', [user.tenant_id, key]);
+      await client.query('COMMIT');
+    } catch (txError) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txError;
+    } finally {
+      client.release();
+    }
+    console.log(`↩️ Opt-out desfeito a pedido do paciente (tenant ${user.tenant_id}, final ${maskPhone(phone)})`);
+    res.json({ success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (error.message === 'Admin access required') return res.status(403).json({ error: 'Só o administrador da clínica pode desfazer o descadastro' });
+    console.error('❌ revogar opt-out:', error.message);
+    res.status(500).json({ error: 'Erro ao desfazer o descadastro' });
+  }
+});
+
 app.get('/api/whatsapp/instances', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -3688,6 +4158,13 @@ app.get('/api/whatsapp/instances', async (req, res) => {
       if (name && status === 'open') {
         ensureWebhookRegistration(name).catch(() => {});
       }
+    }
+
+    // Canais de outros provedores da clínica (OpenWA/reserva por QR), no mesmo formato, para o
+    // chat, disparos e campanhas enxergarem e escolherem o número. Mesmo com a Evolution fora.
+    if (!user.is_super_admin && isValidTenantId(user.tenant_id)) {
+      const seen = new Set(instances.map(i => i.name || i.instanceName || i.instance?.instanceName).filter(Boolean));
+      instances = instances.concat(await providerChannelsAsInstances(String(user.tenant_id), seen));
     }
 
     res.json(instances);
@@ -3883,8 +4360,13 @@ app.delete('/api/whatsapp/logout/:instance', async (req, res) => {
 // Delete instance
 app.delete('/api/whatsapp/instances/:instance', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
     const result = await evolutionFetch(`/instance/delete/${req.params.instance}`, { method: 'DELETE' });
+    // Número apagado sai do mapa da clínica: sem isso a saúde o veria como "ausente" para sempre.
+    if (result.ok && isValidTenantId(user.tenant_id)) {
+      await pool.query('DELETE FROM whatsapp_instances WHERE instance_name = $1 AND tenant_id = $2', [req.params.instance, user.tenant_id])
+        .catch(e => console.error('[wa-delete] mapa local:', e.message));
+    }
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -3933,6 +4415,26 @@ let resolveLidWarned = new Set();
 const instanceSubscribedPhones = new Map();
 
 // Subscribe to contact presence (typing, recording, online) — calls Evolution API
+// Recursos do chat que o número reserva (OpenWA) ainda não tem pelo nosso servidor: resposta
+// clara em vez de chamar a Evolution com um número que não é dela.
+const WA_EVOLUTION_ONLY_CHAT_ROUTES = [
+  '/api/whatsapp/subscribe-presence', '/api/whatsapp/delete-message', '/api/whatsapp/archive-chat',
+  '/api/whatsapp/send-location', '/api/whatsapp/send-contact', '/api/whatsapp/send-poll', '/api/whatsapp/send-sticker',
+  '/api/whatsapp/send-list', '/api/whatsapp/send-reaction', '/api/whatsapp/call',
+];
+app.post(WA_EVOLUTION_ONLY_CHAT_ROUTES, async (req, res, next) => {
+  try {
+    const instance = req.body?.instance;
+    if (!instance || typeof instance !== 'string') return next();
+    const channel = await waChannels.getByInstance(instance);
+    if (!channel || channel.provider === 'evolution') return next();
+    await verifyUser(req);
+    return res.status(501).json({ error: 'Este recurso ainda não está disponível no número reserva (QR). Use texto, imagem, documento ou áudio.', unsupported: true });
+  } catch (error) {
+    return res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro interno' });
+  }
+});
+
 app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
   try {
     await verifyUser(req);
@@ -4009,12 +4511,22 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
 // ─── Mark messages as read on WhatsApp (blue ticks) ───
 app.post('/api/whatsapp/mark-read', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { instance, number, messageIds } = req.body;
     if (!instance || !number) {
       return res.status(400).json({ error: 'instance e number são obrigatórios' });
     }
     const cleanNumber = normalizeWhatsappNumber(number);
+    // Canal OpenWA: "lido" pelo adaptador (só por ação do atendente; a sessão não lê sozinha).
+    const owa = await routeChatInstance(user, instance);
+    if (owa?.error) return res.status(owa.status).json({ error: owa.error });
+    if (owa) {
+      const ids = Array.isArray(messageIds) ? messageIds : [];
+      if (!ids.length) return res.json({ success: true, marked: 0 });
+      if (typeof owa.routed.provider.markRead !== 'function') return res.json({ success: false, marked: 0, unsupported: true });
+      const r = await owa.routed.provider.markRead(owa.routed.channel, cleanNumber, { messageIds: ids });
+      return res.json({ success: r.ok, marked: r.ok ? Math.min(ids.length, 100) : 0 });
+    }
     const keys = (messageIds || []).map(id => ({
       remoteJid: `${cleanNumber}@s.whatsapp.net`,
       id,
@@ -4096,7 +4608,7 @@ app.post('/api/whatsapp/archive-chat', async (req, res) => {
 
 app.post('/api/whatsapp/send-presence', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { instance, number, presence, delay } = req.body;
     if (!instance || !number || !presence) {
       return res.status(400).json({ error: 'instance, number e presence são obrigatórios' });
@@ -4108,6 +4620,17 @@ app.post('/api/whatsapp/send-presence', async (req, res) => {
     }
 
     const cleanNumber = normalizeWhatsappNumber(number);
+    // Canal OpenWA: "digitando"/"gravando" pelo adaptador, quando ele suporta.
+    const owa = await routeChatInstance(user, instance);
+    if (owa?.error) return res.status(owa.status).json({ error: owa.error });
+    if (owa) {
+      const p = owa.routed.provider;
+      if (!p.capabilities?.typing || typeof p.sendTyping !== 'function') return res.json({ success: false, presence, unsupported: true });
+      const state = presence === 'composing' ? 'typing' : presence;
+      const r = await p.sendTyping(owa.routed.channel, cleanNumber, { state });
+      if (!r.ok) return res.status(502).json({ error: 'Falha ao enviar presence' });
+      return res.json({ success: true, presence });
+    }
     const result = await evolutionFetch(`/chat/sendPresence/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
@@ -4152,6 +4675,24 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       });
     }
 
+    // Canal não Evolution (OpenWA): envio pela interface do provedor, conferindo o dono.
+    const routed = await providerForInstance(instance);
+    let result;
+    if (routed.record && routed.record.provider !== 'evolution') {
+      if (!user.tenant_id || String(routed.record.tenant_id) !== String(user.tenant_id)) {
+        return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
+      }
+      if (!routed.provider) return res.status(503).json({ error: 'Canal de WhatsApp indisponível. Reconecte o número em Canais.' });
+      const sent = await routed.provider.sendText(routed.channel, cleanNumber, text, {
+        quotedId: quoted?.key?.id || quoted?.id || null, timeoutMs: 30_000,
+      });
+      if (!sent.ok) {
+        const f = providerSendFailure(sent, 'Falha ao enviar pelo WhatsApp. Confira se o número está conectado em Canais.');
+        console.error(`❌ send-text (${routed.record.provider}) falhou → ${maskPhone(cleanNumber)} (status=${sent.status})`);
+        return res.status(f.httpStatus).json({ error: f.error });
+      }
+      result = { ok: true, status: 201, data: { key: { id: sent.providerMessageId }, messageId: sent.providerMessageId, sentNumber: cleanNumber } };
+    } else {
     const connectionCheck = await ensureEvolutionInstanceOpen(instance);
     if (!connectionCheck.ok) {
       return res.status(connectionCheck.status || 409).json(connectionCheck.data);
@@ -4165,10 +4706,11 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       return null;
     });
 
-    const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null, {
+    result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null, {
       leadId,
       tenantId: user?.tenant_id || null,
     });
+    }
     const sentNumber = result.data?.sentNumber || cleanNumber;
 
     if (!result.ok) {
@@ -4229,13 +4771,29 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
 // Send media (image, video, document, audio)
 app.post('/api/whatsapp/send-media', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { instance, number, mediaType, media } = req.body;
     if (!instance || !number || !mediaType) {
       return res.status(400).json({ error: 'instance, number e mediaType são obrigatórios' });
     }
 
     const cleanNumber = normalizeWhatsappNumber(number);
+
+    // Canal OpenWA: imagem, documento, vídeo e áudio (voz) pelo adaptador, só por base64.
+    const owa = await routeChatInstance(user, instance);
+    if (owa?.error) return res.status(owa.status).json({ error: owa.error });
+    if (owa) {
+      if (!media?.base64) return res.status(400).json({ error: 'Nenhuma mídia válida fornecida (envie o arquivo)' });
+      const sent = await sendMediaByChannel(owa.routed, cleanNumber, {
+        kind: mediaType, base64: media.base64, mimetype: media.mimeType, filename: media.fileName, caption: media.caption,
+      });
+      if (!sent.ok) {
+        const f = providerSendFailure(sent, mediaType === 'audio' ? 'Falha ao enviar áudio' : 'Falha ao enviar mídia');
+        console.error(`❌ send-media (${owa.routed.record.provider}) falhou → ${maskPhone(cleanNumber)} (status=${sent.status})`);
+        return res.status(f.httpStatus).json({ error: f.error });
+      }
+      return res.json({ key: { id: sent.providerMessageId }, messageId: sent.providerMessageId, sent: true });
+    }
 
     ensureWebhookRegistration(instance).catch((webhookErr) => {
       console.warn(`⚠️ send-media: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
@@ -4307,7 +4865,7 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
   }
 });
 
-app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
+app.post('/api/whatsapp/send-media-upload', limiteUpload, express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
   let jobId;
   try {
     const { user: jobUser } = await verifyUser(req);
@@ -4324,7 +4882,35 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
 
     const cleanNumber = normalizeWhatsappNumber(number);
     const resolvedMimeType = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
+    const owa = await routeChatInstance(jobUser, String(instance));
+    if (owa?.error) return res.status(owa.status).json({ error: owa.error });
     jobId = randomUUID();
+
+    // Canal OpenWA: envio pelo adaptador em segundo plano; a tela acompanha pelo jobId.
+    if (owa) {
+      mediaSendJobs.set(jobId, {
+        status: 'processing', createdAt: Date.now(), tenantId: String(jobUser.tenant_id), instance: String(instance),
+        number: cleanNumber, mediaType: String(mediaType), fileName: fileName ? String(fileName) : undefined, mimeType: resolvedMimeType,
+      });
+      res.status(202).json({ jobId, status: 'processing' });
+      const sent = await sendMediaByChannel(owa.routed, cleanNumber, {
+        kind: String(mediaType), base64: rawBody.toString('base64'), mimetype: resolvedMimeType,
+        filename: fileName ? String(fileName) : `arquivo.${resolvedMimeType.split('/')[1]?.split(';')[0] || 'bin'}`,
+        caption: caption && String(caption).trim() ? String(caption).trim() : undefined,
+      });
+      if (!sent.ok) {
+        const f = providerSendFailure(sent, String(mediaType) === 'audio' ? 'Falha ao enviar áudio' : 'Falha ao enviar mídia');
+        console.error(`❌ send-media-upload (${owa.routed.record.provider}) jobId=${jobId} falhou (status=${sent.status})`);
+        mediaSendJobs.set(jobId, { ...mediaSendJobs.get(jobId), status: 'failed', error: f.error, finishedAt: Date.now() });
+        return;
+      }
+      const savedMediaUrl = await saveBufferToDisk(rawBody, resolvedMimeType, fileName ? String(fileName) : undefined);
+      mediaSendJobs.set(jobId, {
+        ...mediaSendJobs.get(jobId), status: 'sent', finishedAt: Date.now(), mediaUrl: savedMediaUrl,
+        result: { key: { id: sent.providerMessageId }, messageId: sent.providerMessageId },
+      });
+      return;
+    }
 
     ensureWebhookRegistration(String(instance)).catch((webhookErr) => {
       console.warn(`⚠️ send-media-upload: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
@@ -4450,11 +5036,8 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
         console.log(`📤 send-media-upload trying ${variant.label} jobId=${jobId}, ${attemptMeta}`);
 
         if (variant.kind === 'multipart') {
-          const res = await fetch(`${EVOLUTION_API_URL}/message/sendMedia/${instance}`, {
+          const res = await evolutionProvider.rawFetch(`/message/sendMedia/${encodeURIComponent(instance)}`, {
             method: 'POST',
-            headers: {
-              apikey: EVOLUTION_API_KEY,
-            },
             body: variant.body,
             signal: controller.signal,
           });
@@ -4902,7 +5485,62 @@ app.get('/api/pacientes', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM pacientes WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[pacientes:list]', error.code || error.message);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// CRO gravado como digitado (ex.: "CRO-SP 12345"), sem espaços nas pontas; vazio vira NULL.
+// A unicidade compara só letras e dígitos, em maiúsculas (uq_dentistas_tenant_cro).
+function normalizarCro(cro) {
+  const t = String(cro ?? '').trim();
+  return /[0-9A-Za-z]/.test(t) ? t : null;
+}
+
+// CPF gravado só com dígitos; vazio vira NULL (o índice único por clínica ignora NULL).
+function normalizarCpf(cpf) {
+  const d = String(cpf ?? '').replace(/\D/g, '');
+  return d || null;
+}
+
+// Erro de gravação com chave única: nunca devolve error.message (o nome da constraint e o
+// detalhe do Postgres revelariam cadastro de outra clínica — paciente é dado de saúde, LGPD art. 11).
+// Índices por clínica (migration-unicos-por-clinica.sql) → mensagem neutra "nesta clínica".
+const MENSAGEM_UNICO_POR_CLINICA = {
+  uq_pacientes_tenant_cpf: 'Já existe um paciente com este CPF nesta clínica',
+  uq_dentistas_tenant_cro: 'Já existe um profissional com este CRO nesta clínica',
+  uq_agenda_marcadores_tenant_nome: 'Já existe um marcador com este nome nesta clínica',
+};
+function responderErroGravacao(res, error, tag, generico = 'Não foi possível salvar com este valor. Fale com o suporte.') {
+  if (error?.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+  if (error?.message === 'Admin access required') return res.status(403).json({ error: 'Admin access required' });
+  if (error?.code === '23505') {
+    const msg = MENSAGEM_UNICO_POR_CLINICA[error.constraint];
+    if (msg) return res.status(409).json({ error: msg });
+    // Chave global antiga (antes da migração): não dizer de onde vem o conflito.
+    console.error(`[${tag}] conflito de chave única (${error.constraint || 'sem nome'})`);
+    return res.status(409).json({ error: generico });
+  }
+  // Só o código: a mensagem do Postgres pode trazer o valor enviado (ex.: data inválida).
+  console.error(`[${tag}] erro ao gravar`, error?.code || '');
+  return res.status(500).json({ error: 'Erro interno' });
+}
+const responderErroPaciente = (res, error, tag) =>
+  responderErroGravacao(res, error, tag, 'Não foi possível salvar o paciente com este CPF. Fale com o suporte.');
+
+// GET /api/pacientes/:id — um paciente da própria clínica (404 se for de outra).
+app.get('/api/pacientes/:id', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT * FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (!rows.length) return res.status(404).json({ error: 'Paciente não encontrado' });
+    res.json(rows[0]);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[pacientes:get]', error.message);
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 
@@ -4910,7 +5548,9 @@ app.post('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const validacao = validarPaciente(req.body);
+    if (validacao.erro) return res.status(400).json({ error: validacao.erro });
+    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = validacao.campos;
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO pacientes (id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
@@ -4920,7 +5560,7 @@ app.post('/api/pacientes', async (req, res) => {
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErroPaciente(res, error, 'pacientes:create');
   }
 });
 
@@ -4928,17 +5568,28 @@ app.put('/api/pacientes/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const { rows: atual } = await pool.query(
+      'SELECT cpf, telefone, email, data_nascimento FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (!atual.length) return res.status(404).json({ error: 'Paciente não encontrado' });
+    // Só grava os campos enviados (campo omitido não vira NULL); valida só o que mudou.
+    const validacao = validarPaciente(req.body, { original: atual[0], parcial: true });
+    if (validacao.erro) return res.status(400).json({ error: validacao.erro });
+    const sets = []; const params = [];
+    for (const k of CAMPOS_PACIENTE) {
+      if (k in validacao.campos) { params.push(validacao.campos[k]); sets.push(`${k}=$${params.length}`); }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id, user.tenant_id);
     const { rowCount } = await pool.query(
-      'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, sexo=$6, convenio=$7, endereco=$8, observacoes=$9, updated_at=NOW() WHERE id=$10 AND tenant_id=$11',
-      [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id, user.tenant_id]
+      `UPDATE pacientes SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`,
+      params
     );
     if (rowCount === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     res.json({ success: true });
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, req.params.id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErroPaciente(res, error, 'pacientes:update');
   }
 });
 
@@ -4950,7 +5601,10 @@ app.delete('/api/pacientes/:id', async (req, res) => {
     if (rowCount === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    // Antes: 500 para quem não é admin (o 403 de verifyAdmin caía aqui).
+    const status = httpStatusOf(error);
+    if (status === 500) console.error('[pacientes:delete]', error.code || error.message);
+    res.status(status).json({ error: status === 500 ? 'Erro interno' : error.message });
   }
 });
 
@@ -5110,7 +5764,23 @@ app.get('/api/agenda', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json([]);
     const { data_inicio, data_fim, dentista_id } = req.query;
-    let query = 'SELECT a.*, p.nome as paciente_nome, d.nome as dentista_nome FROM agendamentos a LEFT JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id WHERE a.tenant_id = $1';
+    if ((data_inicio && !agendaDataValida(data_inicio)) || (data_fim && !agendaDataValida(data_fim))) {
+      return res.status(400).json({ error: 'Data inválida (use AAAA-MM-DD)' });
+    }
+    if (dentista_id && !PACIENTE_UUID_RE.test(String(dentista_id))) return res.status(400).json({ error: 'Profissional inválido' });
+    // lembrete_status: 'na_fila' | 'aguardando' (enviado, sem resposta) | 'confirmado' | 'remarcar' | 'falhou' | null
+    let query = `SELECT a.*,
+      COALESCE(NULLIF(TRIM(p.nome), ''), a.paciente_nome) AS paciente_nome,
+      COALESCE(NULLIF(TRIM(d.nome), ''), a.dentista_nome) AS dentista_nome,
+      (SELECT CASE
+                WHEN aj.status = 'pending' THEN 'na_fila'
+                WHEN aj.status = 'sent' THEN COALESCE(NULLIF(aj.variables::jsonb->>'confirmationReply', ''), 'aguardando')
+                WHEN aj.status = 'failed' THEN 'falhou'
+                ELSE NULL END
+         FROM automation_jobs aj
+        WHERE aj.tenant_id = a.tenant_id AND aj.trigger_event = 'appointment_reminder' AND aj.flow_id = 'reminder_' || a.id::text
+        ORDER BY aj.scheduled_at DESC NULLS LAST LIMIT 1) AS lembrete_status
+      FROM agendamentos a LEFT JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id WHERE a.tenant_id = $1`;
     const params = [user.tenant_id];
     if (data_inicio) { params.push(data_inicio); query += ` AND a.data >= $${params.length}`; }
     if (data_fim) { params.push(data_fim); query += ` AND a.data <= $${params.length}`; }
@@ -5141,14 +5811,11 @@ app.post('/api/agenda/marcadores', async (req, res) => {
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
     const id = crypto.randomUUID();
     const corFinal = (cor || '#06b6d4').slice(0, 9);
-    try {
-      await pool.query('INSERT INTO agenda_marcadores (id, nome, cor, tenant_id) VALUES ($1,$2,$3,$4)', [id, nome.trim(), corFinal, user.tenant_id]);
-      res.json({ id, nome: nome.trim(), cor: corFinal });
-    } catch (err) {
-      if (err.code === '23505') return res.status(409).json({ error: 'Marcador com este nome já existe' });
-      throw err;
-    }
-  } catch (error) { res.status(500).json({ error: error.message }); }
+    await pool.query('INSERT INTO agenda_marcadores (id, nome, cor, tenant_id) VALUES ($1,$2,$3,$4)', [id, nome.trim(), corFinal, user.tenant_id]);
+    res.json({ id, nome: nome.trim(), cor: corFinal });
+  } catch (error) {
+    responderErroGravacao(res, error, 'agenda:marcadores', 'Não foi possível salvar o marcador com este nome. Fale com o suporte.');
+  }
 });
 
 app.delete('/api/agenda/marcadores/:id', async (req, res) => {
@@ -5161,6 +5828,29 @@ app.delete('/api/agenda/marcadores/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// Data AAAA-MM-DD que existe no calendário e hora HH:MM(:SS). Sem isso "07/11/2026"
+// era gravado como 11 de julho (DateStyle MDY) e "25:99" virava erro 500.
+function agendaDataValida(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(`${v}T12:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+}
+function agendaHoraValida(v) {
+  return typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(v);
+}
+
+// Nomes do paciente e do profissional lidos do cadastro da própria clínica (nunca do
+// corpo da requisição). Chamar depois de validarReferenciasDoTenant: aqui id ausente
+// ou não encontrado na clínica vira nome null.
+async function resolverNomesAgenda(tenantId, pacienteId, dentistaId) {
+  const buscar = async (tabela, id) => {
+    if (!id || !tenantId || !PACIENTE_UUID_RE.test(String(id))) return null;
+    const { rows } = await pool.query(`SELECT nome FROM ${tabela} WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
+    return rows[0]?.nome || null;
+  };
+  return { pacienteNome: await buscar('pacientes', pacienteId), dentistaNome: await buscar('dentistas', dentistaId) };
+}
+
 app.post('/api/agenda', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -5171,16 +5861,20 @@ app.post('/api/agenda', async (req, res) => {
       confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
       evento_titulo, sala, serie_id, marcadores, como_conheceu,
     } = req.body;
+    if (!agendaDataValida(data)) return res.status(400).json({ error: 'Data inválida (use AAAA-MM-DD)' });
+    if (!agendaHoraValida(hora)) return res.status(400).json({ error: 'Horário inválido (use HH:MM)' });
     const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
     if (refErro) return res.status(400).json({ error: refErro });
+    const nomes = await resolverNomesAgenda(user.tenant_id, paciente_id, dentista_id);
     const id = crypto.randomUUID();
     await pool.query(
       `INSERT INTO agendamentos (
         id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
         tipo, primeira_consulta, dia_inteiro, escopo, categoria, categoria_cor,
         confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
-        evento_titulo, sala, serie_id, marcadores, como_conheceu, tenant_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24,$25)`,
+        evento_titulo, sala, serie_id, marcadores, como_conheceu, tenant_id,
+        paciente_nome, dentista_nome
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24,$25,$26,$27)`,
       [
         id, paciente_id || null, dentista_id || null, data, hora, duracao || 30,
         procedimento || null, status || 'agendado', observacoes || null,
@@ -5192,6 +5886,7 @@ app.post('/api/agenda', async (req, res) => {
         JSON.stringify(Array.isArray(marcadores) ? marcadores : []),
         como_conheceu || null,
         user.tenant_id,
+        nomes.pacienteNome, nomes.dentistaNome,
       ]
     );
     broadcastSSE('agendamento_changed', { action: 'created', id, data }, user.tenant_id);
@@ -5238,6 +5933,7 @@ app.post('/api/agenda/serie', async (req, res) => {
     }
     const refErroSerie = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
     if (refErroSerie) return res.status(400).json({ error: refErroSerie });
+    const nomes = await resolverNomesAgenda(user.tenant_id, paciente_id, dentista_id);
     const serie_id = crypto.randomUUID();
     const created = [];
     const start = new Date(data_inicio + 'T12:00:00Z');
@@ -5250,8 +5946,9 @@ app.post('/api/agenda/serie', async (req, res) => {
         `INSERT INTO agendamentos (
           id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
           tipo, primeira_consulta, escopo, categoria, categoria_cor,
-          confirmacao_canal, confirmacao_quando, sala, serie_id, tenant_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,'agendado',$8,'consulta',$9,'dentista',$10,$11,$12,$13,$14,$15,$16)`,
+          confirmacao_canal, confirmacao_quando, sala, serie_id, tenant_id,
+          paciente_nome, dentista_nome
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,'agendado',$8,'consulta',$9,'dentista',$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
         [
           id, paciente_id, dentista_id, dataStr, hora, duracao || 30,
           procedimento || null, observacoes || null,
@@ -5260,6 +5957,7 @@ app.post('/api/agenda/serie', async (req, res) => {
           categoria || null, categoria_cor || null,
           confirmacao_canal || null, confirmacao_quando || null,
           sala || null, serie_id, user.tenant_id,
+          nomes.pacienteNome, nomes.dentistaNome,
         ]
       );
       created.push({ id, data: dataStr });
@@ -5281,14 +5979,22 @@ app.delete('/api/agenda/:id', async (req, res) => {
     const { serie } = req.query; // ?serie=true → exclui toda a série
     const changed = () => broadcastSSE('agendamento_changed', { action: 'deleted', id: req.params.id }, tId);
     if (serie === 'true') {
-      const { rows } = await pool.query('SELECT serie_id FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
-      const sid = rows[0]?.serie_id;
+      if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Agendamento não encontrado' });
+      const { rows } = await pool.query('SELECT serie_id, data FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
+      if (!rows.length) return res.status(404).json({ error: 'Agendamento não encontrado' });
+      const sid = rows[0].serie_id;
       if (!sid) {
         const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
         changed();
         return res.json({ success: true, deleted: rowCount });
       }
-      const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE serie_id=$1 AND tenant_id=$2', [sid, tId]);
+      // "Este e os próximos": sessões anteriores e as já atendidas ficam (histórico do paciente).
+      // Antes apagava a série inteira, inclusive sessões finalizadas no passado.
+      const { rowCount } = await pool.query(
+        `DELETE FROM agendamentos WHERE serie_id=$1 AND tenant_id=$2 AND data >= $3
+            AND COALESCE(status, '') NOT IN ('finalizado', 'realizado', 'em_atendimento', 'faltou')`,
+        [sid, tId, agendaYmd(rows[0].data)]
+      );
       changed();
       return res.json({ success: true, deleted: rowCount });
     }
@@ -5309,15 +6015,67 @@ app.delete('/api/agenda/:id', async (req, res) => {
   }
 });
 
+// Formata a data do agendamento (DATE do pg chega como Date à meia-noite local).
+function formatAgendaDateBR(value) {
+  if (!value) return '—';
+  const d = value instanceof Date ? value : new Date(`${String(value).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+// Aviso de reagendamento: fila central, número da clínica dona (enqueueWhatsAppJob
+// resolve por tenantId), telefone do cadastro do paciente DESTA clínica.
+async function enqueueRescheduleNotice(tenantId, appt) {
+  if (!isValidTenantId(tenantId) || !appt?.paciente_id) return null;
+  const { rows: [pac] } = await pool.query(
+    'SELECT nome, telefone FROM pacientes WHERE id = $1 AND tenant_id = $2 LIMIT 1',
+    [appt.paciente_id, tenantId]
+  );
+  if (!pac) {
+    // Agendamento aponta para um lead (ou paciente de outra clínica): sem aviso. Só o id no log.
+    console.warn(`[reschedule] paciente não encontrado para o agendamento ${appt.id}; aviso não enfileirado`);
+    return null;
+  }
+  const phone = normalizeWhatsappNumber(pac?.telefone || '');
+  if (!phone) return null;
+  if (await isWhatsAppOptedOut(tenantId, phone)) return null;
+  // O aviso perde o sentido depois do horário da consulta (Brasil sem horário de verão: -03:00).
+  const ymd = appt.data instanceof Date
+    ? `${appt.data.getFullYear()}-${String(appt.data.getMonth() + 1).padStart(2, '0')}-${String(appt.data.getDate()).padStart(2, '0')}`
+    : String(appt.data || '').slice(0, 10);
+  const hhmm = /^\d{2}:\d{2}/.test(String(appt.hora || '')) ? String(appt.hora).slice(0, 5) : '23:59';
+  const apptAt = new Date(`${ymd}T${hhmm}:00-03:00`);
+  const validAt = !Number.isNaN(apptAt.getTime());
+  if (validAt && apptAt.getTime() <= Date.now()) return null; // consulta já passou
+  // Reagendou de novo antes do aviso sair: só o último vale.
+  await pool.query(
+    `UPDATE automation_jobs SET status = 'cancelled', error = 'Substituído por reagendamento mais recente', claimed_at = NULL
+      WHERE tenant_id = $1 AND status = 'pending' AND trigger_event = 'reschedule_notice' AND variables->>'agendamentoId' = $2`,
+    [tenantId, String(appt.id)]
+  ).catch(e => console.error('[reschedule] cancelar aviso anterior falhou:', e.message));
+  const firstName = String(appt.paciente_nome || pac?.nome || '').trim().split(/\s+/)[0] || 'Paciente';
+  const clinica = await getTenantClinicName(tenantId);
+  const msg = `📋 *Consulta reagendada — ${clinica}*\n\nOlá, ${firstName}!\n\nSua consulta foi reagendada:\n📅 ${formatAgendaDateBR(appt.data)}\n⏰ ${String(appt.hora || '').slice(0, 5) || '—'}\n👩‍⚕️ ${appt.dentista_nome || 'Equipe da clínica'}\n\nSe precisar remarcar de novo, é só mandar uma mensagem aqui.`;
+  return enqueueWhatsAppJob({
+    tenantId, phone, message: msg, category: 'transactional',
+    patientName: pac?.nome || appt.paciente_nome || '', triggerEvent: 'reschedule_notice',
+    variables: { agendamentoId: String(appt.id) }, ...(validAt ? { expiresAt: apptAt } : {}),
+  });
+}
+
 // PUT /api/agenda/:id — update appointment (status, etc.)
 app.put('/api/agenda/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const { id } = req.params;
-    const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, dentista_nome, marcadores, como_conheceu } = req.body;
+    const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, marcadores, como_conheceu, categoria, categoria_cor } = req.body;
+    if (data && !agendaDataValida(data)) return res.status(400).json({ error: 'Data inválida (use AAAA-MM-DD)' });
+    if (hora && !agendaHoraValida(hora)) return res.status(400).json({ error: 'Horário inválido (use HH:MM)' });
     const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
     if (refErro) return res.status(400).json({ error: refErro });
+    // dentista_nome vem do cadastro da clínica, não do corpo da requisição.
+    const dentistaNome = dentista_id ? (await resolverNomesAgenda(user.tenant_id, null, dentista_id)).dentistaNome : null;
     const sets = [];
     const params = [];
     if (status) { params.push(status); sets.push(`status = $${params.length}`); }
@@ -5327,13 +6085,27 @@ app.put('/api/agenda/:id', async (req, res) => {
     if (procedimento) { params.push(procedimento); sets.push(`procedimento = $${params.length}`); }
     if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes = $${params.length}`); }
     if (sala) { params.push(sala); sets.push(`sala = $${params.length}`); }
-    if (dentista_id) { params.push(dentista_id); sets.push(`dentista_id = $${params.length}`); }
-    if (dentista_nome) { params.push(dentista_nome); sets.push(`dentista_nome = $${params.length}`); }
+    if (dentista_id) {
+      params.push(dentista_id); sets.push(`dentista_id = $${params.length}`);
+      params.push(dentistaNome); sets.push(`dentista_nome = $${params.length}`);
+    }
     if (Array.isArray(marcadores)) { params.push(JSON.stringify(marcadores)); sets.push(`marcadores = $${params.length}::jsonb`); }
     if (como_conheceu !== undefined) { params.push(como_conheceu || null); sets.push(`como_conheceu = $${params.length}`); }
+    // Editar agendamento troca o procedimento pelo catálogo: categoria e cor vinham e eram ignoradas.
+    if (categoria !== undefined) { params.push(categoria || null); sets.push(`categoria = $${params.length}`); }
+    if (categoria_cor !== undefined) { params.push(categoria_cor || null); sets.push(`categoria_cor = $${params.length}`); }
+    // Horário liberado pela recepção (cancelado/desmarcado): registra quem e quando.
+    if (status === 'cancelado' || status === 'desmarcado') {
+      params.push(PACIENTE_UUID_RE.test(String(user.id || '')) ? user.id : null);
+      sets.push(`liberado_por = $${params.length}`, 'liberado_em = NOW()');
+    }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     params.push(id);
     params.push(user.tenant_id);
+    // Valores anteriores: só avisa o paciente se data/hora mudaram de verdade.
+    const before = (data || hora)
+      ? (await pool.query('SELECT data, hora FROM agendamentos WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id])).rows[0] || null
+      : null;
     const query = `UPDATE agendamentos SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length - 1} AND tenant_id = $${params.length} RETURNING *`;
     const { rows } = await pool.query(query, params);
     if (rows.length === 0) return res.status(404).json({ error: 'Agendamento não encontrado' });
@@ -5345,63 +6117,503 @@ app.put('/api/agenda/:id', async (req, res) => {
     // If status changed to 'em_atendimento', update CRM lead
     if (status === 'em_atendimento' && rows[0].paciente_id) {
       pool.query(
-        `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1`,
-        [rows[0].paciente_id]
+        `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+        [rows[0].paciente_id, user.tenant_id]
       ).catch(err => console.error('Failed to update lead status:', err.message));
     }
     // If status changed to 'finalizado' or 'realizado', update CRM lead
     if ((status === 'finalizado' || status === 'realizado') && rows[0].paciente_id) {
       pool.query(
-        `UPDATE crm_leads SET kanban_stage = 'pos_consulta', status = 'pos_consulta', updated_at = NOW() WHERE id = $1`,
-        [rows[0].paciente_id]
+        `UPDATE crm_leads SET kanban_stage = 'pos_consulta', status = 'pos_consulta', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+        [rows[0].paciente_id, user.tenant_id]
       ).catch(err => console.error('Failed to update lead status:', err.message));
     }
 
     const updated = rows[0];
     res.json(updated);
 
-    // ── WhatsApp notification on reschedule (date or time changed) ──
-    if ((data || hora) && updated.telefone && EVOLUTION_API_KEY) {
-      (async () => {
-        try {
-          // Fetch connected instance
-          const instResult = await evolutionFetch('/instance/fetchInstances');
-          const instances = Array.isArray(instResult) ? instResult : [];
-          const connected = instances.find(i => (i.connectionStatus || i.status) === 'open');
-          if (!connected) return;
-          const instName = connected.name || connected.instanceName;
-
-          const phone = updated.telefone.replace(/\D/g, '');
-          if (!phone) return;
-
-          const dataFormatted = updated.data
-            ? new Date(updated.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-            : '—';
-          const firstName = (updated.paciente_nome || '').split(' ')[0] || 'Paciente';
-
-          const clinica = await getTenantClinicName(user.tenant_id);
-          const msg = `📋 *Consulta reagendada — ${clinica}*\n\nOlá, ${firstName}!\n\nSua consulta foi reagendada:\n📅 ${dataFormatted}\n⏰ ${updated.hora || '—'}\n👩‍⚕️ ${updated.dentista_nome || 'Equipe da clínica'}\n\nSe precisar remarcar de novo, é só mandar uma mensagem aqui.`;
-
-          await evolutionFetch(`/message/sendText/${instName}`, {
-            method: 'POST',
-            body: JSON.stringify({ number: phone, text: msg }),
-          });
-          console.log(`📲 Reschedule notification sent to ${maskPhone(phone)}`);
-        } catch (err) {
-          console.error('⚠️ Failed to send reschedule notification:', err.message);
-        }
-      })();
+    // ── Aviso de reagendamento (data ou hora mudou) ──
+    // Pela fila, pelo número da própria clínica; telefone do cadastro do paciente
+    // desta clínica (agendamentos não tem telefone em produção).
+    const dateKey = (v) => (v instanceof Date ? v.toISOString() : String(v ?? ''));
+    const reagendou = !!before && (dateKey(before.data) !== dateKey(updated.data) || String(before.hora ?? '') !== String(updated.hora ?? ''));
+    if ((data || hora) && reagendou && updated.paciente_id && !/cancel/i.test(String(updated.status || ''))) {
+      enqueueRescheduleNotice(user.tenant_id, updated)
+        .catch(err => console.error('⚠️ Aviso de reagendamento não enfileirado:', err.message));
     }
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     console.error('❌ Error updating appointment:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
+
+
+// ═══════════════════════════════════════════════════════════════
+// LISTA DE ESPERA E ENCAIXE (B8)
+// Horário liberado (paciente pediu remarcar ou cancelou) → a recepção vê quantos
+// pacientes da lista servem e clica "Oferecer horário": a oferta sai pela fila para
+// UM paciente por vez, com prazo. Nunca há oferta automática sem esse clique.
+// ═══════════════════════════════════════════════════════════════
+const WAITLIST_PERIODOS = new Set(['manha', 'tarde', 'noite', 'qualquer']);
+// "remarcar" NÃO libera: o paciente ouviu que o horário continua reservado (parecer T5).
+// O horário só fica livre quando a recepção desmarca/cancela, com registro de quem e quando
+// (agendamentos.liberado_por / liberado_em).
+const WAITLIST_FREED_STATUSES = ['cancelado', 'desmarcado'];
+const WAITLIST_OFFER_TTL_MS = 2 * 60 * 60_000;      // prazo de resposta: 2 h
+const WAITLIST_MIN_LEAD_MS = 30 * 60_000;           // não oferece horário a menos de 30 min
+
+function waitlistPeriodoDaHora(hora) {
+  const h = parseInt(String(hora || '').slice(0, 2), 10);
+  if (!Number.isFinite(h)) return 'qualquer';
+  return h < 12 ? 'manha' : h < 18 ? 'tarde' : 'noite';
+}
+function agendaYmd(value) {
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  }
+  return String(value || '').slice(0, 10);
+}
+function agendaSlotStart(slot) {
+  const hhmm = /^\d{2}:\d{2}/.test(String(slot.hora || '')) ? String(slot.hora).slice(0, 5) : '00:00';
+  return new Date(`${agendaYmd(slot.data)}T${hhmm}:00-03:00`);
+}
+
+async function ensureWaitlistSchema() {
+  let sql;
+  try { sql = readFileSync(path.join(__dirname, 'migration-lista-espera.sql'), 'utf8'); }
+  catch (e) { console.error('[lista-espera] migração não encontrada:', e.message); return; }
+  const statements = sql.split(/;\s*\n/).map(t => t.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);
+  for (const st of statements) {
+    await pool.query(st).catch(e => console.error('[lista-espera]', e.message, '→', st.split('\n')[0].slice(0, 90)));
+  }
+}
+
+// Ofertas vencidas voltam o paciente para a fila de espera.
+async function expireWaitlistOffers(tenantId) {
+  const { rows } = await pool.query(
+    `UPDATE lista_espera_ofertas SET status = 'expirada', answered_at = NOW()
+      WHERE tenant_id = $1 AND status = 'enviada' AND expires_at <= NOW() RETURNING lista_espera_id`,
+    [tenantId]
+  ).catch(() => ({ rows: [] }));
+  for (const r of rows) {
+    await pool.query(
+      `UPDATE lista_espera SET status = 'aguardando', updated_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'oferecido'`,
+      [r.lista_espera_id, tenantId]
+    ).catch(() => {});
+  }
+}
+
+async function getWaitlistSlot(tenantId, agendamentoId) {
+  if (!PACIENTE_UUID_RE.test(String(agendamentoId))) return null;
+  const { rows: [slot] } = await pool.query(
+    `SELECT a.id, a.data, a.hora, a.duracao, a.dentista_id, a.paciente_id, a.status, d.nome AS dentista_nome
+       FROM agendamentos a LEFT JOIN dentistas d ON d.id = a.dentista_id AND d.tenant_id = a.tenant_id
+      WHERE a.id = $1 AND a.tenant_id = $2 LIMIT 1`,
+    [agendamentoId, tenantId]
+  );
+  return slot || null;
+}
+
+// Candidatos da lista para o horário: mesma clínica, profissional (ou qualquer),
+// período compatível, com telefone, sem opt-out e que ainda não receberam oferta
+// deste horário. Ordem de chegada.
+async function findWaitlistCandidates(tenantId, slot) {
+  const { rows } = await pool.query(
+    `SELECT le.id, le.paciente_id, p.nome AS paciente_nome, p.telefone
+       FROM lista_espera le
+       JOIN pacientes p ON p.id = le.paciente_id AND p.tenant_id = le.tenant_id
+      WHERE le.tenant_id = $1 AND le.status = 'aguardando'
+        AND (le.dentista_id IS NULL OR le.dentista_id = $2)
+        AND (le.periodo = 'qualquer' OR le.periodo = $3)
+        AND le.paciente_id IS DISTINCT FROM $4
+        AND COALESCE(regexp_replace(p.telefone, '\\D', '', 'g'), '') <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_opt_outs o
+           WHERE o.tenant_id = le.tenant_id
+             AND RIGHT(o.phone_key, 8) = RIGHT(regexp_replace(p.telefone, '\\D', '', 'g'), 8))
+        AND NOT EXISTS (
+          SELECT 1 FROM lista_espera_ofertas f
+           WHERE f.tenant_id = le.tenant_id AND f.lista_espera_id = le.id AND f.agendamento_origem_id = $5)
+      ORDER BY le.created_at ASC`,
+    [tenantId, slot.dentista_id || null, waitlistPeriodoDaHora(slot.hora), slot.paciente_id || null, slot.id]
+  );
+  return rows;
+}
+
+app.get('/api/lista-espera', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    await expireWaitlistOffers(user.tenant_id);
+    const { rows } = await pool.query(
+      `SELECT le.id, le.paciente_id, le.dentista_id, le.periodo, le.observacao, le.status, le.created_at,
+              p.nome AS paciente_nome, d.nome AS dentista_nome
+         FROM lista_espera le
+         JOIN pacientes p ON p.id = le.paciente_id AND p.tenant_id = le.tenant_id
+         LEFT JOIN dentistas d ON d.id = le.dentista_id AND d.tenant_id = le.tenant_id
+        WHERE le.tenant_id = $1 AND le.status IN ('aguardando', 'oferecido')
+        ORDER BY le.created_at ASC`,
+      [user.tenant_id]
+    );
+    res.json(rows);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ lista de espera:', error.message);
+    res.status(500).json({ error: 'Erro ao carregar a lista de espera' });
+  }
+});
+
+app.post('/api/lista-espera', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { paciente_id, dentista_id, periodo, observacao } = req.body || {};
+    if (!paciente_id) return res.status(400).json({ error: 'Selecione o paciente' });
+    const per = periodo || 'qualquer';
+    if (!WAITLIST_PERIODOS.has(per)) return res.status(400).json({ error: 'Período inválido' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id || null });
+    if (refErro) return res.status(400).json({ error: refErro });
+    const { rows: dup } = await pool.query(
+      `SELECT 1 FROM lista_espera WHERE tenant_id = $1 AND paciente_id = $2 AND dentista_id IS NOT DISTINCT FROM $3
+          AND status IN ('aguardando', 'oferecido') LIMIT 1`,
+      [user.tenant_id, paciente_id, dentista_id || null]
+    );
+    if (dup.length) return res.status(409).json({ error: 'Este paciente já está na lista de espera' });
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO lista_espera (id, tenant_id, paciente_id, dentista_id, periodo, observacao) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, user.tenant_id, paciente_id, dentista_id || null, per, observacao ? String(observacao).slice(0, 500) : null]
+    );
+    res.json({ id, success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ lista de espera (incluir):', error.message);
+    res.status(500).json({ error: 'Erro ao incluir na lista de espera' });
+  }
+});
+
+app.delete('/api/lista-espera/:id', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Registro não encontrado' });
+    const { rowCount } = await pool.query(
+      `UPDATE lista_espera SET status = 'removido', updated_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status <> 'removido'`,
+      [req.params.id, user.tenant_id]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Registro não encontrado' });
+    res.json({ success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: 'Erro ao remover da lista de espera' });
+  }
+});
+
+// Recepção libera o horário de quem pediu para remarcar, depois de falar com o paciente.
+app.post('/api/agenda/:id/liberar-horario', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Agendamento não encontrado' });
+    const { rows } = await pool.query(
+      `UPDATE agendamentos SET status = 'desmarcado', liberado_por = $3, liberado_em = NOW(), updated_at = NOW()
+        WHERE id = $1 AND tenant_id = $2 AND status = 'remarcar' RETURNING id, data`,
+      [req.params.id, user.tenant_id, PACIENTE_UUID_RE.test(String(user.id || '')) ? user.id : null]
+    );
+    if (!rows.length) return res.status(409).json({ error: 'Só dá para liberar um horário cujo paciente pediu para remarcar' });
+    broadcastSSE('agendamento_changed', { action: 'updated', id: rows[0].id, data: rows[0].data }, user.tenant_id);
+    res.json({ success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ liberar horário:', error.message);
+    res.status(500).json({ error: 'Erro ao liberar o horário' });
+  }
+});
+
+// Sugestão de encaixe para um horário liberado.
+app.get('/api/agenda/:id/encaixe', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const slot = await getWaitlistSlot(user.tenant_id, req.params.id);
+    if (!slot) return res.status(404).json({ error: 'Agendamento não encontrado' });
+    const liberado = WAITLIST_FREED_STATUSES.includes(String(slot.status || ''));
+    const futuro = agendaSlotStart(slot).getTime() > Date.now() + WAITLIST_MIN_LEAD_MS;
+    if (!liberado || !futuro) return res.json({ disponivel: false, liberado, futuro, candidatos: 0, oferta: null });
+    await expireWaitlistOffers(user.tenant_id);
+    const { rows: [oferta] } = await pool.query(
+      `SELECT o.id, o.status, o.expires_at, p.nome AS paciente_nome
+         FROM lista_espera_ofertas o JOIN pacientes p ON p.id = o.paciente_id AND p.tenant_id = o.tenant_id
+        WHERE o.tenant_id = $1 AND o.agendamento_origem_id = $2 AND o.status IN ('enviada', 'aceita')
+        ORDER BY o.created_at DESC LIMIT 1`,
+      [user.tenant_id, slot.id]
+    );
+    const candidatos = oferta?.status === 'aceita' ? [] : await findWaitlistCandidates(user.tenant_id, slot);
+    res.json({
+      disponivel: !oferta, liberado, futuro, candidatos: candidatos.length,
+      oferta: oferta ? { id: oferta.id, status: oferta.status, expires_at: oferta.expires_at, paciente_nome: oferta.paciente_nome } : null,
+      dentroDaJanela: isWithinWhatsAppSendWindow(),
+    });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ encaixe:', error.message);
+    res.status(500).json({ error: 'Erro ao consultar a lista de espera' });
+  }
+});
+
+// TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+// Só clínica, profissional, data, hora e prazo: nada de procedimento.
+function buildWaitlistOfferMessage({ clinica, firstName, profissional, weekday, dataBR, hora, prazo }) {
+  const base = `📅 *Horário disponível — ${clinica}*\n\nOlá${firstName ? `, ${firstName}` : ''}! Você está na nossa lista de espera e abriu um horário:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}\n\nA oferta vale até ${prazo}. Se não responder até lá, o horário vai para a próxima pessoa da lista e você continua na lista.`;
+  // SAIR vira descadastro completo (WA_OPT_OUT_PHRASES): o texto diz exatamente isso
+  // e fica por último nas duas versões (botões e alternativo).
+  const sair = '\n\nSe não quiser mais mensagens automáticas da clínica, responda SAIR.';
+  return { body: `${base}${sair}`, fallbackText: `${base}\n\nResponda *QUERO* para ficar com o horário ou *NÃO* se não puder.${sair}` };
+}
+
+// Clique da recepção: oferta para UM paciente (o primeiro da lista que serve).
+app.post('/api/agenda/:id/oferecer-horario', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const tenantId = String(user.tenant_id);
+    const slot = await getWaitlistSlot(tenantId, req.params.id);
+    if (!slot) return res.status(404).json({ error: 'Agendamento não encontrado' });
+    if (!WAITLIST_FREED_STATUSES.includes(String(slot.status || ''))) {
+      return res.status(409).json({ error: 'Este horário não foi liberado pela recepção' });
+    }
+    const start = agendaSlotStart(slot);
+    if (Number.isNaN(start.getTime()) || start.getTime() <= Date.now() + WAITLIST_MIN_LEAD_MS) {
+      return res.status(409).json({ error: 'Horário muito próximo ou já passou' });
+    }
+    if (!isWithinWhatsAppSendWindow()) {
+      return res.status(409).json({ error: 'Fora do horário de envio do WhatsApp (seg a sex 8h–20h, sáb 8h–13h). Tente de novo nesse período.' });
+    }
+    await expireWaitlistOffers(tenantId);
+    const { rows: ativa } = await pool.query(
+      `SELECT status FROM lista_espera_ofertas WHERE tenant_id = $1 AND agendamento_origem_id = $2 AND status IN ('enviada', 'aceita') LIMIT 1`,
+      [tenantId, slot.id]
+    );
+    if (ativa.length) {
+      return res.status(409).json({ error: ativa[0].status === 'aceita' ? 'Este horário já foi preenchido pela lista de espera' : 'Já há uma oferta aguardando resposta para este horário' });
+    }
+    const [cand] = await findWaitlistCandidates(tenantId, slot);
+    if (!cand) return res.status(404).json({ error: 'Ninguém na lista de espera serve para este horário' });
+    const phone = normalizeWhatsappNumber(cand.telefone || '');
+    if (!phone || await isWhatsAppOptedOut(tenantId, phone)) return res.status(409).json({ error: 'O próximo paciente da lista não pode receber WhatsApp' });
+
+    const expiresAt = new Date(Math.min(Date.now() + WAITLIST_OFFER_TTL_MS, start.getTime()));
+    const ofertaId = crypto.randomUUID();
+    try {
+      await pool.query(
+        `INSERT INTO lista_espera_ofertas (id, tenant_id, lista_espera_id, paciente_id, agendamento_origem_id, data, hora, duracao, dentista_id, status, expires_at, oferecido_por)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'enviada', $10, $11)`,
+        [ofertaId, tenantId, cand.id, cand.paciente_id, slot.id, agendaYmd(slot.data), String(slot.hora).slice(0, 5), slot.duracao || 30,
+          slot.dentista_id || null, expiresAt, PACIENTE_UUID_RE.test(String(user.id || '')) ? user.id : null]
+      );
+    } catch (e) {
+      if (e.code === '23505') return res.status(409).json({ error: 'Já há uma oferta aguardando resposta para este horário' });
+      throw e;
+    }
+    await pool.query(`UPDATE lista_espera SET status = 'oferecido', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [cand.id, tenantId]);
+
+    const ymd = agendaYmd(slot.data);
+    const [y, m, d] = ymd.split('-');
+    const WEEKDAYS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+    const prazo = expiresAt.toLocaleString('pt-BR', { timeZone: WA_TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ' às');
+    const clinica = await getTenantClinicName(tenantId);
+    const hora = String(slot.hora).slice(0, 5);
+    const { body, fallbackText } = buildWaitlistOfferMessage({
+      clinica, firstName: String(cand.paciente_nome || '').trim().split(/\s+/)[0] || '',
+      profissional: slot.dentista_nome, weekday: WEEKDAYS[new Date(`${ymd}T12:00:00Z`).getUTCDay()] || '',
+      dataBR: `${d}/${m}/${y}`, hora, prazo,
+    });
+    const jobId = await enqueueWhatsAppJob({
+      tenantId, phone, message: fallbackText, category: 'transactional',
+      flowId: `waitlist_${ofertaId}`, flowName: 'Oferta de encaixe', patientName: cand.paciente_nome || '',
+      triggerEvent: 'waitlist_offer', expiresAt,
+      variables: {
+        ofertaId,
+        interactive: {
+          endpoint: 'sendButtons',
+          payload: {
+            title: '', description: body, footer: clinica,
+            buttons: [
+              { buttonId: `oferta_aceitar_${ofertaId}`, buttonText: { displayText: 'Quero este horário' }, type: 1 },
+              { buttonId: `oferta_recusar_${ofertaId}`, buttonText: { displayText: 'Não posso' }, type: 1 },
+            ],
+          },
+        },
+      },
+    });
+    await pool.query(`UPDATE lista_espera_ofertas SET job_id = $3 WHERE id = $1 AND tenant_id = $2`, [ofertaId, tenantId, jobId ? String(jobId) : null]).catch(() => {});
+    broadcastSSE('waitlist_offer_changed', { agendamentoId: slot.id, status: 'enviada' }, tenantId);
+    res.json({ success: true, oferta: { id: ofertaId, paciente_nome: cand.paciente_nome, expires_at: expiresAt } });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ oferecer horário:', error.message);
+    res.status(500).json({ error: 'Erro ao oferecer o horário' });
+  }
+});
+
+// ─── Resposta do paciente à oferta (botão, QUERO / NÃO) ───
+const WAITLIST_ACCEPT_WORDS = new Set(['quero', 'quero sim', 'eu quero', 'aceito', 'quero este horario', 'quero esse horario']);
+const WAITLIST_DECLINE_WORDS = new Set(['nao', 'nao posso', 'nao consigo', 'recuso']);
+
+function parseWaitlistOfferReply(msgContent) {
+  const raw = String(msgContent || '').trim();
+  const btn = raw.match(/^oferta_(aceitar|recusar)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (btn) return { accept: btn[1] === 'aceitar', ofertaId: btn[2].toLowerCase() };
+  const t = raw.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[!.\s]+$/g, '').replace(/\s+/g, ' ');
+  if (!t || t.length > 40) return null;
+  if (WAITLIST_ACCEPT_WORDS.has(t)) return { accept: true, ofertaId: null };
+  if (WAITLIST_DECLINE_WORDS.has(t)) return { accept: false, ofertaId: null };
+  return null;
+}
+
+async function handleWaitlistOfferReply({ tenantId, phone, msgType, msgContent, instance }) {
+  if (!isValidTenantId(tenantId) || !phone) return null;
+  if (!['text', 'button_response', 'list_response'].includes(msgType)) return null;
+  const parsed = parseWaitlistOfferReply(msgContent);
+  if (!parsed) return null;
+  const params = [tenantId, String(phone).replace(/\D/g, '')];
+  if (parsed.ofertaId) params.push(parsed.ofertaId);
+  // Oferta desta clínica, ainda aguardando, para o telefone do cadastro do paciente ofertado.
+  const { rows: [oferta] } = await pool.query(
+    `SELECT o.id, o.lista_espera_id, o.paciente_id, o.agendamento_origem_id, o.data, o.hora, o.duracao, o.dentista_id, o.expires_at
+       FROM lista_espera_ofertas o JOIN pacientes p ON p.id = o.paciente_id AND p.tenant_id = o.tenant_id
+      WHERE o.tenant_id = $1 AND o.status = 'enviada'
+        AND RIGHT(regexp_replace(p.telefone, '\\D', '', 'g'), 8) = RIGHT($2, 8)
+        ${parsed.ofertaId ? 'AND o.id = $3' : ''}
+      ORDER BY o.created_at DESC LIMIT 1`,
+    params
+  );
+  if (!oferta) return null;
+  const clinica = await getTenantClinicName(tenantId);
+  const dataBR = formatAgendaDateBR(oferta.data);
+  const hora = String(oferta.hora || '').slice(0, 5);
+  const backToWaitlist = () => pool.query(
+    `UPDATE lista_espera SET status = 'aguardando', updated_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'oferecido'`,
+    [oferta.lista_espera_id, tenantId]
+  ).catch(() => {});
+  const reply = (message, kind) => enqueueWhatsAppAutoReply({
+    tenantId, instance, phone, message, kind, category: 'service', dedupeMinutes: 10,
+  }).catch(e => console.error('[lista-espera] resposta não enfileirada:', e.message));
+  // TEXTOS PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+  const UNAVAILABLE = `Que pena, esse horário não está mais disponível. Você continua na lista de espera da ${clinica}.`;
+
+  if (!parsed.accept) {
+    await pool.query(
+      `UPDATE lista_espera_ofertas SET status = 'recusada', answered_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'enviada'`,
+      [oferta.id, tenantId]
+    );
+    await backToWaitlist();
+    await reply(`Tudo bem! Você continua na lista de espera da ${clinica}.`, 'waitlist_declined');
+    broadcastSSE('waitlist_offer_changed', { agendamentoId: oferta.agendamento_origem_id, status: 'recusada' }, tenantId);
+    return { handled: true, accepted: false, ofertaId: oferta.id };
+  }
+
+  // Aceite: reserva da oferta, conferência do horário e criação do encaixe numa única
+  // transação. Qualquer erro no meio desfaz tudo: a oferta continua 'enviada' (o paciente
+  // pode responder de novo) e a entrada da lista não muda.
+  const novoId = crypto.randomUUID();
+  let outcome;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Reserva atômica (só uma oferta ativa por horário).
+    const { rows: [claimed] } = await client.query(
+      `UPDATE lista_espera_ofertas SET status = 'aceita', answered_at = NOW()
+        WHERE id = $1 AND tenant_id = $2 AND status = 'enviada' AND expires_at > NOW() RETURNING id`,
+      [oferta.id, tenantId]
+    );
+    if (!claimed) {
+      // Reserva vazia: expirou ou outra mensagem do MESMO telefone (a oferta foi achada pelo
+      // telefone) já ganhou o aceite, ex.: "SIM" repetido/reentregue. Já aceita → não diz "Que pena".
+      const { rows: [atual] } = await client.query(
+        `SELECT status FROM lista_espera_ofertas WHERE id = $1 AND tenant_id = $2`,
+        [oferta.id, tenantId]
+      );
+      outcome = atual?.status === 'aceita' ? 'ja_aceita' : 'expirada';
+    } else {
+      // Horário ainda livre? (a recepção pode ter marcado alguém por fora). hora é TIME em
+      // produção; LEFT(hora::text, 5) funciona com TIME e com TEXT ('09:00:00' → '09:00').
+      const { rows: ocupado } = await client.query(
+        `SELECT 1 FROM agendamentos
+          WHERE tenant_id = $1 AND data = $2 AND LEFT(hora::text, 5) = $3 AND dentista_id IS NOT DISTINCT FROM $4 AND id <> $5
+            AND COALESCE(status, 'agendado') NOT IN ('cancelado', 'desmarcado', 'faltou') LIMIT 1`,
+        [tenantId, agendaYmd(oferta.data), hora, oferta.dentista_id || null, oferta.agendamento_origem_id]
+      );
+      if (ocupado.length) {
+        await client.query(`UPDATE lista_espera_ofertas SET status = 'indisponivel' WHERE id = $1 AND tenant_id = $2`, [oferta.id, tenantId]);
+        outcome = 'indisponivel';
+      } else {
+        await client.query(
+          `INSERT INTO agendamentos (id, paciente_id, dentista_id, data, hora, duracao, status, observacoes, tipo, tenant_id)
+           VALUES ($1, $2, $3, $4, $5, $6, 'confirmado', 'Encaixe pela lista de espera (aceito pelo WhatsApp)', 'consulta', $7)`,
+          [novoId, oferta.paciente_id, oferta.dentista_id || null, agendaYmd(oferta.data), hora, oferta.duracao || 30, tenantId]
+        );
+        await client.query(`UPDATE lista_espera_ofertas SET agendamento_novo_id = $3 WHERE id = $1 AND tenant_id = $2`, [oferta.id, tenantId, novoId]);
+        await client.query(`UPDATE lista_espera SET status = 'encaixado', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [oferta.lista_espera_id, tenantId]);
+        outcome = 'aceita';
+      }
+    }
+    await client.query(outcome === 'expirada' || outcome === 'ja_aceita' ? 'ROLLBACK' : 'COMMIT');
+  } catch (txError) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw txError;
+  } finally {
+    client.release();
+  }
+  if (outcome === 'ja_aceita') {
+    // O encaixe e a confirmação ficaram com a mensagem que ganhou; nada a responder aqui.
+    return { handled: true, accepted: true, duplicate: true, ofertaId: oferta.id };
+  }
+  if (outcome === 'expirada') {
+    await pool.query(`UPDATE lista_espera_ofertas SET status = 'expirada', answered_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'enviada'`, [oferta.id, tenantId]).catch(() => {});
+    await backToWaitlist();
+    await reply(UNAVAILABLE, 'waitlist_unavailable');
+    return { handled: true, accepted: false, ofertaId: oferta.id };
+  }
+  if (outcome === 'indisponivel') {
+    await backToWaitlist();
+    await reply(UNAVAILABLE, 'waitlist_unavailable');
+    broadcastSSE('waitlist_offer_changed', { agendamentoId: oferta.agendamento_origem_id, status: 'indisponivel' }, tenantId);
+    return { handled: true, accepted: false, ofertaId: oferta.id };
+  }
+  await reply(`✅ Pronto! O horário de ${dataBR} às ${hora} é seu. A ${clinica} aguarda você.`, 'waitlist_accepted');
+  broadcastSSE('agendamento_changed', { action: 'created', id: novoId, data: agendaYmd(oferta.data) }, tenantId);
+  broadcastSSE('waitlist_offer_changed', { agendamentoId: oferta.agendamento_origem_id, status: 'aceita', novoAgendamentoId: novoId }, tenantId);
+  console.log(`📅 Encaixe aceito pela lista de espera (oferta ${oferta.id}, novo agendamento ${novoId})`);
+  return { handled: true, accepted: true, ofertaId: oferta.id, agendamentoId: novoId };
+}
 
 // ═══════════════════════════════════════════════════════════════
 // FINANCEIRO
 // ═══════════════════════════════════════════════════════════════
+
+// Financeiro (bancos, salários, CPF de funcionários, movimentações) e comissões são só do
+// administrador — as telas /financeiro e /comissoes já são só de admin (routeAccess.ts), mas a
+// API aceitava qualquer usuário logado (recepção lia salários e lançava saídas no banco).
+app.use(['/api/fin', '/api/financeiro', '/api/comissoes'], async (req, res, next) => {
+  try {
+    await verifyAdmin(req);
+    next();
+  } catch (err) {
+    if (err.message === 'Admin access required') return res.status(403).json({ error: 'Apenas o administrador da clínica acessa o financeiro.' });
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[financeiro:acesso]', err.message);
+    return res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+/** Valor em reais positivo, arredondado a centavos; null se inválido. */
+function valorPositivoEmReais(v) {
+  const n = typeof v === 'string' ? Number(v.trim()) : Number(v);
+  if (v === null || v === undefined || v === '' || !Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100) / 100;
+}
 
 app.get('/api/financeiro', async (req, res) => {
   try {
@@ -5466,7 +6678,9 @@ app.get('/api/dentistas', async (req, res) => {
 app.post('/api/dentistas', async (req, res) => {
   try {
     const { user } = await verifyAdmin(req);
-    const { nome, cro, especialidade, telefone, email, comissao_percentual } = req.body;
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { nome, especialidade, telefone, email, comissao_percentual } = req.body;
+    const cro = normalizarCro(req.body.cro);
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO dentistas (id, nome, cro, especialidade, telefone, email, comissao_percentual, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
@@ -5474,7 +6688,7 @@ app.post('/api/dentistas', async (req, res) => {
     );
     res.json({ id, success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErroGravacao(res, error, 'dentistas:create', 'Não foi possível salvar o profissional com este CRO. Fale com o suporte.');
   }
 });
 
@@ -5489,7 +6703,7 @@ app.put('/api/dentistas/:id', async (req, res) => {
     const { nome, cro, especialidade, telefone, email, comissao_percentual, ativo, cor_agenda, sala } = req.body;
     const sets = []; const params = [];
     if (nome !== undefined) { params.push(nome); sets.push(`nome=$${params.length}`); }
-    if (cro !== undefined) { params.push(cro); sets.push(`cro=$${params.length}`); }
+    if (cro !== undefined) { params.push(normalizarCro(cro)); sets.push(`cro=$${params.length}`); }
     if (especialidade !== undefined) { params.push(especialidade); sets.push(`especialidade=$${params.length}`); }
     if (telefone !== undefined) { params.push(telefone); sets.push(`telefone=$${params.length}`); }
     if (email !== undefined) { params.push(email); sets.push(`email=$${params.length}`); }
@@ -5504,9 +6718,7 @@ app.put('/api/dentistas/:id', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM dentistas WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
-    res.status(500).json({ error: error.message });
+    responderErroGravacao(res, error, 'dentistas:update', 'Não foi possível salvar o profissional com este CRO. Fale com o suporte.');
   }
 });
 
@@ -5519,7 +6731,7 @@ app.delete('/api/dentistas/:id', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
+    if (error.message === 'Admin access required') return res.status(403).json({ error: 'Admin access required' });
     res.status(500).json({ error: error.message });
   }
 });
@@ -5665,7 +6877,7 @@ app.put('/api/dentistas/:id/horarios', async (req, res) => {
     res.json(rows[0]);
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
+    if (error.message === 'Admin access required') return res.status(403).json({ error: 'Admin access required' });
     res.status(500).json({ error: error.message });
   }
 });
@@ -5923,24 +7135,54 @@ app.post('/api/fin/movements', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { type, description, category, value, date, bank_account_id, bank_name, patient, bill_id, payroll_id } = req.body;
+    const { type, description, category, date, bank_account_id, bank_name, patient, bill_id, payroll_id } = req.body;
+    // Valor negativo invertia o sinal do saldo ("+-R$ 50,00"); tipo desconhecido virava saída.
+    if (type !== 'entrada' && type !== 'saida') return res.status(400).json({ error: 'Tipo inválido: use entrada ou saida.' });
+    const value = valorPositivoEmReais(req.body.value);
+    if (value === null) return res.status(400).json({ error: 'O valor precisa ser maior que zero.' });
     if (bank_account_id) {
       const { rows: bank } = await pool.query('SELECT 1 FROM fin_bank_accounts WHERE id=$1 AND tenant_id=$2', [bank_account_id, user.tenant_id]);
       if (bank.length === 0) return res.status(404).json({ error: 'Conta não encontrada' });
     }
+    // Lançamento, saldo e checagem de duplicidade na mesma transação. A linha da conta a pagar /
+    // folha fica travada (FOR UPDATE): dois cliques ou duas abas pagando a mesma conta não
+    // debitam duas vezes — o segundo recebe 409.
     const id = randomUUID();
-    await pool.query(
-      'INSERT INTO fin_movements (id,type,description,category,value,date,bank_account_id,bank_name,patient,bill_id,payroll_id,tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
-      [id, type, description, category, value, date, bank_account_id || null, bank_name || '', patient || null, bill_id || null, payroll_id || null, user.tenant_id]
-    );
-    // Update bank balance
-    if (bank_account_id) {
-      const op = type === 'entrada' ? '+' : '-';
-      await pool.query(`UPDATE fin_bank_accounts SET balance = balance ${op} $1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`, [value, bank_account_id, user.tenant_id]);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const origens = [
+        ['fin_bills', 'bill_id', bill_id, 'Conta a pagar não encontrada', 'Esta conta já foi paga.'],
+        ['fin_payrolls', 'payroll_id', payroll_id, 'Folha não encontrada', 'Esta folha já foi paga.'],
+      ];
+      for (const [tabela, coluna, origemId, naoAchou, jaPaga] of origens) {
+        if (!origemId) continue;
+        const { rows: dono } = await client.query(`SELECT id FROM ${tabela} WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, [origemId, user.tenant_id]);
+        if (dono.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: naoAchou }); }
+        const { rows: ja } = await client.query(`SELECT 1 FROM fin_movements WHERE ${coluna}=$1 AND tenant_id=$2 LIMIT 1`, [origemId, user.tenant_id]);
+        if (ja.length > 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: jaPaga }); }
+      }
+      await client.query(
+        'INSERT INTO fin_movements (id,type,description,category,value,date,bank_account_id,bank_name,patient,bill_id,payroll_id,tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+        [id, type, description, category, value, date, bank_account_id || null, bank_name || '', patient || null, bill_id || null, payroll_id || null, user.tenant_id]
+      );
+      if (bank_account_id) {
+        const op = type === 'entrada' ? '+' : '-';
+        await client.query(`UPDATE fin_bank_accounts SET balance = balance ${op} $1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`, [value, bank_account_id, user.tenant_id]);
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
     }
     const { rows } = await pool.query('SELECT * FROM fin_movements WHERE id=$1 AND tenant_id=$2', [id, user.tenant_id]);
     res.status(201).json(rows[0]);
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) {
+    console.error('[fin:movements:create]', error.message);
+    res.status(500).json({ error: 'Erro ao lançar a movimentação.' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -5997,7 +7239,13 @@ app.post('/api/estoque', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote } = req.body;
+    const { nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote } = req.body || {};
+    if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'Informe o nome do item' });
+    for (const [campo, v] of [['quantidade', quantidade], ['quantidade_minima', quantidade_minima]]) {
+      if (v !== undefined && v !== null && v !== '' && quantidadeEstoque(v) === null) {
+        return res.status(400).json({ error: `${campo === 'quantidade' ? 'Quantidade' : 'Estoque mínimo'} deve ser um número inteiro maior ou igual a zero` });
+      }
+    }
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO estoque (id, nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
@@ -6017,6 +7265,11 @@ app.put('/api/estoque/:id', async (req, res) => {
     const sets = []; const params = [];
     if (nome !== undefined) { params.push(nome); sets.push(`nome=$${params.length}`); }
     if (categoria !== undefined) { params.push(categoria); sets.push(`categoria=$${params.length}`); }
+    for (const [campo, v] of [['quantidade', quantidade], ['quantidade_minima', quantidade_minima]]) {
+      if (v !== undefined && quantidadeEstoque(v) === null) {
+        return res.status(400).json({ error: `${campo === 'quantidade' ? 'Quantidade' : 'Estoque mínimo'} deve ser um número inteiro maior ou igual a zero` });
+      }
+    }
     if (quantidade !== undefined) { params.push(quantidade); sets.push(`quantidade=$${params.length}`); }
     if (quantidade_minima !== undefined) { params.push(quantidade_minima); sets.push(`quantidade_minima=$${params.length}`); }
     if (unidade !== undefined) { params.push(unidade); sets.push(`unidade=$${params.length}`); }
@@ -6080,21 +7333,42 @@ app.post('/api/estoque/:id/movimentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { tipo, quantidade, motivo, usuario_nome } = req.body;
-    const { rows: item } = await pool.query('SELECT 1 FROM estoque WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
-    if (item.length === 0) return res.status(404).json({ error: 'Item não encontrado' });
-    const id = crypto.randomUUID();
-    await pool.query(
-      'INSERT INTO estoque_movimentos (id, item_id, tipo, quantidade, motivo, usuario_nome, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [id, req.params.id, tipo, quantidade, motivo, usuario_nome, user.tenant_id]
-    );
-    // Update stock quantity
-    const delta = tipo === 'entrada' ? quantidade : -quantidade;
-    await pool.query('UPDATE estoque SET quantidade = GREATEST(0, quantidade + $1), updated_at=NOW() WHERE id=$2 AND tenant_id=$3', [delta, req.params.id, user.tenant_id]);
+    const { tipo, motivo, usuario_nome } = req.body || {};
+    // Antes: quantidade negativa invertia a saída, tipo desconhecido subtraía, e a saída maior que o
+    // saldo gravava o movimento inteiro mas zerava o saldo (GREATEST) — histórico ≠ saldo.
+    if (!TIPOS_MOVIMENTO_ESTOQUE.includes(tipo)) return res.status(400).json({ error: 'Tipo deve ser entrada ou saida' });
+    const quantidade = quantidadeEstoque(req.body?.quantidade, { positivo: true });
+    if (quantidade === null) return res.status(400).json({ error: 'Quantidade deve ser um número inteiro maior que zero' });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: item } = await client.query('SELECT quantidade FROM estoque WHERE id=$1 AND tenant_id=$2 FOR UPDATE', [req.params.id, user.tenant_id]);
+      if (item.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Item não encontrado' }); }
+      const saldo = Number(item[0].quantidade) || 0;
+      if (tipo === 'saida' && quantidade > saldo) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: `Saldo insuficiente: há ${saldo} em estoque` });
+      }
+      const id = crypto.randomUUID();
+      await client.query(
+        'INSERT INTO estoque_movimentos (id, item_id, tipo, quantidade, motivo, usuario_nome, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [id, req.params.id, tipo, quantidade, motivo, usuario_nome, user.tenant_id]
+      );
+      const delta = tipo === 'entrada' ? quantidade : -quantidade;
+      await client.query('UPDATE estoque SET quantidade = quantidade + $1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3', [delta, req.params.id, user.tenant_id]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
     const { rows } = await pool.query('SELECT * FROM estoque WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json({ success: true, item: rows[0] });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    const status = httpStatusOf(error);
+    if (status === 500) console.error('[estoque:movimento]', error.code || error.message);
+    res.status(status).json({ error: status === 500 ? 'Erro interno' : error.message });
   }
 });
 
@@ -6226,6 +7500,8 @@ app.post('/api/tratamentos/:id/etapas', async (req, res) => {
     const { descricao, dente, valor, status, dentista_id, observacoes, ordem } = req.body;
     const { rows: trat } = await pool.query('SELECT 1 FROM tratamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     if (trat.length === 0) return res.status(404).json({ error: 'Tratamento não encontrado' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO tratamento_etapas (id, tratamento_id, descricao, dente, valor, status, dentista_id, observacoes, ordem, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
@@ -6242,6 +7518,8 @@ app.put('/api/tratamentos/etapas/:id', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { descricao, dente, valor, status, dentista_id, observacoes, ordem, data_realizada } = req.body;
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const sets = []; const params = [];
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
     if (dente !== undefined) { params.push(dente); sets.push(`dente=$${params.length}`); }
@@ -6303,11 +7581,23 @@ app.post('/api/comissoes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status } = req.body;
+    const { dentista_id, tratamento_id, paciente_id, percentual, data, procedimento, descricao, status } = req.body;
+    const valor = Number(req.body.valor);
+    if (!Number.isFinite(valor) || valor < 0) return res.status(400).json({ error: 'Valor da comissão inválido.' });
+    const perc = percentual === undefined || percentual === null || percentual === '' ? null : Number(percentual);
+    if (perc !== null && (!Number.isFinite(perc) || perc < 0 || perc > 100)) return res.status(400).json({ error: 'Percentual precisa estar entre 0 e 100.' });
+    if (status !== undefined && !['pendente', 'aprovado', 'pago'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
+    if (tratamento_id) {
+      const { rows: trat } = await pool.query('SELECT 1 FROM tratamentos WHERE id::text = $1 AND tenant_id = $2 LIMIT 1', [String(tratamento_id), user.tenant_id]);
+      if (!trat.length) return res.status(400).json({ error: 'Tratamento não encontrado nesta clínica.' });
+    }
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO comissoes (id, dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-      [id, dentista_id, tratamento_id, paciente_id, valor, percentual, data || new Date().toISOString().split('T')[0], procedimento, descricao, status || 'pendente', user.tenant_id]
+      // Data padrão no fuso da clínica (toISOString é UTC: depois das 21h gravava o dia seguinte)
+      [id, dentista_id, tratamento_id, paciente_id, Math.round(valor * 100) / 100, perc, data || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }), procedimento, descricao, status || 'pendente', user.tenant_id]
     );
     res.json({ id, success: true });
   } catch (error) {
@@ -6319,7 +7609,12 @@ app.put('/api/comissoes/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { valor, percentual, status, pago, descricao } = req.body;
+    const { valor, status, pago, descricao } = req.body || {};
+    // '' do campo vazio vira null (Number('') = 0 passava na validação e o '' cru dava 500 na coluna numérica)
+    const percentual = req.body?.percentual === '' ? null : req.body?.percentual;
+    if (status !== undefined && !['pendente', 'aprovado', 'pago'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+    if (valor !== undefined && !(Number.isFinite(Number(valor)) && Number(valor) >= 0)) return res.status(400).json({ error: 'Valor da comissão inválido.' });
+    if (percentual !== undefined && percentual !== null && !(Number.isFinite(Number(percentual)) && Number(percentual) >= 0 && Number(percentual) <= 100)) return res.status(400).json({ error: 'Percentual precisa estar entre 0 e 100.' });
     const sets = []; const params = [];
     if (valor !== undefined) { params.push(valor); sets.push(`valor=$${params.length}`); }
     if (percentual !== undefined) { params.push(percentual); sets.push(`percentual=$${params.length}`); }
@@ -6382,6 +7677,8 @@ app.post('/api/prontuarios', async (req, res) => {
       const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id=$1 AND tenant_id=$2', [paciente_id, user.tenant_id]);
       if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     }
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO prontuarios (id, paciente_id, dentista_id, descricao, tipo, titulo, odontograma, anexos, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
@@ -6458,6 +7755,27 @@ async function congelarVersoesItens(itens, tenantId) {
   return out;
 }
 
+const ORCAMENTO_STATUS = ['pendente', 'aprovado', 'reprovado', 'em_tratamento', 'finalizado'];
+
+/**
+ * Confere os valores de um orçamento antes de gravar. `atual` = linha já gravada (no PUT),
+ * para validar desconto contra o subtotal que vai ficar. Devolve a mensagem de erro ou null.
+ */
+function erroValoresOrcamento(body, atual = null) {
+  const num = (v) => (v === undefined ? undefined : Number(v));
+  const total = num(body.valor_total) ?? Number(atual?.valor_total ?? 0);
+  const desc = num(body.desconto) ?? Number(atual?.desconto ?? 0);
+  if (!Number.isFinite(total) || total < 0) return 'Valor total inválido.';
+  if (!Number.isFinite(desc) || desc < 0) return 'O desconto não pode ser negativo.';
+  if (desc > total) return 'O desconto não pode passar do subtotal.';
+  if (body.parcelas !== undefined && body.parcelas !== null) {
+    const p = Number(body.parcelas);
+    if (!Number.isInteger(p) || p < 1 || p > 48) return 'Número de parcelas inválido (1 a 48).';
+  }
+  if (body.status !== undefined && !ORCAMENTO_STATUS.includes(body.status)) return 'Status inválido.';
+  return null;
+}
+
 app.post('/api/orcamentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -6466,6 +7784,10 @@ app.post('/api/orcamentos', async (req, res) => {
       paciente_id, dentista_id, itens, valor_total, desconto, status, validade,
       observacoes, forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
     } = req.body;
+    const erroValor = erroValoresOrcamento(req.body);
+    if (erroValor) return res.status(400).json({ error: erroValor });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const itensCongelados = await congelarVersoesItens(itens, user.tenant_id);
     const id = crypto.randomUUID();
     await pool.query(
@@ -6498,6 +7820,16 @@ app.put('/api/orcamentos/:id', async (req, res) => {
       itens, valor_total, desconto, status, validade, observacoes,
       forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
     } = req.body;
+    const { rows: atualRows } = await pool.query('SELECT status, valor_total, desconto FROM orcamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (atualRows.length === 0) return res.status(404).json({ error: 'Orçamento não encontrado' });
+    // Orçamento aprovado obriga as duas partes (CDC art. 40 §2º): preço, itens, desconto e
+    // condições só mudam enquanto está pendente. Status muda por PATCH /status.
+    const mexeEmValores = [itens, valor_total, desconto, forma_pagamento, parcelas].some((v) => v !== undefined);
+    if (mexeEmValores && atualRows[0].status !== 'pendente') {
+      return res.status(409).json({ error: 'Orçamento já aprovado ou encerrado: valores e condições não podem ser alterados. Crie um novo orçamento.' });
+    }
+    const erroValor = erroValoresOrcamento(req.body, atualRows[0]);
+    if (erroValor) return res.status(400).json({ error: erroValor });
     const sets = []; const params = [];
     if (itens !== undefined) {
       const itensCongelados = await congelarVersoesItens(itens, user.tenant_id);
@@ -6626,10 +7958,11 @@ app.get('/api/procedimentos-catalogo', async (req, res) => {
 });
 
 app.post('/api/procedimentos-catalogo', async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    client = await pool.connect();
     const {
       codigo, nome, categoria, valor_particular, valor_convenio,
       duracao_minutos, cor, requer_dente, requer_face, descricao,
@@ -6653,18 +7986,21 @@ app.post('/api/procedimentos-catalogo', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1 AND tenant_id=$2', [id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: error.message });
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[catálogo] erro:', error.message);
+    res.status(500).json({ error: 'Erro ao salvar procedimento' });
   } finally {
-    client.release();
+    client?.release();
   }
 });
 
 app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    client = await pool.connect();
     const procId = req.params.id;
     const fields = ['codigo','nome','categoria','valor_particular','valor_convenio','duracao_minutos','cor','requer_dente','requer_face','descricao','ativo'];
 
@@ -6698,10 +8034,12 @@ app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1 AND tenant_id=$2', [procId, user.tenant_id]);
     res.json({ ...rows[0], _nova_versao: novaVersao });
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: error.message });
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[catálogo] erro:', error.message);
+    res.status(500).json({ error: 'Erro ao salvar procedimento' });
   } finally {
-    client.release();
+    client?.release();
   }
 });
 
@@ -6852,7 +8190,7 @@ app.post('/api/execucoes', async (req, res) => {
       const assinaturaParams = [
           aId, paciente_id, dentista_id || null, assinatura.base64,
           assinatura.lat ?? null, assinatura.lng ?? null, assinatura.accuracy ?? null,
-          req.ip || req.headers['x-forwarded-for'] || null,
+          clientIp(req),
           req.headers['user-agent'] || null,
           assinatura.canal || 'none',
           assinatura.codigo || null,
@@ -6968,9 +8306,16 @@ app.get('/api/assinaturas/:id', async (req, res) => {
 // Dashboard KPIs (handler compartilhado: /api/dashboard e /api/dashboard/kpis)
 app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const today = new Date().toISOString().split('T')[0];
-    const firstDayOfMonth = `${today.substring(0, 7)}-01`;
+    // fin_movements.date é VARCHAR: a tela Financeiro grava dd/mm/aaaa (toLocaleDateString pt-BR),
+    // registros antigos podem estar em aaaa-mm-dd. Casa o mês nos dois formatos sem converter
+    // (texto fora do padrão simplesmente não entra, em vez de derrubar a consulta com erro de cast).
+    const [anoAtual, mesAtual] = today.split('-');
+    const mesIso = `${anoAtual}-${mesAtual}-%`;
+    const mesBr = `__/${mesAtual}/${anoAtual}%`;
+    const FIN_MES_SQL = 'SELECT COALESCE(SUM(value), 0)::numeric AS total FROM fin_movements WHERE type = $1 AND tenant_id = $2 AND (date LIKE $3 OR date LIKE $4)';
 
     // Helper: silencia erro se a tabela ainda não existe (migration pendente)
     const safe = async (sql, params = []) => {
@@ -6982,7 +8327,6 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
       }
     };
 
-    const { user } = await verifyUser(req);
     const [
       pacientesTotal,
       agendaHojeRows,
@@ -6996,15 +8340,22 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
     ] = await Promise.all([
       safe('SELECT COUNT(*)::int AS total FROM pacientes WHERE tenant_id = $1', [user.tenant_id]),
       safe('SELECT status, COUNT(*)::int AS qtd FROM agendamentos WHERE data = $1 AND tenant_id = $2 GROUP BY status', [today, user.tenant_id]),
-      safe('SELECT COALESCE(SUM(valor), 0)::numeric AS total FROM financeiro WHERE tipo = $1 AND data >= $2 AND tenant_id = $3', ['receita', firstDayOfMonth, user.tenant_id]),
-      safe('SELECT COALESCE(SUM(valor), 0)::numeric AS total FROM financeiro WHERE tipo = $1 AND data >= $2 AND tenant_id = $3', ['despesa', firstDayOfMonth, user.tenant_id]),
-      safe(`SELECT status, COUNT(*)::int AS qtd, COALESCE(SUM(valor_final), 0)::numeric AS soma
+      // Recebimentos/pagamentos reais do mês: movimentações da tela Financeiro.
+      safe(FIN_MES_SQL, ['entrada', user.tenant_id, mesIso, mesBr]),
+      safe(FIN_MES_SQL, ['saida', user.tenant_id, mesIso, mesBr]),
+      // valor_total é o subtotal bruto; o que o paciente paga é valor_total − desconto.
+      safe(`SELECT status, COUNT(*)::int AS qtd, COALESCE(SUM(valor_total - COALESCE(desconto, 0)), 0)::numeric AS soma
             FROM orcamentos WHERE tenant_id = $1 GROUP BY status`, [user.tenant_id]),
-      safe(`SELECT stage, COUNT(*)::int AS qtd FROM crm_leads WHERE tenant_id = $1 GROUP BY stage`, [user.tenant_id]),
-      safe("SELECT COUNT(*)::int AS total FROM pacientes WHERE (status = 'ativo' OR status IS NULL) AND tenant_id = $1", [user.tenant_id]),
-      safe("SELECT COUNT(*)::int AS total FROM pacientes WHERE status = 'inativo' AND tenant_id = $1", [user.tenant_id]),
-      safe(`SELECT id, nome AS name, quantidade_atual AS current_stock,
-                   quantidade_minima AS min_stock, custo_unitario AS unit_cost
+      safe(`SELECT kanban_stage AS stage, COUNT(*)::int AS qtd FROM crm_leads WHERE tenant_id = $1 GROUP BY kanban_stage`, [user.tenant_id]),
+      // pacientes não tem coluna status: ativo = teve agendamento nos últimos 12 meses.
+      safe(`SELECT COUNT(*)::int AS total FROM pacientes p WHERE p.tenant_id = $1 AND EXISTS (
+              SELECT 1 FROM agendamentos a WHERE a.paciente_id = p.id AND a.tenant_id = p.tenant_id
+                 AND a.data >= (CURRENT_DATE - INTERVAL '12 months'))`, [user.tenant_id]),
+      safe(`SELECT COUNT(*)::int AS total FROM pacientes p WHERE p.tenant_id = $1 AND NOT EXISTS (
+              SELECT 1 FROM agendamentos a WHERE a.paciente_id = p.id AND a.tenant_id = p.tenant_id
+                 AND a.data >= (CURRENT_DATE - INTERVAL '12 months'))`, [user.tenant_id]),
+      safe(`SELECT id, nome AS name, quantidade AS current_stock,
+                   quantidade_minima AS min_stock, valor_unitario AS unit_cost
             FROM estoque WHERE tenant_id = $1`, [user.tenant_id]),
     ]);
 
@@ -7100,8 +8451,9 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
       },
     });
   } catch (error) {
-    const status = error.message === 'Unauthorized' ? 401 : 500;
-    res.status(status).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('GET /api/dashboard error:', error.message);
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 
@@ -7111,124 +8463,18 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
 // GET /api/comercial/painel?attendantId=<uuid|me>
 // Quando attendantId omitido OU = 'me' e role != admin → escopo do user logado
 // ═══════════════════════════════════════════════════════════════
-// ─── Dashboard KPIs (por clínica) ───────────────────────────
-app.get('/api/dashboard/kpis', async (req, res) => {
-  try {
-    const { user } = await verifyUser(req);
-    const tId = user.tenant_id;
-    if (!tId) return res.status(403).json({ error: 'Sem clínica vinculada' });
-
-    // Tabela/coluna ausente em instalações antigas vira lista vazia, não 500.
-    const safe = async (sql) => {
-      try { return (await pool.query(sql, [tId])).rows; }
-      catch (err) {
-        if (err.code === '42P01' || err.code === '42703') return [];
-        throw err;
-      }
-    };
-    const TODAY = `(NOW() AT TIME ZONE 'America/Sao_Paulo')::date`;
-    const [pac, agenda, movs, orcs, leads, est] = await Promise.all([
-      safe('SELECT COUNT(*)::int AS n FROM pacientes WHERE tenant_id = $1'),
-      safe(`SELECT status FROM agendamentos WHERE tenant_id = $1 AND data = ${TODAY}`),
-      safe(`SELECT type, value FROM fin_movements WHERE tenant_id = $1 AND date >= date_trunc('month', ${TODAY})`),
-      safe('SELECT status, valor_total FROM orcamentos WHERE tenant_id = $1'),
-      safe('SELECT kanban_stage, status, valor, origem, paciente_id FROM crm_leads WHERE tenant_id = $1'),
-      safe('SELECT nome, quantidade, quantidade_minima, valor_unitario FROM estoque WHERE tenant_id = $1'),
-    ]);
-
-    const totalPacientes = pac[0]?.n || 0;
-    const count = (rows, fn) => rows.filter(fn).length;
-    const finalizados = count(agenda, (a) => a.status === 'concluido' || a.status === 'finalizado' || a.status === 'realizado');
-    const agendaKpis = {
-      total: agenda.length,
-      finalizados,
-      emAtendimento: count(agenda, (a) => a.status === 'em_atendimento'),
-      aguardando: count(agenda, (a) => a.status === 'agendado' || a.status === 'aguardando' || a.status === 'confirmado'),
-      faltas: count(agenda, (a) => a.status === 'cancelado' || a.status === 'faltou' || a.status === 'desmarcado'),
-      encaixes: count(agenda, (a) => a.status === 'encaixe'),
-      taxaPresenca: agenda.length ? Math.round((finalizados / agenda.length) * 100) : 0,
-    };
-
-    const sum = (rows, fn, val) => rows.filter(fn).reduce((acc, r) => acc + Number(val(r) || 0), 0);
-    const receitaMensal = sum(movs, (m) => m.type === 'entrada', (m) => m.value);
-    const despesaMensal = sum(movs, (m) => m.type === 'saida', (m) => m.value);
-
-    const aprovados = orcs.filter((o) => o.status === 'aprovado' || o.status === 'finalizado');
-    const valorAprovado = sum(aprovados, () => true, (o) => o.valor_total);
-    const orcamentos = {
-      total: orcs.length,
-      pendentes: count(orcs, (o) => o.status === 'pendente'),
-      aprovados: aprovados.length,
-      reprovados: count(orcs, (o) => o.status === 'reprovado'),
-      valorAprovado,
-      taxaConversao: orcs.length ? Math.round((aprovados.length / orcs.length) * 100) : 0,
-      ticketMedio: aprovados.length ? valorAprovado / aprovados.length : 0,
-    };
-
-    // Lead convertido = orçamento aprovado no Kanban ou já vinculado a paciente.
-    const leadStatus = (l) => (l.kanban_stage === 'orcamento_aprovado' || l.paciente_id) ? 'convertido'
-      : l.status === 'perdido' ? 'perdido'
-      : (l.kanban_stage || 'lead') === 'lead' ? 'novo' : 'ativo';
-    const ls = leads.map((l) => ({ ...l, st: leadStatus(l) }));
-    const crm = {
-      totalLeadsKanban: ls.length,
-      semResposta: count(ls, (l) => l.st === 'novo'),
-      ativos: count(ls, (l) => l.st !== 'perdido' && l.st !== 'convertido'),
-      inativos: count(ls, (l) => l.st === 'perdido'),
-      receitaTotal: sum(ls, (l) => l.st === 'convertido', (l) => l.valor),
-    };
-    const origins = new Map();
-    for (const l of ls) {
-      const k = l.origem || 'Outros';
-      const o = origins.get(k) || { leads: 0, convertidos: 0 };
-      o.leads++; if (l.st === 'convertido') o.convertidos++;
-      origins.set(k, o);
-    }
-    const conversionByOrigin = [...origins].map(([origin, o]) => ({
-      origin, leads: o.leads, convertidos: o.convertidos, rate: o.leads ? (o.convertidos / o.leads) * 100 : 0,
-    }));
-
-    const qtd = (i) => Number(i.quantidade || 0);
-    const abaixoMinimo = est.filter((i) => qtd(i) > 0 && qtd(i) <= Number(i.quantidade_minima || 0));
-    const semEstoque = est.filter((i) => qtd(i) <= 0);
-    const estoque = {
-      totalItens: est.length,
-      abaixoMinimo: abaixoMinimo.length,
-      itensAbaixoMinimo: abaixoMinimo.map((i) => i.nome),
-      semEstoque: semEstoque.length,
-      itensSemEstoque: semEstoque.map((i) => i.nome),
-      valorTotalEstoque: est.reduce((acc, i) => acc + Number(i.valor_unitario || 0) * qtd(i), 0),
-    };
-
-    res.json({
-      totalPacientes,
-      agendaHoje: agendaKpis.total,
-      receitaMensal,
-      despesaMensal,
-      agenda: agendaKpis,
-      orcamentos,
-      crm,
-      pacientes: { totalCadastrados: totalPacientes },
-      estoque,
-      conversionByOrigin,
-    });
-  } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('GET /api/dashboard/kpis error:', error);
-    res.status(500).json({ error: 'Erro ao calcular KPIs' });
-  }
-});
-
 app.get('/api/comercial/painel', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    const today = new Date().toISOString().split('T')[0];
+    // Dia de São Paulo (toISOString é UTC: depois das 21h o "hoje" virava amanhã).
+    const today = spClock().day;
     const requested = (req.query.attendantId || '').toString();
 
     // Admin pode passar attendantId arbitrário; caso contrário usa o próprio.
     const attendantId = (user.role === 'admin' && requested && requested !== 'me')
       ? requested
       : user.id;
+    if (!PACIENTE_UUID_RE.test(String(attendantId))) return res.status(400).json({ error: 'Atendente inválido' });
 
     const safe = async (sql, params = []) => {
       try { return await pool.query(sql, params); }
@@ -7250,26 +8496,28 @@ app.get('/api/comercial/painel', async (req, res) => {
         `SELECT COUNT(*)::int AS total
            FROM attendance_sessions
           WHERE attendant_id = $1
-            AND assigned_at::date = $2
+            AND (assigned_at AT TIME ZONE 'America/Sao_Paulo')::date = $2::date
             AND tenant_id = $3`,
         [attendantId, today, user.tenant_id]
       ),
-      // Agendamentos criados hoje vinculados a leads atribuídos a este atendente
+      // Agendamentos criados hoje para pacientes de leads atribuídos a este atendente
+      // (agendamentos não guarda quem criou; o vínculo é lead.paciente_id).
       safe(
-        `SELECT COUNT(*)::int AS total
+        `SELECT COUNT(DISTINCT a.id)::int AS total
            FROM agendamentos a
-           LEFT JOIN crm_leads l ON l.id::text = a.paciente_id::text
-          WHERE a.created_at::date = $1
-            AND (l.assigned_to = $2 OR a.created_by = $2)
+           JOIN crm_leads l ON l.paciente_id = a.paciente_id AND l.tenant_id = a.tenant_id
+          WHERE (a.created_at AT TIME ZONE 'America/Sao_Paulo')::date = $1::date
+            AND l.assigned_to::text = $2
             AND a.tenant_id = $3`,
         [today, attendantId, user.tenant_id]
       ),
-      // Leads pendentes do atendente: sem_resposta ou aguardando ação
+      // Leads pendentes do atendente: novos, em follow-up ou sem resposta.
+      // (Antes usava etapas que não existem no funil — primeiro_contato, em_negociacao.)
       safe(
         `SELECT COUNT(*)::int AS total
            FROM crm_leads
           WHERE assigned_to = $1
-            AND kanban_stage IN ('sem_resposta','primeiro_contato','em_negociacao')
+            AND kanban_stage IN ('lead','followup','followup_2','followup_3','sem_resposta')
             AND tenant_id = $2`,
         [attendantId, user.tenant_id]
       ),
@@ -7277,24 +8525,28 @@ app.get('/api/comercial/painel', async (req, res) => {
       safe(
         `SELECT COALESCE(NULLIF(origem,''), 'Outros') AS origin,
                 COUNT(*)::int AS leads,
-                COUNT(*) FILTER (WHERE kanban_stage IN ('paciente_agendado','em_atendimento','pos_consulta','finalizado'))::int AS convertidos
+                -- Convertido = virou paciente ou teve orçamento aprovado (as etapas antigas não existiam).
+                COUNT(*) FILTER (WHERE paciente_id IS NOT NULL OR status = 'paciente' OR kanban_stage = 'orcamento_aprovado')::int AS convertidos
            FROM crm_leads
           WHERE (assigned_to = $1 OR $1 IS NULL)
             AND tenant_id = $2
           GROUP BY origem`,
         [attendantId, user.tenant_id]
       ),
-      // Follow-ups: leads com follow_up_at <= now() OU em sem_resposta
+      // Follow-ups: leads do atendente que aguardam retorno (sem coluna de data agendada:
+      // usa updated_at), com a última mensagem do chat da mesma clínica como nota.
       safe(
-        `SELECT id, nome AS lead_name, kanban_stage, follow_up_at, last_message, updated_at
-           FROM crm_leads
-          WHERE assigned_to = $1
-            AND tenant_id = $2
-            AND (
-              (follow_up_at IS NOT NULL AND follow_up_at <= NOW() + INTERVAL '2 days')
-              OR kanban_stage IN ('sem_resposta','primeiro_contato')
-            )
-          ORDER BY COALESCE(follow_up_at, updated_at) ASC
+        `SELECT l.id, l.nome AS lead_name, l.kanban_stage, l.updated_at, m.content AS last_message
+           FROM crm_leads l
+           LEFT JOIN LATERAL (
+             SELECT cm.content FROM chat_messages cm
+              WHERE cm.lead_id = l.id::text AND cm.tenant_id = l.tenant_id
+              ORDER BY cm.timestamp DESC NULLS LAST LIMIT 1
+           ) m ON true
+          WHERE l.assigned_to::text = $1
+            AND l.tenant_id = $2
+            AND l.kanban_stage IN ('followup','followup_2','followup_3','sem_resposta')
+          ORDER BY l.updated_at ASC
           LIMIT 12`,
         [attendantId, user.tenant_id]
       ),
@@ -7318,17 +8570,16 @@ app.get('/api/comercial/painel', async (req, res) => {
 
     const stageToType = {
       sem_resposta: 'reativacao',
-      primeiro_contato: 'retorno',
-      em_negociacao: 'confirmacao',
+      followup: 'retorno',
+      followup_2: 'retorno',
+      followup_3: 'retorno',
     };
 
     const followUps = followUpsRows.rows.map(r => ({
       id: r.id,
       leadName: r.lead_name || 'Lead sem nome',
       type: stageToType[r.kanban_stage] || 'retorno',
-      scheduledAt: r.follow_up_at
-        ? new Date(r.follow_up_at).toISOString()
-        : new Date(r.updated_at).toISOString(),
+      scheduledAt: new Date(r.updated_at).toISOString(),
       note: r.last_message ? String(r.last_message).slice(0, 80) : 'Sem nota',
     }));
 
@@ -7339,8 +8590,9 @@ app.get('/api/comercial/painel', async (req, res) => {
       conversionByOrigin,
     });
   } catch (error) {
-    const status = error.message === 'Unauthorized' ? 401 : 500;
-    res.status(status).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('GET /api/comercial/painel error:', error.message);
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 
@@ -7353,6 +8605,8 @@ app.get('/api/comercial/painel', async (req, res) => {
 app.get('/api/dentista/painel/:id?', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    const tId = user.tenant_id;
+    if (!tId) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const today = new Date().toISOString().split('T')[0];
 
     const safe = async (sql, params = []) => {
@@ -7363,9 +8617,10 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       }
     };
 
-    // Resolve dentista alvo
+    // Resolve dentista alvo (sempre da clínica do usuário; id de outra clínica → 404)
     let dentista = null;
     if (req.params.id) {
+      if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Dentista não encontrado' });
       const r = await safe('SELECT * FROM dentistas WHERE id = $1 AND tenant_id = $2 LIMIT 1', [req.params.id, user.tenant_id]);
       dentista = r.rows[0] || null;
     } else if (user.email) {
@@ -7373,8 +8628,10 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       dentista = r.rows[0] || null;
     }
 
-    // Fallback: se admin e nada resolvido, pega o primeiro deste tenant
-    if (!dentista && user.role === 'admin') {
+    if (req.params.id && !dentista) return res.status(404).json({ error: 'Dentista não encontrado' });
+
+    // Fallback (só sem id): se admin e nada resolvido, pega o primeiro deste tenant
+    if (!dentista && !req.params.id && user.role === 'admin') {
       const r = await safe('SELECT * FROM dentistas WHERE tenant_id = $1 ORDER BY nome ASC LIMIT 1', [user.tenant_id]);
       dentista = r.rows[0] || null;
     }
@@ -7393,68 +8650,73 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
     const [atendHojeRows, agendaRows, orcamentosRows, prontuariosRows, comissoesRows, tratamentosRows] = await Promise.all([
       // Atendimentos de hoje
       safe(
-        `SELECT a.id, a.paciente_id, a.paciente_nome, p.nome as p_nome, a.hora, a.procedimento,
-                a.status, a.tipo, a.valor
+        `SELECT a.id, a.paciente_id, p.nome as p_nome, a.hora, a.procedimento,
+                a.status, a.tipo
            FROM agendamentos a
-           LEFT JOIN pacientes p ON p.id = a.paciente_id
-          WHERE a.dentista_id = $1 AND a.data = $2
+           LEFT JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+          WHERE a.dentista_id = $1 AND a.data = $2 AND a.tenant_id = $3
           ORDER BY a.hora ASC`,
-        [dentistaId, today]
+        [dentistaId, today, tId]
       ),
       // Agenda completa (hoje + próximos 30 dias)
       safe(
-        `SELECT a.id, a.paciente_id, a.paciente_nome, p.nome as p_nome, a.data, a.hora,
+        `SELECT a.id, a.paciente_id, p.nome as p_nome, a.data, a.hora,
                 a.duracao, a.tipo, a.status, a.observacoes, a.procedimento
            FROM agendamentos a
-           LEFT JOIN pacientes p ON p.id = a.paciente_id
-          WHERE a.dentista_id = $1 AND a.data >= $2 AND a.data <= ($2::date + INTERVAL '30 days')
+           LEFT JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+          WHERE a.dentista_id = $1 AND a.data >= $2 AND a.data <= ($2::date + INTERVAL '30 days') AND a.tenant_id = $3
           ORDER BY a.data ASC, a.hora ASC`,
-        [dentistaId, today]
+        [dentistaId, today, tId]
       ),
       // Orçamentos do dentista
       safe(
-        `SELECT o.id, o.paciente_id, o.paciente_nome, p.nome as p_nome, o.itens,
-                o.valor_total, o.status, o.created_at
+        `SELECT o.id, o.paciente_id, p.nome as p_nome, o.itens,
+                o.valor_total, o.desconto, o.status, o.created_at
            FROM orcamentos o
-           LEFT JOIN pacientes p ON p.id = o.paciente_id
-          WHERE o.dentista_id = $1
+           LEFT JOIN pacientes p ON p.id = o.paciente_id AND p.tenant_id = o.tenant_id
+          WHERE o.dentista_id = $1 AND o.tenant_id = $2
           ORDER BY o.created_at DESC
           LIMIT 50`,
-        [dentistaId]
+        [dentistaId, tId]
       ),
       // Prontuários do dentista
       safe(
-        `SELECT pr.id, pr.paciente_id, pr.paciente_nome, p.nome as p_nome,
+        `SELECT pr.id, pr.paciente_id, p.nome as p_nome,
                 pr.titulo, pr.descricao, pr.tipo, pr.created_at,
-                p.alergias
+                an.alergias
            FROM prontuarios pr
-           LEFT JOIN pacientes p ON p.id = pr.paciente_id
-          WHERE pr.dentista_id = $1
+           LEFT JOIN pacientes p ON p.id = pr.paciente_id AND p.tenant_id = pr.tenant_id
+           LEFT JOIN LATERAL (
+             SELECT x.alergias FROM anamneses x
+              WHERE x.paciente_id = pr.paciente_id AND x.tenant_id = pr.tenant_id
+              ORDER BY x.updated_at DESC NULLS LAST LIMIT 1
+           ) an ON true
+          WHERE pr.dentista_id = $1 AND pr.tenant_id = $2
           ORDER BY pr.created_at DESC
           LIMIT 50`,
-        [dentistaId]
+        [dentistaId, tId]
       ),
       // Comissões do dentista
       safe(
         `SELECT c.id, c.paciente_id, c.procedimento, c.descricao, c.valor, c.percentual,
                 c.data, c.status, p.nome as paciente_nome
            FROM comissoes c
-           LEFT JOIN pacientes p ON p.id = c.paciente_id
-          WHERE c.dentista_id = $1
+           LEFT JOIN pacientes p ON p.id = c.paciente_id AND p.tenant_id = c.tenant_id
+          WHERE c.dentista_id = $1 AND c.tenant_id = $2
           ORDER BY c.data DESC
           LIMIT 100`,
-        [dentistaId]
+        [dentistaId, tId]
       ),
       // Tratamentos do dentista (todos os pacientes)
       safe(
         `SELECT t.id, t.paciente_id, t.descricao, t.dente, t.valor, t.status, t.plano,
                 t.observacoes, t.created_at, t.updated_at, p.nome as paciente_nome
            FROM tratamentos t
-           LEFT JOIN pacientes p ON p.id = t.paciente_id
-          WHERE t.dentista_id = $1
+           LEFT JOIN pacientes p ON p.id = t.paciente_id AND p.tenant_id = t.tenant_id
+          WHERE t.dentista_id = $1 AND t.tenant_id = $2
           ORDER BY t.created_at DESC
           LIMIT 200`,
-        [dentistaId]
+        [dentistaId, tId]
       ),
     ]);
 
@@ -7502,7 +8764,8 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
         pacienteId: r.paciente_id || undefined,
         pacienteNome: r.p_nome || r.paciente_nome || 'Paciente',
         itens: norm,
-        total: Number(r.valor_total || norm.reduce((s, i) => s + i.valor * i.quantidade, 0)),
+        // Total que o paciente paga: subtotal − desconto (valor_total é o bruto)
+        total: Math.round((Number(r.valor_total || norm.reduce((s, i) => s + i.valor * i.quantidade, 0)) - (Number(r.desconto) || 0)) * 100) / 100,
         status: r.status || 'pendente',
         criadoEm: r.created_at,
       };
@@ -7517,6 +8780,7 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       let alergias = r.alergias;
       if (typeof alergias === 'string') { try { alergias = JSON.parse(alergias); } catch { alergias = []; } }
       if (!Array.isArray(alergias)) alergias = [];
+      alergias = alergias.filter(a => typeof a === 'string' && a.trim());
       return {
         id: r.id,
         pacienteId: r.paciente_id || undefined,
@@ -7574,8 +8838,9 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       tratamentos,
     });
   } catch (error) {
-    const status = error.message === 'Unauthorized' ? 401 : 500;
-    res.status(status).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('GET /api/dentista/painel error:', error.message);
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 
@@ -7724,6 +8989,7 @@ app.get('/api/reativacao/rules', async (req, res) => {
 app.post('/api/reativacao/rules', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     const { name, inactiveDays, origin, messageTemplate, status } = req.body || {};
     if (!name || !messageTemplate) {
       return res.status(400).json({ error: 'name e messageTemplate são obrigatórios' });
@@ -7750,6 +9016,7 @@ app.post('/api/reativacao/rules', async (req, res) => {
 app.put('/api/reativacao/rules/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     const { name, inactiveDays, origin, messageTemplate, status } = req.body || {};
     const sets = []; const params = [];
     if (name !== undefined) { params.push(String(name).slice(0, 200)); sets.push(`name=$${params.length}`); }
@@ -7793,6 +9060,7 @@ app.put('/api/reativacao/rules/:id', async (req, res) => {
 app.delete('/api/reativacao/rules/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     const r = await pool.query('DELETE FROM reactivation_rules WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id || null]);
     if (r.rowCount === 0) return res.status(404).json({ error: 'Regra não encontrada' });
     res.json({ success: true });
@@ -7834,6 +9102,7 @@ app.get('/api/reativacao/rules/:id/patients', async (req, res) => {
 app.post('/api/reativacao/rules/:id/send', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const tenantId = String(user.tenant_id);
     const { rows: rulRows } = await pool.query(
@@ -7885,9 +9154,9 @@ app.post('/api/reativacao/rules/:id/send', async (req, res) => {
       if (!phone) {
         failed++;
         await pool.query(
-          `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status, error_message)
-           VALUES ($1,$2,$3,$4,$5,'falhou',$6)`,
-          [rule.id, m.id, m.lead_id, '', message, 'Telefone ausente']
+          `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status, error_message, tenant_id)
+           VALUES ($1,$2,$3,$4,$5,'falhou',$6,$7)`,
+          [rule.id, m.id, m.lead_id, '', message, 'Telefone ausente', tenantId]
         ).catch(() => {});
         errors.push({ pacienteId: m.id, error: 'Telefone ausente' });
         continue;
@@ -8173,25 +9442,6 @@ function isHigherMessageStatus(nextStatus, currentStatus = 'sent') {
   return (MESSAGE_STATUS_PRIORITY[nextStatus] ?? 0) > (MESSAGE_STATUS_PRIORITY[currentStatus] ?? 0);
 }
 
-function normalizeEvolutionAckStatus(ack) {
-  if (ack === null || ack === undefined) return null;
-
-  const ackStr = String(ack).trim().toUpperCase();
-  const ackNum = typeof ack === 'number' ? ack : Number.parseInt(ackStr, 10);
-
-  if (ackStr === 'FAILED' || ackStr === 'NACK' || ackNum === -1) return 'failed';
-  if (ackStr === 'PENDING' || ackStr === 'PENDING_ACK' || ackStr === 'CLOCK' || ackNum === 0 || ackNum === 1) return 'sent';
-  // Evolution/Baileys versions can stringify ACK 0 as ERROR while the message is
-  // still only pending. Treat webhook/store ERROR as failed only when no numeric
-  // ACK is available; immediate send validation skips 201 responses above.
-  if (ackStr === 'ERROR') return 'failed';
-  if (ackStr === 'SERVER_ACK' || ackStr === 'SENT' || ackStr === 'SEND' || ackNum === 2) return 'sent';
-  if (ackStr === 'DELIVERY_ACK' || ackStr === 'DELIVERED' || ackStr === 'RECEIVED' || ackStr === 'DEVICE_ACK' || ackNum === 3) return 'delivered';
-  if (ackStr === 'READ' || ackStr === 'READ_ACK' || ackStr === 'PLAYED' || ackStr === 'PLAYED_ACK' || ackNum === 4 || ackNum === 5) return 'read';
-
-  return null;
-}
-
 function extractStatusUpdates(data) {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.updates)) return data.updates;
@@ -8298,7 +9548,9 @@ async function findMessageStatusContext({ tenantId, lookupIds = [], phone = '', 
     const phoneSuffixes = getWhatsappPhoneSuffixVariants(phone);
     params.push(phoneSuffixes.length ? phoneSuffixes : [phoneSuffix]);
     const phoneParam = params.length;
-    matchers.push(`RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = ANY($${phoneParam}::text[])`);
+    // Mesma expressão do índice parcial idx_chat_messages_tenant_fone11 (sem COALESCE + IS NOT NULL),
+    // senão o planner não usa o índice. NULL nunca casava com um sufixo não vazio: resultado igual.
+    matchers.push(`(cm.phone IS NOT NULL AND ${foneIndexado('cm.phone')} = ANY($${phoneParam}::text[]))`);
   }
 
   if (instance) {
@@ -8458,6 +9710,10 @@ app.get('/api/events', async (req, res) => {
     console.warn('📡 SSE connection rejected: authenticated tenant not resolved');
     return res.status(401).json({ error: 'Authenticated tenant not resolved' });
   }
+  // Usuário desativado perde também o tempo real (o SSE não passa por verifyUser)
+  if (await usuarioDesativado(authenticatedUserId)) {
+    return res.status(401).json({ error: 'Usuário desativado' });
+  }
 
   // Set headers for SSE
   res.writeHead(200, {
@@ -8579,8 +9835,117 @@ app.put('/api/attendance-settings', async (req, res) => {
   }
 });
 
+// Configuração da clínica: mostrar ou não o primeiro nome no push.
+app.get('/api/push-privacidade', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json({ mostrarNome: false });
+    const cfg = await getTenantSetting(user.tenant_id, 'push_privacidade');
+    res.json({ mostrarNome: cfg?.mostrarNome === true });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao carregar a configuração' });
+  }
+});
+
+app.put('/api/push-privacidade', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const mostrarNome = req.body?.mostrarNome === true;
+    await setTenantSetting(user.tenant_id, 'push_privacidade', { mostrarNome });
+    res.json({ success: true, mostrarNome });
+  } catch (error) {
+    const status = tenantSettingsErrorStatus(error);
+    res.status(status).json({ error: status === 500 ? 'Erro ao salvar a configuração' : error.message });
+  }
+});
+
+// Lembrete/pedido de confirmação de consulta por clínica (tenant_settings
+// 'appointment_reminder' = { enabled }). Sem registro: ligado, como sempre foi.
+app.get('/api/appointment-reminder-settings', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json({ enabled: true });
+    const saved = await getTenantSetting(user.tenant_id, 'appointment_reminder');
+    res.json({ enabled: saved?.enabled !== false });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
+  }
+});
+
+app.put('/api/appointment-reminder-settings', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'Informe enabled (true ou false)' });
+    await setTenantSetting(user.tenant_id, 'appointment_reminder', { enabled });
+    console.log(`⚙️ Lembrete de consulta ${enabled ? 'ligado' : 'desligado'} (clínica ${String(user.tenant_id).slice(0, 8)})`);
+    res.json({ success: true, enabled });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
+  }
+});
+
+// Localização da clínica (aba Configurações → Clínica). Antes ficava só no navegador de quem
+// salvou; agora é da clínica (tenant_settings), e todo atendente vê o mesmo endereço no chat.
+const CLINIC_LOCATION_FIELDS = { name: 100, address: 200, city: 100, state: 2, zip: 10, phone: 20, googleMapsUrl: 500 };
+
+function sanitizeClinicLocation(body) {
+  const src = body && typeof body === 'object' ? body : {};
+  const out = {};
+  for (const [field, max] of Object.entries(CLINIC_LOCATION_FIELDS)) {
+    out[field] = typeof src[field] === 'string' ? src[field].trim().slice(0, max) : '';
+  }
+  out.state = out.state.toUpperCase();
+  return out;
+}
+
+// 401/403/503 dizem o motivo; 500 é genérico (detalhe só no log do servidor).
+function sendClinicLocationError(res, error) {
+  const status = tenantSettingsErrorStatus(error);
+  if (status !== 500) return res.status(status).json({ error: error.message });
+  console.error('❌ clinic-location:', error.message);
+  return res.status(500).json({ error: 'Não foi possível salvar ou ler a localização agora' });
+}
+
+app.get('/api/clinic-location', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json(null);
+    const value = await getTenantSetting(user.tenant_id, 'clinic_location');
+    res.json(value && typeof value === 'object' ? sanitizeClinicLocation(value) : null);
+  } catch (error) {
+    sendClinicLocationError(res, error);
+  }
+});
+
+app.put('/api/clinic-location', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const location = sanitizeClinicLocation(req.body);
+    if (!location.name || !location.address) {
+      return res.status(400).json({ error: 'Nome e endereço são obrigatórios' });
+    }
+    if (location.googleMapsUrl && !/^https:\/\/[^\s]+$/i.test(location.googleMapsUrl)) {
+      return res.status(400).json({ error: 'O link do mapa precisa começar com https://' });
+    }
+    await setTenantSetting(user.tenant_id, 'clinic_location', location);
+    res.json({ success: true, location });
+  } catch (error) {
+    sendClinicLocationError(res, error);
+  }
+});
+
 // Helper: send WhatsApp button menu with active queues
-async function sendQueueMenu(instance, phone, tenantId) {
+// Menu de filas da clínica: botões (Evolution sendButtons) com fallback em lista
+// numerada no texto do job. Vai pela fila como resposta ao paciente (auto_reply,
+// prioridade sobre campanhas). Dedupe curto: reenviar o menu quando o paciente
+// responde uma opção inválida é legítimo, mas não várias vezes por minuto.
+const WA_QUEUE_MENU_DEDUPE_MINUTES = 2;
+
+async function buildQueueMenu(tenantId) {
   const { rows: queues } = await pool.query(
     `SELECT id, name, icon, whatsapp_button_label
        FROM attendance_queues
@@ -8588,54 +9953,44 @@ async function sendQueueMenu(instance, phone, tenantId) {
       ORDER BY name ASC`,
     [isValidTenantId(tenantId) ? tenantId : null]
   );
-  if (queues.length === 0) return; // No queues configured
-
+  if (queues.length === 0) return null; // No queues configured
   const clinica = await getTenantClinicName(tenantId);
-  // Evolution API: sendButtons (Baileys)
-  const buttons = queues.map((q, i) => ({
-    buttonId: `queue_${q.id}`,
-    buttonText: { displayText: q.whatsapp_button_label || `${q.icon} ${q.name}` },
-    type: 1,
-  }));
-
-  // Try button message first
-  const buttonPayload = {
-    number: phone,
-    title: '',
-    description: `Olá! 👋 Aqui é da ${clinica}. Selecione o setor para ser atendido:`,
-    footer: clinica,
-    buttons,
+  const label = (q) => q.whatsapp_button_label || `${q.icon} ${q.name}`;
+  const lines = [`Olá! 👋 Aqui é da ${clinica}. Selecione o setor desejado:`, ''];
+  queues.forEach((q, i) => lines.push(`*${i + 1}* - ${label(q)}`));
+  lines.push('', 'Responda com o *número* da opção desejada.');
+  return {
+    fallbackText: lines.join('\n'),
+    interactive: {
+      endpoint: 'sendButtons',
+      payload: {
+        title: '',
+        description: `Olá! 👋 Aqui é da ${clinica}. Selecione o setor para ser atendido:`,
+        footer: clinica,
+        buttons: queues.map(q => ({ buttonId: `queue_${q.id}`, buttonText: { displayText: label(q) }, type: 1 })),
+      },
+    },
+    count: queues.length,
   };
+}
 
-  const btnResult = await evolutionFetch(`/message/sendButtons/${instance}`, {
-    method: 'POST',
-    body: JSON.stringify(buttonPayload),
+async function enqueueQueueMenu({ tenantId, instance, phone }) {
+  if (!isValidTenantId(tenantId) || !phone) return null;
+  const menu = await buildQueueMenu(tenantId);
+  if (!menu) return null;
+  const jobId = await enqueueWhatsAppAutoReply({
+    tenantId, instance, phone, message: menu.fallbackText, kind: 'queue_menu', category: 'service',
+    interactive: menu.interactive, dedupeMinutes: WA_QUEUE_MENU_DEDUPE_MINUTES,
   });
-
-  // Fallback: if buttons not supported, send numbered list as text
-  if (!btnResult.ok) {
-    console.log('⚠️ Buttons not supported, falling back to text list');
-    const lines = [`Olá! 👋 Aqui é da ${clinica}. Selecione o setor desejado:`, ''];
-    queues.forEach((q, i) => {
-      lines.push(`*${i + 1}* - ${q.whatsapp_button_label || `${q.icon} ${q.name}`}`);
-    });
-    lines.push('', 'Responda com o *número* da opção desejada.');
-
-    await evolutionFetch(`/message/sendText/${instance}`, {
-      method: 'POST',
-      body: JSON.stringify({ number: phone, text: lines.join('\n') }),
-    });
-  }
-
   // Mark lead as awaiting queue selection
   await pool.query(
     `UPDATE crm_leads SET awaiting_queue_selection = true, updated_at = NOW()
      WHERE tenant_id = $2
        AND REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1`,
-    [phone.slice(-11), tenantId]
+    [String(phone).slice(-11), tenantId]
   );
-
-  console.log(`📋 Queue menu sent to ${maskPhone(phone)} (${queues.length} options)`);
+  if (jobId) console.log(`📋 Queue menu queued (job ${jobId}, ${menu.count} options)`);
+  return jobId;
 }
 
 // Helper: match queue from button response or number
@@ -8871,13 +10226,661 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
   }
 }
 
+// Mensagem da Evolution → mensagem recebida normalizada. Usa o evento interno do adaptador
+// (parseEvolutionWebhook) e corrige o que só o payload cru tem: JID real de @lid, mimetype e
+// nome do arquivo, pushName, timestamp original; mídia e foto pela própria Evolution.
+function evolutionInboundMessage({ message, remoteJid, instance }) {
+  const [evt] = evolutionProvider.parseWebhook({ event: 'messages.upsert', instance, data: message });
+  const mediaMsg = message?.message?.imageMessage || message?.message?.audioMessage ||
+    message?.message?.videoMessage || message?.message?.documentMessage || message?.message?.stickerMessage;
+  return inboundMessageFromEvent(evt || { kind: 'text', text: '', fromMe: !!message?.key?.fromMe }, {
+    remoteJid,
+    isFromMe: !!message?.key?.fromMe,
+    mediaMimeType: mediaMsg?.mimetype || mediaMsg?.mimeType || null,
+    mediaFileName: message?.message?.documentMessage?.fileName || null,
+    pushName: message?.pushName || null,
+    providerMsgId: message?.key?.id || null,
+    rawType: Object.keys(message?.message || {})[0] || null,
+    messageTimestamp: message?.messageTimestamp || message?.timestamp || null,
+    fetchMediaBase64: async () => {
+      const mediaResult = await evolutionFetch(`/chat/getBase64FromMediaMessage/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify({ message: { key: message.key, message: message.message } }),
+      });
+      return mediaResult.ok && mediaResult.data?.base64 ? mediaResult.data.base64 : null;
+    },
+    fetchAvatarUrl: async (phone) => {
+      const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify({ number: phone }),
+        timeoutMs: 5000,
+      });
+      return result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
+    },
+  });
+}
+
+// Processamento de uma mensagem recebida, comum a todos os provedores (Evolution, OpenWA).
+// `msg` vem de whatsapp/inbound.mjs (inboundMessageFromEvent). `res`: o do Express (Evolution
+// responde ao provedor no meio do caminho) ou detachedResponse() quando já foi respondido.
+// O tenant vem do canal/instância; allowTenantFallback só no legado da Evolution.
+async function handleInboundWhatsAppMessage({ res, tenantId, instance, body = {}, msg, allowTenantFallback = false }) {
+  const remoteJid = msg.remoteJid;
+  const isFromMe = msg.isFromMe;
+  const senderRole = isFromMe ? 'attendant' : 'lead';
+
+  // Resolve clean phone number from remoteJid (handles LID resolution)
+  const phone = normalizeWhatsappNumber(remoteJid);
+  const resolvedPhone = resolvePhoneFromLid(phone);
+  const phoneSuffix = resolvedPhone.slice(-11);
+  const phoneSuffixes = getWhatsappPhoneSuffixVariants(resolvedPhone);
+
+  if (!tenantId) {
+    // Fallback por instância/telefone só para a Evolution (legado). OpenWA/Cloud: a clínica
+    // vem sempre do canal; sem canal, nada é processado.
+    tenantId = allowTenantFallback ? await getFallbackTenantIdForIncomingMessage({ instanceName: instance, phoneSuffix }) : null;
+    if (tenantId) {
+      console.log(`🔐 Tenant resolved by fallback for ${instance || 'unknown-instance'} / ${maskPhone(phoneSuffix)}: ${tenantId}`);
+    } else {
+      console.warn(`⚠️ Webhook message without tenant_id: instance=${instance || 'unknown'} phone=${maskPhone(phoneSuffix)}. Message will be ignored to avoid cross-clinic leakage.`);
+      return res.status(202).json({ ignored: true, reason: 'tenant_not_resolved' });
+    }
+  }
+
+  // Webhooks do not carry a user token, but all chat tables are tenant/RLS
+  // protected. Set the resolved clinic context before looking up/creating the
+  // lead, saving chat_messages and creating attendance_sessions; otherwise a
+  // pooled connection can return an empty queue/chat or reject inserts.
+  await setDbTenantContext({ tenantId, isSuperAdmin: false });
+
+  // Extract message content
+  const msgContent = msg.msgContent || '';
+  const msgType = msg.msgType;
+
+  // Acknowledge Evolution immediately after the message is accepted for
+  // processing. Media download, avatar lookup, menu replies and automations can
+  // take seconds; if Evolution waits for all of that it can retry/stall the
+  // socket and the chat appears stuck in "digitando" with no message delivery.
+  if (!res.headersSent) {
+    res.json({ accepted: true, event: 'messages.upsert' });
+  }
+
+  // Extract media metadata
+  let mediaMimeType = msg.mediaMimeType || null;
+  const mediaFileName = msg.mediaFileName || null;
+
+  // Mídia pelo adaptador do provedor, baixada na hora (URL do provedor expira) e gravada em
+  // disco (não guarda base64 no banco). O adaptador devolve o base64 ou { base64, mimetype }.
+  let mediaUrl = null;
+  if (['image', 'audio', 'video', 'document', 'sticker'].includes(msgType) && msg.providerMsgId) {
+    try {
+      const fetched = await msg.fetchMediaBase64();
+      const mediaBase64 = typeof fetched === 'string' ? fetched : (fetched?.base64 || null);
+      if (!mediaMimeType && fetched && typeof fetched === 'object' && fetched.mimetype) mediaMimeType = String(fetched.mimetype).slice(0, 120);
+      if (mediaBase64) {
+        // Save to disk instead of storing base64 in DB
+        const diskUrl = await saveMediaToDisk(
+          mediaBase64,
+          mediaMimeType,
+          mediaFileName
+        );
+        mediaUrl = diskUrl || null;
+      }
+    } catch (mediaErr) {
+      console.error('Media fetch error:', mediaErr.message);
+    }
+  }
+
+  // Find lead by phone and tenant_id
+  const { rows: leads } = await pool.query(
+    `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, queue_name, awaiting_queue_selection FROM crm_leads 
+     WHERE tenant_id = $1
+       AND RIGHT(REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g'), 11) = ANY($2::text[])
+     LIMIT 1`,
+    [tenantId, phoneSuffixes.length ? phoneSuffixes : [phoneSuffix]]
+  );
+
+  let lead = leads[0] || null;
+  const pushName = msg.pushName || phone;
+  const resolvedContent = msgContent || `[${msgType}]`;
+  const msgId = msg.providerMsgId || `wh-${createHash('sha1')
+    .update(`${instance || 'unknown'}:${resolvedPhone}:${resolvedContent}:${msg.messageTimestamp || body?.date_time || ''}`)
+    .digest('hex')}`;
+  const rawType = msg.rawType || null;
+
+  // Mensagens geradas pelo próprio número conectado também chegam via
+  // MESSAGES_UPSERT. Elas servem para sincronizar histórico, mas não podem
+  // entrar no fluxo de "cliente respondeu": não criam fila, não reenviam menu,
+  // não disparam automações e não geram notificação de entrada.
+  if (isFromMe) {
+    if (!lead) {
+      console.log(`↪️ Outgoing webhook ignored without existing lead: ${maskPhone(resolvedPhone)} (${msgId})`);
+      return res.json({ processed: true, fromMe: true, ignored: 'lead_not_found' });
+    }
+
+    await persistIncomingMessage({
+      msgId,
+      leadId: lead.id,
+      content: resolvedContent,
+      msgType,
+      phone: resolvedPhone,
+      instance,
+      pushName,
+      remoteJid,
+      rawType,
+      mediaUrl,
+      fileName: mediaFileName,
+      mimeType: mediaMimeType,
+      tenantId,
+      sender: 'attendant',
+      messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+    });
+
+    broadcastIncomingMessage({
+      msgId,
+      phone: resolvedPhone,
+      pushName,
+      leadId: lead.id,
+      leadName: lead.name,
+      content: resolvedContent,
+      msgType,
+      instance,
+      queueId: lead.queue_id || null,
+      queueName: lead.queue_name || null,
+      queueColor: lead.queue_color || null,
+      mediaUrl,
+      fileName: mediaFileName,
+      mimeType: mediaMimeType,
+      tenantId,
+      sender: 'attendant',
+    });
+
+    console.log(`↪️ Outgoing webhook synced: ${maskPhone(resolvedPhone)} (${msgId})`);
+    return res.json({ processed: true, fromMe: true, leadId: lead.id });
+  }
+
+  // ─── Opt-out: paciente respondeu SAIR / PARAR / STOP ───
+  // Registra o descadastro da clínica, cancela o que estava na fila e
+  // confirma uma única vez. Não aciona menu, boas-vindas nem automações.
+  if (tenantId && msgType === 'text' && isWhatsAppOptOutText(msgContent)) {
+    const isNewOptOut = await recordWhatsAppOptOut(tenantId, resolvedPhone, { source: 'whatsapp', keyword: String(msgContent).trim().slice(0, 40) });
+    if (lead) {
+      await persistIncomingMessage({
+        msgId, leadId: lead.id, content: resolvedContent, msgType, phone: resolvedPhone, instance, pushName,
+        remoteJid, rawType, mediaUrl, fileName: mediaFileName, mimeType: mediaMimeType, tenantId,
+        messageTimestamp: msg.messageTimestamp || body?.date_time || null,
+      }).catch(e => console.error('[opt-out] persist failed:', e.message));
+      broadcastIncomingMessage({
+        msgId, phone: resolvedPhone, pushName, leadId: lead.id, leadName: lead.name, content: resolvedContent,
+        msgType, instance, queueId: lead.queue_id || null, queueName: lead.queue_name || null,
+        queueColor: lead.queue_color || null, mediaUrl, fileName: mediaFileName, mimeType: mediaMimeType, tenantId,
+      });
+    }
+    if (isNewOptOut) {
+      // Confirmação obrigatória do SAIR: pela fila, como resposta (service), e é a
+      // ÚNICA mensagem que passa pelo filtro de opt-out (isOptOutConfirmationJob).
+      await enqueueWhatsAppAutoReply({
+        tenantId, instance, phone: resolvedPhone, kind: WA_OPT_OUT_CONFIRMATION_KIND, category: 'service',
+        message: `Pronto! A ${await getTenantClinicName(tenantId)} não vai mais enviar mensagens automáticas para este número, inclusive lembretes de consulta. Se quiser voltar a receber, é só pedir para a nossa equipe. Para falar com a gente, mande uma mensagem por aqui.`,
+      }).catch(e => console.error('[opt-out] confirmação não enfileirada:', e.message));
+    }
+    console.log(`🚫 Opt-out registrado (tenant ${tenantId}, final ${String(resolvedPhone).slice(-4)})`);
+    return res.json({ processed: true, optOut: true, leadId: lead?.id || null });
+  }
+
+  // ─── Resposta ao pedido de confirmação de consulta (botão, 1/2 ou SIM) ───
+  // Antes do lead novo, do menu de filas e da avaliação: "1"/"2" aqui é a resposta
+  // ao lembrete, não escolha de setor nem nota.
+  // Resposta a oferta de encaixe (lista de espera) primeiro: palavras e botões próprios.
+  const waitlistReply = !isFromMe
+    ? await handleWaitlistOfferReply({ tenantId, phone: resolvedPhone, msgType, msgContent, instance })
+        .catch(e => { console.error('[lista-espera] erro:', e.message); return null; })
+    : null;
+  const reminderReply = !isFromMe && !waitlistReply?.handled
+    ? await handleAppointmentReminderReply({ tenantId, phone: resolvedPhone, msgType, msgContent, instance })
+        .catch(e => { console.error('[confirmação] erro:', e.message); return null; })
+    : null;
+  const isReminderReply = !!reminderReply?.handled || !!waitlistReply?.handled;
+
+  // ─── New contact: create lead + contato + check hours + send menu ───
+  if (!lead) {
+    // Boas-vindas e fora de horário da clínica dona do número (não de outra clínica).
+    const attendanceSettingsCache = await getTenantSetting(tenantId, 'attendance_settings');
+    const newId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
+       VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', $5, $4)`,
+      [newId, pushName, resolvedPhone, tenantId, !isReminderReply]
+    );
+    lead = { id: newId, name: pushName, phone: resolvedPhone, queue_id: null, queue_name: null, awaiting_queue_selection: !isReminderReply, avatar_url: null };
+    console.log(`🆕 New lead created: ${maskPhone(resolvedPhone)}`);
+
+    // 🤖 Trigger "Lead entrou no CRM" automation
+    triggerAutomationFlows('Lead entrou no CRM', { name: pushName, phone, tenantId }).catch(() => {});
+
+    // Auto-save to contatos table (skip if phone already exists)
+    try {
+      const existingContato = await pool.query('SELECT id FROM contatos WHERE telefone = $1 AND tenant_id = $2', [resolvedPhone, tenantId]);
+      if (existingContato.rows.length === 0) {
+        await pool.query(
+          'INSERT INTO contatos (id, nome, telefone, tipo, tenant_id) VALUES ($1, $2, $3, $4, $5)',
+          [crypto.randomUUID(), pushName, resolvedPhone, 'pessoal', tenantId]
+        );
+        console.log(`📇 Auto-saved contact: ${maskPhone(resolvedPhone)}`);
+      }
+    } catch (contatoErr) {
+      console.error('Failed to auto-save contato:', contatoErr.message);
+    }
+
+    // Check business hours
+    if (!isFromMe && !isReminderReply && !isWithinBusinessHours(attendanceSettingsCache)) {
+      const offMsg = attendanceSettingsCache?.offHoursMessage ||
+        `Olá! Aqui é da ${await getTenantClinicName(tenantId)}. Nosso atendimento está fechado agora. Deixe sua mensagem que respondemos assim que abrirmos. 😊`;
+      // Pela fila (categoria 'service': é resposta à mensagem do paciente e só existe
+      // fora do expediente, então a janela de envio não se aplica).
+      const offJob = await enqueueWhatsAppAutoReply({
+        tenantId, instance, phone: resolvedPhone, message: offMsg, kind: 'off_hours', category: 'service',
+      }).catch(e => { console.error('[auto-reply] fora do horário não enfileirada:', e.message); return null; });
+      if (offJob) console.log(`🕐 Off-hours reply queued (job ${offJob})`);
+      if (!isFromMe) {
+        await ensureWaitingSessionForIncomingLead({
+          lead,
+          phone: resolvedPhone,
+          queueId: lead.queue_id || null,
+          queueName: lead.queue_name || null,
+          tenantId,
+        });
+      }
+      await persistIncomingMessage({
+        msgId,
+        leadId: lead.id,
+        content: resolvedContent,
+        msgType,
+        phone: resolvedPhone,
+        instance,
+        pushName,
+        remoteJid,
+        rawType,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: senderRole,
+        messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+      });
+      broadcastIncomingMessage({
+        msgId,
+        phone: resolvedPhone,
+        pushName,
+        leadId: lead.id,
+        leadName: lead.name,
+        content: resolvedContent,
+        msgType,
+        instance,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: senderRole,
+        messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+      });
+      return res.json({ processed: true, offHours: true, leadId: lead.id });
+    }
+
+    // Boas-vindas pela fila; o menu de filas é enfileirado depois dela (hook do job)
+    // para manter a ordem. Sem boas-vindas enfileirada, o menu entra na fila já.
+    let welcomeJob = null;
+    if (!isFromMe && !isReminderReply && attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
+      welcomeJob = await enqueueWhatsAppAutoReply({
+        tenantId, instance, phone: resolvedPhone, message: attendanceSettingsCache.welcomeMessage,
+        kind: 'welcome', category: 'transactional', thenQueueMenu: true,
+      }).catch(e => { console.error('[auto-reply] boas-vindas não enfileirada:', e.message); return null; });
+    }
+
+    // Send queue menu
+    if (!isFromMe && !isReminderReply && !welcomeJob) {
+      enqueueQueueMenu({ tenantId, instance, phone: resolvedPhone })
+        .catch((err) => console.warn('Queue menu not queued:', err.message));
+    }
+  }
+
+  if (!isFromMe) {
+    await ensureWaitingSessionForIncomingLead({
+      lead,
+      phone: resolvedPhone,
+      queueId: lead.queue_id || null,
+      queueName: lead.queue_name || null,
+      tenantId,
+    });
+  }
+
+  // ─── Lead is awaiting queue selection ───
+  if (!isFromMe && !isReminderReply && lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
+    const selectedQueue = await matchQueue(msgContent, tenantId);
+
+    if (selectedQueue) {
+      // Assign queue to lead
+      await pool.query(
+        `UPDATE crm_leads SET queue_id = $1, queue_name = $2, awaiting_queue_selection = false, updated_at = NOW() WHERE id = $3 AND tenant_id = $4`,
+        [selectedQueue.id, selectedQueue.name, lead.id, tenantId]
+      );
+      lead.queue_id = selectedQueue.id;
+      lead.queue_name = selectedQueue.name;
+
+      if (!isFromMe) {
+        await ensureWaitingSessionForIncomingLead({
+          lead,
+          phone: resolvedPhone,
+          queueId: selectedQueue.id,
+          queueName: selectedQueue.name,
+          tenantId,
+        });
+      }
+
+      // Confirmação do setor escolhido: resposta ao paciente, pela fila.
+      await enqueueWhatsAppAutoReply({
+        tenantId, instance, phone: resolvedPhone, kind: 'queue_selected', category: 'service', dedupeMinutes: 10,
+        message: `✅ Você foi direcionado para o setor *${selectedQueue.icon} ${selectedQueue.name}*.\n\nUm de nossos atendentes irá te ajudar em breve! 😊`,
+      }).catch(e => console.error('[auto-reply] confirmação de setor não enfileirada:', e.message));
+
+      console.log(`📌 Lead ${lead.id} routed to queue: ${selectedQueue.name}`);
+
+      // Broadcast queue assignment to SSE
+      broadcastSSE('queue_assigned', {
+        leadId: lead.id,
+        leadName: lead.name,
+        phone: resolvedPhone,
+        queueId: selectedQueue.id,
+        queueName: selectedQueue.name,
+        queueColor: selectedQueue.color,
+        timestamp: new Date().toISOString(),
+      }, tenantId);
+
+      // Also persist and broadcast the queue-selection message itself so it
+      // appears when the attendant opens the chat from a global notification.
+      const queueSelectionContent = `[Selecionou: ${selectedQueue.name}]`;
+      await persistIncomingMessage({
+        msgId,
+        leadId: lead.id,
+        content: queueSelectionContent,
+        msgType: 'text',
+        phone: resolvedPhone,
+        instance,
+        pushName,
+        remoteJid,
+        rawType,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: senderRole,
+        messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+      });
+
+      broadcastIncomingMessage({
+        msgId,
+        phone: resolvedPhone,
+        pushName,
+        leadId: lead.id,
+        leadName: lead.name,
+        content: queueSelectionContent,
+        msgType: 'text',
+        instance,
+        queueId: selectedQueue.id,
+        queueName: selectedQueue.name,
+        queueColor: selectedQueue.color,
+        tenantId,
+        sender: senderRole,
+      });
+
+      return res.json({ processed: true, leadId: lead.id, queueId: selectedQueue.id });
+    } else {
+      await persistIncomingMessage({
+        msgId,
+        leadId: lead.id,
+        content: resolvedContent,
+        msgType,
+        phone: resolvedPhone,
+        instance,
+        pushName,
+        remoteJid,
+        rawType,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: senderRole,
+        messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+      });
+      broadcastIncomingMessage({
+        msgId,
+        phone: resolvedPhone,
+        pushName,
+        leadId: lead.id,
+        leadName: lead.name,
+        content: resolvedContent,
+        msgType,
+        instance,
+        queueId: lead.queue_id || null,
+        queueName: lead.queue_name || null,
+        queueColor: lead.queue_color || null,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: senderRole,
+      });
+      // Invalid selection — resend menu in background so the webhook does not
+      // block message delivery/realtime if Evolution is slow.
+      enqueueQueueMenu({ tenantId, instance, phone: resolvedPhone })
+        .catch((err) => console.warn('Queue menu resend not queued:', err.message));
+      console.log(`💬 Incoming message from ${maskPhone(resolvedPhone)} awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
+      return res.json({ processed: true, resent_menu: true, leadId: lead.id });
+    }
+  }
+
+  // ─── Check for satisfaction rating response ───
+  // Chave com a clínica: o mesmo paciente pode ser atendido por duas clínicas.
+  const ratingKey = `awaiting_rating_${tenantId}_${phone}`;
+  const { rows: ratingCheck } = await pool.query("SELECT value FROM app_settings WHERE key = $1", [ratingKey]);
+  if (!isReminderReply && ratingCheck.length > 0 && (msgType === 'text' || msgType === 'button_response')) {
+    let rating = null;
+    // Button response: rating_leadId_N
+    const btnMatch = msgContent.match(/rating_[^_]+_(\d)/);
+    if (btnMatch) rating = parseInt(btnMatch[1], 10);
+    // Text response: just a number 1-5
+    if (!rating) {
+      const num = parseInt(msgContent.trim(), 10);
+      if (num >= 1 && num <= 5) rating = num;
+    }
+
+    if (rating) {
+      const ratingData = ratingCheck[0].value;
+      const ratingId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO satisfaction_ratings (id, session_id, lead_id, lead_phone, rating, attendant_id, attendant_name, tenant_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [ratingId, ratingData.sessionId || null, ratingData.leadId, phone, rating, ratingData.attendantId || null, ratingData.attendantName || null, tenantId]
+      );
+      // Remove awaiting flag
+      await pool.query("DELETE FROM app_settings WHERE key = $1", [ratingKey]);
+
+      // Parecer T11: linguagem neutra; nota até 3 oferece canal para contar o que houve.
+      const stars = '⭐'.repeat(rating);
+      const thanks = rating >= 4
+        ? `${stars}\n\nMuito obrigado pela avaliação! Ficamos felizes em atender você. 😊`
+        : `${stars}\n\nObrigado pela avaliação. Se quiser, conte por aqui o que podemos melhorar: nossa equipe vai ler.`;
+
+      await enqueueWhatsAppAutoReply({
+        tenantId, instance, phone, message: thanks, kind: 'rating_thanks', category: 'service', dedupeMinutes: 10,
+      }).catch(e => console.error('[auto-reply] agradecimento não enfileirado:', e.message));
+
+      console.log(`⭐ Rating ${rating}/5 received from ${maskPhone(phone)}`);
+      return res.json({ processed: true, rating, leadId: ratingData.leadId });
+    }
+  }
+
+  // ─── Auto-return from recovery stage to queue with priority ───
+  if ((await getFollowupConfig(tenantId)).returnToQueueOnReply) {
+    try {
+      const { rows: leadStage } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1 AND tenant_id = $2', [lead.id, tenantId]);
+      const currentStage = leadStage[0]?.kanban_stage;
+      if (currentStage && RECOVERY_STAGES.includes(currentStage)) {
+        // Move lead back to "lead" stage (top of funnel)
+        await pool.query(
+          `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', priority = true, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+          [lead.id, tenantId]
+        );
+        // Log movement
+        await pool.query(
+          `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason, tenant_id)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [lead.id, currentStage, 'em_atendimento', 'Sistema (Auto-retorno)', 'Cliente respondeu durante recuperação — retornou à fila com prioridade', tenantId]
+        ).catch(() => {});
+        // Add "Recuperação de Lead" tag
+        try {
+          // Ensure the tag exists
+          const { rows: existingTag } = await pool.query(
+            "SELECT id FROM lead_tags WHERE name = 'Recuperação de Lead' AND tenant_id = $1 LIMIT 1",
+            [tenantId]
+          );
+          let tagId;
+          if (existingTag.length > 0) {
+            tagId = existingTag[0].id;
+          } else {
+            tagId = crypto.randomUUID();
+            await pool.query(
+              "INSERT INTO lead_tags (id, name, color, tenant_id) VALUES ($1, $2, $3, $4)",
+              [tagId, 'Recuperação de Lead', '#F59E0B', tenantId]
+            );
+          }
+          // Assign tag to lead
+          await pool.query(
+            "INSERT INTO lead_tag_assignments (lead_id, tag_id, tenant_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            [lead.id.toString(), tagId, tenantId]
+          );
+        } catch (tagErr) {
+          console.error('Failed to assign recovery tag:', tagErr.message);
+        }
+
+        // Create a new waiting session so lead appears at top of queue
+        const sessionId = crypto.randomUUID();
+        await pool.query(
+          `INSERT INTO attendance_sessions (id, lead_id, lead_phone, status, started_waiting_at, tenant_id)
+           VALUES ($1, $2, $3, 'waiting', NOW(), $4)
+           ON CONFLICT DO NOTHING`,
+          [sessionId, lead.id.toString(), phone, tenantId]
+        ).catch(() => {});
+
+        console.log(`🔄 Lead ${lead.id} (${maskPhone(phone)}) replied from recovery stage ${currentStage} → returned to queue with priority`);
+        broadcastSSE('lead_returned_from_recovery', {
+          leadId: lead.id,
+          leadName: lead.name || pushName,
+          phone,
+          fromStage: currentStage,
+          timestamp: new Date().toISOString(),
+        }, tenantId);
+      }
+    } catch (recoveryErr) {
+      console.error('Recovery auto-return error:', recoveryErr.message);
+    }
+  }
+
+  // ─── Normal message (queue already assigned) ───
+  await persistIncomingMessage({
+    msgId,
+    leadId: lead.id,
+    content: resolvedContent,
+    msgType,
+    phone: resolvedPhone,
+    instance,
+    pushName,
+    remoteJid,
+    rawType,
+    mediaUrl,
+    fileName: mediaFileName,
+    mimeType: mediaMimeType,
+    tenantId,
+    sender: senderRole,
+    messageTimestamp: msg.messageTimestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+  });
+
+  broadcastIncomingMessage({
+    msgId,
+    phone: resolvedPhone,
+    pushName,
+    leadId: lead.id,
+    leadName: lead.name,
+    content: resolvedContent,
+    msgType,
+    instance,
+    queueId: lead.queue_id || null,
+    queueName: lead.queue_name || null,
+    queueColor: lead.queue_color || null,
+    mediaUrl,
+    fileName: mediaFileName,
+    mimeType: mediaMimeType,
+    tenantId,
+    sender: senderRole,
+  });
+
+  console.log(`💬 New message from ${maskPhone(phone)} → saved + broadcast to ${sseClients.size} clients`);
+
+  // Web Push para os atendentes: aparece na tela bloqueada, então nunca leva o
+  // texto da mensagem nem o telefone (LGPD art. 11). Ver buildChatPushPayload.
+  (async () => {
+    let mostrarNome = false;
+    try {
+      const cfg = await getTenantSetting(tenantId, 'push_privacidade');
+      mostrarNome = cfg?.mostrarNome === true;
+    } catch { /* padrão: sem nome */ }
+    await sendPushToAll(buildChatPushPayload({ leadId: lead.id, name: lead.name || pushName, mostrarNome }), tenantId);
+  })().catch(() => {});
+
+  if (lead && !lead.avatar_url) {
+    (async () => {
+      try {
+        const pictureUrl = await msg.fetchAvatarUrl(phone);
+        if (pictureUrl) {
+          await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
+          console.log(`📸 Auto-synced avatar for lead ${lead.id}`);
+        }
+      } catch (fetchErr) {
+        console.error('Webhook profile fetch error:', fetchErr.message);
+      }
+    })();
+  }
+
+  return res.json({ processed: true, leadId: lead.id });
+}
+
+
 app.post('/api/webhook/evolution', async (req, res) => {
   const authBody = Array.isArray(req.body) ? req.body[0] : req.body;
   let authInstance = null;
   try { authInstance = extractEvolutionInstanceName(authBody || {}); } catch { authInstance = null; }
+  // Token inválido: conta a falha por IP + token (ou só IP, sem token plausível) e,
+  // passado o limite, responde 429. Token válido nunca é bloqueado.
   if (!isValidEvolutionWebhookRequest(req, authInstance)) {
-    console.warn(`[webhook] chamada rejeitada (token inválido) de ${req.ip}`);
+    const tok = String(req.query?.token || req.headers['x-webhook-token'] || '');
+    const ip = ipKey(req);
+    const falhaKey = chaveFalhaWebhook(ip, tok ? `${authInstance}|${tok}` : '', 16);
+    const b = [RL.evolutionFalha.blocked(falhaKey), RL.evolutionFalhaIpTotal.blocked(ip)].find(x => x.blocked);
+    if (b) return sendTooMany(res, b.retryAfterSec, 'Too many requests');
+    RL.evolutionFalha.hit(falhaKey);
+    RL.evolutionFalhaIpTotal.hit(ip);
+    console.warn(`[webhook] chamada rejeitada (token inválido) de ${clientIp(req)}`);
     return res.status(401).json({ error: 'Unauthorized' });
+  }
+  // Teto por instância, bem acima do volume normal (não derrubar tráfego legítimo).
+  if (authInstance) {
+    const porInstancia = RL.evolutionInstancia.hit(authInstance);
+    if (!porInstancia.allowed) {
+      if (porInstancia.count === RL.evolutionInstancia.max + 1) {
+        console.warn(`[webhook] limite por instância atingido (${RL.evolutionInstancia.max}/min): ${authInstance}`);
+      }
+      return sendTooMany(res, porInstancia.retryAfterSec, 'Too many requests');
+    }
   }
   try {
     // Evolution must receive a response quickly. Some message paths do extra
@@ -8897,7 +10900,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // ─── Presence updates (typing, recording, online) ───
     if (isEvolutionEvent(event, 'presence.update', 'presence_update')) {
       const presenceData = body.data;
-      console.log(`👁️ PRESENCE_UPDATE raw:`, JSON.stringify(presenceData).slice(0, 500));
+      console.log(`👁️ PRESENCE_UPDATE raw:`, maskWaIdentifiers(JSON.stringify(presenceData).slice(0, 500)));
 
       // Extract participants — Baileys sends them in different shapes
       let participants = Array.isArray(presenceData?.participants) ? presenceData.participants : [];
@@ -8929,7 +10932,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       // Skip group presence updates (id ends with @g.us)
       const chatJid = presenceData?.id || presenceData?.chatId || '';
       if (chatJid.includes('@g.us')) {
-        console.log(`👁️ PRESENCE skipped (group chat): ${chatJid}`);
+        console.log(`👁️ PRESENCE skipped (group chat): ${maskWaIdentifiers(chatJid)}`);
         return res.json({ processed: true, event: 'presence', skipped: 'group' });
       }
 
@@ -9004,7 +11007,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           }
 
           if (!resolvedPhone) {
-            console.log(`⚠️ PRESENCE: unresolved LID ${participant?.id || presenceData?.id}, no mapping found`);
+            console.log(`⚠️ PRESENCE: unresolved LID ${maskWaIdentifiers(participant?.id || presenceData?.id)}, no mapping found`);
             continue;
           }
 
@@ -9053,6 +11056,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
     if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update', 'send.message', 'send_message')) {
       const updates = extractStatusUpdates(body.data || body);
       console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates`);
+      // Contrato dos eventos internos: avisa (sem dados do paciente) quando nada do lote é válido.
+      if (updates.length && !validEvents(evolutionProvider.parseWebhook(body), { warn: () => {} }).some(e => e.type === 'message.status')) {
+        console.warn(`[whatsapp] messages.update sem status válido (${updates.length} itens) de ${instance || '?'}`);
+      }
       for (const update of updates) {
         const lookupIds = extractStatusLookupIds(update);
         const primaryMessageId = lookupIds[0];
@@ -9060,7 +11067,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         const ack = extractStatusAckValue(update) ?? (isSendMessageEvent ? 'SERVER_ACK' : null);
 
         if (!primaryMessageId) {
-          console.log(`⚠️ ACK ignored: missing message id in update`, JSON.stringify(update).slice(0, 300));
+          console.log(`⚠️ ACK ignored: missing message id in update`, maskWaIdentifiers(JSON.stringify(update).slice(0, 300)));
           continue;
         }
         if (remoteJid && remoteJid.endsWith('@g.us')) continue;
@@ -9169,656 +11176,319 @@ app.post('/api/webhook/evolution', async (req, res) => {
       return res.json({ ignored: true, reason: 'group_or_missing_jid' });
     }
 
-    const isFromMe = !!message?.key?.fromMe;
-    const senderRole = isFromMe ? 'attendant' : 'lead';
-
-    // Resolve clean phone number from remoteJid (handles LID resolution)
-    const phone = normalizeWhatsappNumber(remoteJid);
-    const resolvedPhone = resolvePhoneFromLid(phone);
-    const phoneSuffix = resolvedPhone.slice(-11);
-    const phoneSuffixes = getWhatsappPhoneSuffixVariants(resolvedPhone);
-
-    if (!tenantId) {
-      tenantId = await getFallbackTenantIdForIncomingMessage({ instanceName: instance, phoneSuffix });
-      if (tenantId) {
-        console.log(`🔐 Tenant resolved by fallback for ${instance || 'unknown-instance'} / ${maskPhone(phoneSuffix)}: ${tenantId}`);
-      } else {
-        console.warn(`⚠️ Webhook message without tenant_id: instance=${instance || 'unknown'} phone=${maskPhone(phoneSuffix)}. Message will be ignored to avoid cross-clinic leakage.`);
-        return res.status(202).json({ ignored: true, reason: 'tenant_not_resolved' });
-      }
+    // Mesmo contrato do OpenWA: a mensagem só é processada se o evento interno for válido
+    // (id, chat, tipo, fromMe; sem campo de clínica). Inválido → 200 e descarta, com aviso.
+    const [inboundEvt] = evolutionProvider.parseWebhook({ event: 'messages.upsert', instance, data: message });
+    if (!inboundEvt || !validEvents([inboundEvt]).length) {
+      return res.json({ ignored: true, reason: 'invalid_event' });
     }
-
-    // Webhooks do not carry a user token, but all chat tables are tenant/RLS
-    // protected. Set the resolved clinic context before looking up/creating the
-    // lead, saving chat_messages and creating attendance_sessions; otherwise a
-    // pooled connection can return an empty queue/chat or reject inserts.
-    await setDbTenantContext({ tenantId, isSuperAdmin: false });
-
-    // Extract message content
-    const msgContent =
-      message?.message?.conversation ||
-      message?.message?.extendedTextMessage?.text ||
-      message?.message?.buttonsResponseMessage?.selectedButtonId ||
-      message?.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
-      message?.message?.imageMessage?.caption ||
-      message?.message?.videoMessage?.caption ||
-      '';
-    const msgType =
-      message?.message?.imageMessage ? 'image' :
-      message?.message?.audioMessage ? 'audio' :
-      message?.message?.videoMessage ? 'video' :
-      message?.message?.documentMessage ? 'document' :
-      message?.message?.stickerMessage ? 'sticker' :
-      message?.message?.locationMessage ? 'location' :
-      message?.message?.contactMessage ? 'contact' :
-      message?.message?.buttonsResponseMessage ? 'button_response' :
-      message?.message?.listResponseMessage ? 'list_response' :
-      'text';
-
-    // Acknowledge Evolution immediately after the message is accepted for
-    // processing. Media download, avatar lookup, menu replies and automations can
-    // take seconds; if Evolution waits for all of that it can retry/stall the
-    // socket and the chat appears stuck in "digitando" with no message delivery.
-    if (!res.headersSent) {
-      res.json({ accepted: true, event: 'messages.upsert' });
-    }
-
-    // Extract media metadata
-    const mediaMsg = message?.message?.imageMessage || message?.message?.audioMessage ||
-      message?.message?.videoMessage || message?.message?.documentMessage || message?.message?.stickerMessage;
-    const mediaMimeType = mediaMsg?.mimetype || mediaMsg?.mimeType || null;
-    const mediaFileName = message?.message?.documentMessage?.fileName || null;
-
-    // Fetch media from Evolution API and save to disk
-    let mediaUrl = null;
-    if (['image', 'audio', 'video', 'document', 'sticker'].includes(msgType) && message?.key?.id) {
-      try {
-        const mediaResult = await evolutionFetch(`/chat/getBase64FromMediaMessage/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({ message: { key: message.key, message: message.message } }),
-        });
-        if (mediaResult.ok && mediaResult.data?.base64) {
-          // Save to disk instead of storing base64 in DB
-          const diskUrl = await saveMediaToDisk(
-            mediaResult.data.base64,
-            mediaMimeType,
-            mediaFileName
-          );
-          mediaUrl = diskUrl || null;
-        }
-      } catch (mediaErr) {
-        console.error('Media fetch error:', mediaErr.message);
-      }
-    }
-
-    // Find lead by phone and tenant_id
-    const { rows: leads } = await pool.query(
-      `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, queue_name, awaiting_queue_selection FROM crm_leads 
-       WHERE tenant_id = $1
-         AND RIGHT(REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g'), 11) = ANY($2::text[])
-       LIMIT 1`,
-      [tenantId, phoneSuffixes.length ? phoneSuffixes : [phoneSuffix]]
-    );
-
-    let lead = leads[0] || null;
-    const pushName = message?.pushName || phone;
-    const resolvedContent = msgContent || `[${msgType}]`;
-    const msgId = message?.key?.id || `wh-${createHash('sha1')
-      .update(`${instance || 'unknown'}:${resolvedPhone}:${resolvedContent}:${message?.messageTimestamp || body?.date_time || ''}`)
-      .digest('hex')}`;
-    const rawType = Object.keys(message?.message || {})[0] || null;
-
-    // Mensagens geradas pelo próprio número conectado também chegam via
-    // MESSAGES_UPSERT. Elas servem para sincronizar histórico, mas não podem
-    // entrar no fluxo de "cliente respondeu": não criam fila, não reenviam menu,
-    // não disparam automações e não geram notificação de entrada.
-    if (isFromMe) {
-      if (!lead) {
-        console.log(`↪️ Outgoing webhook ignored without existing lead: ${maskPhone(resolvedPhone)} (${msgId})`);
-        return res.json({ processed: true, fromMe: true, ignored: 'lead_not_found' });
-      }
-
-      await persistIncomingMessage({
-        msgId,
-        leadId: lead.id,
-        content: resolvedContent,
-        msgType,
-        phone: resolvedPhone,
-        instance,
-        pushName,
-        remoteJid,
-        rawType,
-        mediaUrl,
-        fileName: mediaFileName,
-        mimeType: mediaMimeType,
-        tenantId,
-        sender: 'attendant',
-        messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-      });
-
-      broadcastIncomingMessage({
-        msgId,
-        phone: resolvedPhone,
-        pushName,
-        leadId: lead.id,
-        leadName: lead.name,
-        content: resolvedContent,
-        msgType,
-        instance,
-        queueId: lead.queue_id || null,
-        queueName: lead.queue_name || null,
-        queueColor: lead.queue_color || null,
-        mediaUrl,
-        fileName: mediaFileName,
-        mimeType: mediaMimeType,
-        tenantId,
-        sender: 'attendant',
-      });
-
-      console.log(`↪️ Outgoing webhook synced: ${maskPhone(resolvedPhone)} (${msgId})`);
-      return res.json({ processed: true, fromMe: true, leadId: lead.id });
-    }
-
-    // ─── Opt-out: paciente respondeu SAIR / PARAR / STOP ───
-    // Registra o descadastro da clínica, cancela o que estava na fila e
-    // confirma uma única vez. Não aciona menu, boas-vindas nem automações.
-    if (tenantId && msgType === 'text' && isWhatsAppOptOutText(msgContent)) {
-      const isNewOptOut = await recordWhatsAppOptOut(tenantId, resolvedPhone, { source: 'whatsapp', keyword: String(msgContent).trim().slice(0, 40) });
-      if (lead) {
-        await persistIncomingMessage({
-          msgId, leadId: lead.id, content: resolvedContent, msgType, phone: resolvedPhone, instance, pushName,
-          remoteJid, rawType, mediaUrl, fileName: mediaFileName, mimeType: mediaMimeType, tenantId,
-          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || null,
-        }).catch(e => console.error('[opt-out] persist failed:', e.message));
-        broadcastIncomingMessage({
-          msgId, phone: resolvedPhone, pushName, leadId: lead.id, leadName: lead.name, content: resolvedContent,
-          msgType, instance, queueId: lead.queue_id || null, queueName: lead.queue_name || null,
-          queueColor: lead.queue_color || null, mediaUrl, fileName: mediaFileName, mimeType: mediaMimeType, tenantId,
-        });
-      }
-      if (isNewOptOut) {
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({
-            number: resolvedPhone,
-            text: `Pronto! A ${await getTenantClinicName(tenantId)} não vai mais enviar mensagens automáticas para este número, inclusive lembretes de consulta. Se precisar falar com a gente, é só mandar uma mensagem por aqui.`,
-          }),
-        });
-      }
-      console.log(`🚫 Opt-out registrado (tenant ${tenantId}, final ${String(resolvedPhone).slice(-4)})`);
-      return res.json({ processed: true, optOut: true, leadId: lead?.id || null });
-    }
-
-    // ─── New contact: create lead + contato + check hours + send menu ───
-    if (!lead) {
-      // Boas-vindas e fora de horário da clínica dona do número (não de outra clínica).
-      const attendanceSettingsCache = await getTenantSetting(tenantId, 'attendance_settings');
-      const newId = crypto.randomUUID();
-      await pool.query(
-        `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
-         VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', true, $4)`,
-        [newId, pushName, resolvedPhone, tenantId]
-      );
-      lead = { id: newId, name: pushName, phone: resolvedPhone, queue_id: null, queue_name: null, awaiting_queue_selection: true, avatar_url: null };
-      console.log(`🆕 New lead created: ${maskPhone(resolvedPhone)}`);
-
-      // 🤖 Trigger "Lead entrou no CRM" automation
-      triggerAutomationFlows('Lead entrou no CRM', { name: pushName, phone, tenantId }).catch(() => {});
-
-      // Auto-save to contatos table (skip if phone already exists)
-      try {
-        const existingContato = await pool.query('SELECT id FROM contatos WHERE telefone = $1 AND tenant_id = $2', [resolvedPhone, tenantId]);
-        if (existingContato.rows.length === 0) {
-          await pool.query(
-            'INSERT INTO contatos (id, nome, telefone, tipo, tenant_id) VALUES ($1, $2, $3, $4, $5)',
-            [crypto.randomUUID(), pushName, resolvedPhone, 'pessoal', tenantId]
-          );
-          console.log(`📇 Auto-saved contact: ${maskPhone(resolvedPhone)}`);
-        }
-      } catch (contatoErr) {
-        console.error('Failed to auto-save contato:', contatoErr.message);
-      }
-
-      // Check business hours
-      if (!isFromMe && !isWithinBusinessHours(attendanceSettingsCache)) {
-        const offMsg = attendanceSettingsCache?.offHoursMessage ||
-          `Olá! Aqui é da ${await getTenantClinicName(tenantId)}. Nosso atendimento está fechado agora. Deixe sua mensagem que respondemos assim que abrirmos. 😊`;
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({ number: resolvedPhone, text: offMsg }),
-        });
-        console.log(`🕐 Off-hours message sent to ${maskPhone(resolvedPhone)}`);
-        if (!isFromMe) {
-          await ensureWaitingSessionForIncomingLead({
-            lead,
-            phone: resolvedPhone,
-            queueId: lead.queue_id || null,
-            queueName: lead.queue_name || null,
-            tenantId,
-          });
-        }
-        await persistIncomingMessage({
-          msgId,
-          leadId: lead.id,
-          content: resolvedContent,
-          msgType,
-          phone: resolvedPhone,
-          instance,
-          pushName,
-          remoteJid,
-          rawType,
-          mediaUrl,
-          fileName: mediaFileName,
-          mimeType: mediaMimeType,
-          tenantId,
-          sender: senderRole,
-          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-        });
-        broadcastIncomingMessage({
-          msgId,
-          phone: resolvedPhone,
-          pushName,
-          leadId: lead.id,
-          leadName: lead.name,
-          content: resolvedContent,
-          msgType,
-          instance,
-          mediaUrl,
-          fileName: mediaFileName,
-          mimeType: mediaMimeType,
-          tenantId,
-          sender: senderRole,
-          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-        });
-        return res.json({ processed: true, offHours: true, leadId: lead.id });
-      }
-
-      // Send welcome message if enabled
-      if (!isFromMe && attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({ number: resolvedPhone, text: attendanceSettingsCache.welcomeMessage }),
-        });
-      }
-
-      // Send queue menu
-      if (!isFromMe) {
-        sendQueueMenu(instance, resolvedPhone, tenantId)
-          .catch((err) => console.warn('Queue menu send failed:', err.message));
-      }
-    }
-
-    if (!isFromMe) {
-      await ensureWaitingSessionForIncomingLead({
-        lead,
-        phone: resolvedPhone,
-        queueId: lead.queue_id || null,
-        queueName: lead.queue_name || null,
-        tenantId,
-      });
-    }
-
-    // ─── Lead is awaiting queue selection ───
-    if (!isFromMe && lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
-      const selectedQueue = await matchQueue(msgContent, tenantId);
-
-      if (selectedQueue) {
-        // Assign queue to lead
-        await pool.query(
-          `UPDATE crm_leads SET queue_id = $1, queue_name = $2, awaiting_queue_selection = false, updated_at = NOW() WHERE id = $3`,
-          [selectedQueue.id, selectedQueue.name, lead.id]
-        );
-        lead.queue_id = selectedQueue.id;
-        lead.queue_name = selectedQueue.name;
-
-        if (!isFromMe) {
-          await ensureWaitingSessionForIncomingLead({
-            lead,
-            phone: resolvedPhone,
-            queueId: selectedQueue.id,
-            queueName: selectedQueue.name,
-            tenantId,
-          });
-        }
-
-        // Send confirmation
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({
-            number: resolvedPhone,
-            text: `✅ Você foi direcionado para o setor *${selectedQueue.icon} ${selectedQueue.name}*.\n\nUm de nossos atendentes irá te ajudar em breve! 😊`,
-          }),
-        });
-
-        console.log(`📌 Lead ${lead.id} routed to queue: ${selectedQueue.name}`);
-
-        // Broadcast queue assignment to SSE
-        broadcastSSE('queue_assigned', {
-          leadId: lead.id,
-          leadName: lead.name,
-          phone: resolvedPhone,
-          queueId: selectedQueue.id,
-          queueName: selectedQueue.name,
-          queueColor: selectedQueue.color,
-          timestamp: new Date().toISOString(),
-        }, tenantId);
-
-        // Also persist and broadcast the queue-selection message itself so it
-        // appears when the attendant opens the chat from a global notification.
-        const queueSelectionContent = `[Selecionou: ${selectedQueue.name}]`;
-        await persistIncomingMessage({
-          msgId,
-          leadId: lead.id,
-          content: queueSelectionContent,
-          msgType: 'text',
-          phone: resolvedPhone,
-          instance,
-          pushName,
-          remoteJid,
-          rawType,
-          mediaUrl,
-          fileName: mediaFileName,
-          mimeType: mediaMimeType,
-          tenantId,
-          sender: senderRole,
-          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-        });
-
-        broadcastIncomingMessage({
-          msgId,
-          phone: resolvedPhone,
-          pushName,
-          leadId: lead.id,
-          leadName: lead.name,
-          content: queueSelectionContent,
-          msgType: 'text',
-          instance,
-          queueId: selectedQueue.id,
-          queueName: selectedQueue.name,
-          queueColor: selectedQueue.color,
-          tenantId,
-          sender: senderRole,
-        });
-
-        return res.json({ processed: true, leadId: lead.id, queueId: selectedQueue.id });
-      } else {
-        await persistIncomingMessage({
-          msgId,
-          leadId: lead.id,
-          content: resolvedContent,
-          msgType,
-          phone: resolvedPhone,
-          instance,
-          pushName,
-          remoteJid,
-          rawType,
-          mediaUrl,
-          fileName: mediaFileName,
-          mimeType: mediaMimeType,
-          tenantId,
-          sender: senderRole,
-          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-        });
-        broadcastIncomingMessage({
-          msgId,
-          phone: resolvedPhone,
-          pushName,
-          leadId: lead.id,
-          leadName: lead.name,
-          content: resolvedContent,
-          msgType,
-          instance,
-          queueId: lead.queue_id || null,
-          queueName: lead.queue_name || null,
-          queueColor: lead.queue_color || null,
-          mediaUrl,
-          fileName: mediaFileName,
-          mimeType: mediaMimeType,
-          tenantId,
-          sender: senderRole,
-        });
-        // Invalid selection — resend menu in background so the webhook does not
-        // block message delivery/realtime if Evolution is slow.
-        sendQueueMenu(instance, resolvedPhone, tenantId)
-          .catch((err) => console.warn('Queue menu resend failed:', err.message));
-        console.log(`💬 Incoming message from ${maskPhone(resolvedPhone)} awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
-        return res.json({ processed: true, resent_menu: true, leadId: lead.id });
-      }
-    }
-
-    // ─── Check for satisfaction rating response ───
-    // Chave com a clínica: o mesmo paciente pode ser atendido por duas clínicas.
-    const ratingKey = `awaiting_rating_${tenantId}_${phone}`;
-    const { rows: ratingCheck } = await pool.query("SELECT value FROM app_settings WHERE key = $1", [ratingKey]);
-    if (ratingCheck.length > 0 && (msgType === 'text' || msgType === 'button_response')) {
-      let rating = null;
-      // Button response: rating_leadId_N
-      const btnMatch = msgContent.match(/rating_[^_]+_(\d)/);
-      if (btnMatch) rating = parseInt(btnMatch[1], 10);
-      // Text response: just a number 1-5
-      if (!rating) {
-        const num = parseInt(msgContent.trim(), 10);
-        if (num >= 1 && num <= 5) rating = num;
-      }
-
-      if (rating) {
-        const ratingData = ratingCheck[0].value;
-        const ratingId = crypto.randomUUID();
-        await pool.query(
-          `INSERT INTO satisfaction_ratings (id, session_id, lead_id, lead_phone, rating, attendant_id, attendant_name, tenant_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [ratingId, ratingData.sessionId || null, ratingData.leadId, phone, rating, ratingData.attendantId || null, ratingData.attendantName || null, tenantId]
-        );
-        // Remove awaiting flag
-        await pool.query("DELETE FROM app_settings WHERE key = $1", [ratingKey]);
-
-        const stars = '⭐'.repeat(rating);
-        const thanks = rating >= 4
-          ? `${stars}\n\nMuito obrigado pela avaliação! Ficamos felizes em atendê-lo! 😊`
-          : rating === 3
-          ? `${stars}\n\nObrigado pela avaliação! Vamos trabalhar para melhorar. 🙏`
-          : `${stars}\n\nObrigado pelo feedback. Vamos analisar e melhorar nosso atendimento. 🙏`;
-
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({ number: phone, text: thanks }),
-        });
-
-        console.log(`⭐ Rating ${rating}/5 received from ${maskPhone(phone)}`);
-        return res.json({ processed: true, rating, leadId: ratingData.leadId });
-      }
-    }
-
-    // ─── Auto-return from recovery stage to queue with priority ───
-    if ((await getFollowupConfig(tenantId)).returnToQueueOnReply) {
-      try {
-        const { rows: leadStage } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [lead.id]);
-        const currentStage = leadStage[0]?.kanban_stage;
-        if (currentStage && RECOVERY_STAGES.includes(currentStage)) {
-          // Move lead back to "lead" stage (top of funnel)
-          await pool.query(
-            `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', priority = true, updated_at = NOW() WHERE id = $1`,
-            [lead.id]
-          );
-          // Log movement
-          await pool.query(
-            `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason, tenant_id)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [lead.id, currentStage, 'em_atendimento', 'Sistema (Auto-retorno)', 'Cliente respondeu durante recuperação — retornou à fila com prioridade', tenantId]
-          ).catch(() => {});
-          // Add "Recuperação de Lead" tag
-          try {
-            // Ensure the tag exists
-            const { rows: existingTag } = await pool.query(
-              "SELECT id FROM lead_tags WHERE name = 'Recuperação de Lead' AND tenant_id = $1 LIMIT 1",
-              [tenantId]
-            );
-            let tagId;
-            if (existingTag.length > 0) {
-              tagId = existingTag[0].id;
-            } else {
-              tagId = crypto.randomUUID();
-              await pool.query(
-                "INSERT INTO lead_tags (id, name, color, tenant_id) VALUES ($1, $2, $3, $4)",
-                [tagId, 'Recuperação de Lead', '#F59E0B', tenantId]
-              );
-            }
-            // Assign tag to lead
-            await pool.query(
-              "INSERT INTO lead_tag_assignments (lead_id, tag_id, tenant_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-              [lead.id.toString(), tagId, tenantId]
-            );
-          } catch (tagErr) {
-            console.error('Failed to assign recovery tag:', tagErr.message);
-          }
-
-          // Create a new waiting session so lead appears at top of queue
-          const sessionId = crypto.randomUUID();
-          await pool.query(
-            `INSERT INTO attendance_sessions (id, lead_id, lead_phone, status, started_waiting_at, tenant_id)
-             VALUES ($1, $2, $3, 'waiting', NOW(), $4)
-             ON CONFLICT DO NOTHING`,
-            [sessionId, lead.id.toString(), phone, tenantId]
-          ).catch(() => {});
-
-          console.log(`🔄 Lead ${lead.id} (${maskPhone(phone)}) replied from recovery stage ${currentStage} → returned to queue with priority`);
-          broadcastSSE('lead_returned_from_recovery', {
-            leadId: lead.id,
-            leadName: lead.name || pushName,
-            phone,
-            fromStage: currentStage,
-            timestamp: new Date().toISOString(),
-          }, tenantId);
-        }
-      } catch (recoveryErr) {
-        console.error('Recovery auto-return error:', recoveryErr.message);
-      }
-    }
-
-    // ─── Normal message (queue already assigned) ───
-    await persistIncomingMessage({
-      msgId,
-      leadId: lead.id,
-      content: resolvedContent,
-      msgType,
-      phone: resolvedPhone,
-      instance,
-      pushName,
-      remoteJid,
-      rawType,
-      mediaUrl,
-      fileName: mediaFileName,
-      mimeType: mediaMimeType,
-      tenantId,
-      sender: senderRole,
-      messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
-    });
-
-    broadcastIncomingMessage({
-      msgId,
-      phone: resolvedPhone,
-      pushName,
-      leadId: lead.id,
-      leadName: lead.name,
-      content: resolvedContent,
-      msgType,
-      instance,
-      queueId: lead.queue_id || null,
-      queueName: lead.queue_name || null,
-      queueColor: lead.queue_color || null,
-      mediaUrl,
-      fileName: mediaFileName,
-      mimeType: mediaMimeType,
-      tenantId,
-      sender: senderRole,
-    });
-
-    console.log(`💬 New message from ${maskPhone(phone)} → saved + broadcast to ${sseClients.size} clients`);
-
-    // Send Web Push notification to all subscribed attendants
-    sendPushToAll({
-      title: `💬 ${pushName || phone}`,
-      body: msgContent || `[${msgType}]`,
-      tag: `msg-${lead.id}`,
-      url: `/chat?lead=${encodeURIComponent(lead.id)}`,
-      leadId: lead.id,
-    }, tenantId);
-
-    if (lead && !lead.avatar_url) {
-      (async () => {
-        try {
-          const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
-            method: 'POST',
-            body: JSON.stringify({ number: phone }),
-            timeoutMs: 5000,
-          });
-          const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
-          if (pictureUrl) {
-            await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
-            console.log(`📸 Auto-synced avatar for lead ${lead.id}`);
-          }
-        } catch (fetchErr) {
-          console.error('Webhook profile fetch error:', fetchErr.message);
-        }
-      })();
-    }
-
-    // ─── Auto-confirm appointment when patient replies SIM to reminder ───
-    try {
-      const normalizedReply = (resolvedContent || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      const isConfirmation = ['sim', 'confirmo', 'confirmado', 'ok', 'yes', 'vou', 'estarei', 'pode confirmar', 'confirmada'].some(
-        kw => normalizedReply === kw || normalizedReply.startsWith(kw + ' ') || normalizedReply.startsWith(kw + '!')
-      );
-
-      if (isConfirmation) {
-        // Check if there's a recent reminder sent to this phone
-        const { rows: reminderJobs } = await pool.query(
-          `SELECT aj.id, aj.flow_id FROM automation_jobs aj
-           WHERE aj.trigger_event = 'appointment_reminder'
-             AND aj.status = 'sent'
-             AND aj.tenant_id = $2
-             AND aj.patient_phone LIKE $1
-             AND aj.sent_at >= NOW() - INTERVAL '48 hours'
-           ORDER BY aj.sent_at DESC LIMIT 1`,
-          [`%${phoneSuffix}`, tenantId]
-        );
-
-        if (reminderJobs.length > 0) {
-          const reminderId = reminderJobs[0].flow_id.replace('reminder_', '');
-          // Só confirma consulta da mesma clínica que recebeu a resposta
-          const { rowCount } = await pool.query(
-            `UPDATE agendamentos SET status = 'confirmado', updated_at = NOW()
-             WHERE id::text = $1 AND tenant_id = $2 AND status NOT IN ('finalizado', 'realizado', 'cancelado')`,
-            [reminderId, tenantId]
-          );
-
-          if (rowCount > 0) {
-            // Mark reminder as confirmed
-            await pool.query(
-              `UPDATE automation_jobs SET variables = jsonb_set(COALESCE(variables::jsonb, '{}'), '{confirmed}', 'true')
-               WHERE id = $1`,
-              [reminderJobs[0].id]
-            ).catch(() => {});
-
-            // Send confirmation reply
-            const confirmMsg = `✅ *Presença confirmada!*\n\nObrigado por confirmar. A ${await getTenantClinicName(tenantId)} aguarda você na data agendada. 😊`;
-            await evolutionFetch(`/message/sendText/${instance}`, {
-              method: 'POST',
-              body: JSON.stringify({ number: `${phone}@s.whatsapp.net`, text: confirmMsg }),
-            }).catch(err => console.error('Failed to send confirm reply:', err.message));
-
-            console.log(`✅ Auto-confirmed appointment ${reminderId} via WhatsApp reply from ${maskPhone(phone)}`);
-          }
-        }
-      }
-    } catch (confirmErr) {
-      console.error('Auto-confirm error:', confirmErr.message);
-    }
-
-    res.json({ processed: true, leadId: lead.id });
+    const msg = evolutionInboundMessage({ message, remoteJid, instance });
+    await handleInboundWhatsAppMessage({ res, tenantId, instance, body, msg, allowTenantFallback: true });
   } catch (error) {
     console.error('Webhook error:', error);
     if (!res.headersSent) res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// OPENWA (reserva por QR) — webhook e canais (F1, docs/whatsapp/migracao-provedores.md)
+// ═══════════════════════════════════════════════════════════════
+
+const randomBytesHex = (n) => randomBytes(n).toString('hex');
+
+// Campos de canal que podem ir para a tela (nunca credenciais nem ids internos do OpenWA).
+function publicChannel(c, state = null) {
+  if (!c) return null;
+  return {
+    id: c.id, provider: c.provider, role: c.role, status: c.status, instance: c.instance_name,
+    displayPhone: c.display_phone || null, state: state || c.connection_state || null,
+    connectedAt: c.connected_at || null, createdAt: c.created_at || null,
+  };
+}
+
+// Estado do canal vindo do OpenWA (webhook ou consulta). Atualiza canal + mapa da instância,
+// avisa a tela da clínica e, ao conectar, vira principal se o principal atual não estiver no ar.
+async function applyOpenWaChannelState(channel, state, { qr = null, phone = null, allowPromote = true } = {}) {
+  const tenantId = String(channel.tenant_id);
+  await pool.query(
+    `UPDATE whatsapp_channels
+        SET connection_state = $3,
+            state_since = CASE WHEN connection_state IS DISTINCT FROM $3 THEN NOW() ELSE state_since END,
+            connected_at = CASE WHEN $3 = 'open' THEN COALESCE(connected_at, NOW()) ELSE connected_at END,
+            display_phone = COALESCE($4, display_phone), last_checked_at = NOW(), updated_at = NOW()
+      WHERE id = $1 AND tenant_id = $2`,
+    [channel.id, tenantId, state, phone ? String(phone).replace(/\D/g, '') || null : null]
+  ).catch(e => console.error('[openwa] estado do canal:', e.message));
+  waChannels.invalidate(channel.instance_name);
+  waOpenInstancesCache = { at: 0, names: waOpenInstancesCache.names };
+  // O QR nunca vai pelo SSE (que chega a todos os usuários da clínica, inclusive a recepção):
+  // só o aviso de que há QR novo. A tela do administrador busca a imagem pela rota /qr, que
+  // exige verifyAdmin (revisão F1.1, N1).
+  broadcastSSE('whatsapp_channel_state', { channelId: channel.id, state, ...(qr ? { qrAvailable: true } : {}) }, tenantId);
+  if (allowPromote && state === 'open' && channel.role !== 'primary') {
+    const primary = await waChannels.getPrimary(tenantId);
+    const open = await getOpenEvolutionInstances();
+    if (!primary || (primary.id !== channel.id && !open.has(primary.instance_name))) {
+      const r = await waChannels.setPrimary(tenantId, channel.id);
+      if (r.ok) console.log(`🔁 [openwa] canal ${channel.id} virou o principal da clínica ${tenantId} (principal anterior fora do ar)`);
+    }
+  }
+}
+
+async function handleOpenWaEvent(channel, evt) {
+  const tenantId = String(channel.tenant_id);
+  const instance = channel.instance_name;
+  if (evt.type === 'channel.state') {
+    return applyOpenWaChannelState(channel, evt.state, { qr: evt.qr, phone: evt.phone });
+  }
+  if (evt.type === 'message.status') {
+    const lookupIds = [evt.messageId];
+    let updated = [];
+    try { updated = await applyMessageStatusUpdate({ tenantId, lookupIds, newStatus: evt.status }); } catch (e) { console.error('[openwa] ack:', e.message); }
+    if (!updated.length) rememberPendingMessageStatus(tenantId, evt.messageId, evt.status);
+    broadcastSSE('message_status_update', { messageId: evt.messageId, status: evt.status, instance }, tenantId);
+    return;
+  }
+  if (evt.type === 'message.inbound') {
+    if (evt.isGroup || !evt.chatId) return;
+    const routed = await providerForInstance(instance);
+    const msg = inboundMessageFromEvent(evt, {
+      // Número do paciente: senderPhone (quando o OpenWA resolve @lid) ou o chatId.
+      remoteJid: evt.chatId.endsWith('@lid') && evt.from ? `${evt.from}@s.whatsapp.net` : evt.chatId.replace(/@c\.us$/, '@s.whatsapp.net'),
+      fetchMediaBase64: async () => {
+        if (!routed.provider?.downloadMedia) return null;
+        const m = await routed.provider.downloadMedia(routed.channel, evt.media);
+        if (!m.ok) {
+          console.warn(`[openwa] mídia recebida não baixada no canal ${channel.id} (HTTP ${m.status || '?'})`);
+          return null;
+        }
+        return { base64: m.base64, mimetype: m.mimetype || null };
+      },
+    });
+    await handleInboundWhatsAppMessage({ res: detachedResponse(), tenantId, instance, body: {}, msg, allowTenantFallback: false });
+  }
+}
+
+// Webhook do OpenWA: um URL por canal; a clínica vem do canal no nosso banco. Assinatura
+// HMAC (X-OpenWA-Signature) sobre o corpo bruto com o segredo daquele canal; sem corpo bruto,
+// sem segredo ou assinatura errada → 401. Repetido (X-OpenWA-Idempotency-Key) → 200 sem processar.
+app.post('/api/webhook/openwa/:channelId', async (req, res) => {
+  const ip = ipKey(req);
+  const reject = () => {
+    const falhaKey = chaveFalhaWebhook(ip, `openwa|${String(req.params.channelId || '').slice(0, 40)}`, 16);
+    const b = [RL.evolutionFalha.blocked(falhaKey), RL.evolutionFalhaIpTotal.blocked(ip)].find(x => x.blocked);
+    if (b) return sendTooMany(res, b.retryAfterSec, 'Too many requests');
+    RL.evolutionFalha.hit(falhaKey);
+    RL.evolutionFalhaIpTotal.hit(ip);
+    return res.status(401).json({ error: 'Unauthorized' });
+  };
+  try {
+    const channel = await waChannels.getById(req.params.channelId);
+    if (!channel || channel.provider !== 'openwa' || channel.status !== 'active') return reject();
+    const cred = waChannels.decryptCredentials(channel);
+    if (!cred.ok || !cred.value?.webhookSecret || !Buffer.isBuffer(req.rawBody)) return reject();
+    if (!openWaProvider.verifyWebhook(req.rawBody, req.get('x-openwa-signature'), cred.value.webhookSecret)) return reject();
+    if (String(req.body?.sessionId || '') !== String(channel.external_id)) return reject();
+    const porCanal = RL.evolutionInstancia.hit(`openwa:${channel.id}`);
+    if (!porCanal.allowed) return sendTooMany(res, porCanal.retryAfterSec, 'Too many requests');
+
+    // Chave de dedupe do CORPO (coberto pelo HMAC), com o canal na frente: um cabeçalho trocado
+    // num replay assinado não escapa do dedupe, e canais diferentes não colidem (revisão F1, I2).
+    // Sem idempotencyKey no corpo: dedupe pelo hash do corpo bruto assinado (o reenvio do
+    // OpenWA repete o mesmo corpo; eventos reais trazem timestamp e diferem) (revisão F1.1, N4).
+    const bodyKey = req.body?.idempotencyKey ? String(req.body.idempotencyKey) : '';
+    const eventId = bodyKey
+      ? `${channel.id}:${bodyKey}`
+      : `${channel.id}:sha256:${createHash('sha256').update(req.rawBody).digest('hex')}`;
+    if (!(await claimWebhookEvent(pool, 'openwa', eventId))) return res.json({ duplicate: true });
+    const events = validEvents(openWaProvider.parseWebhook(req.body))
+      .filter(e => e.channelRef === String(channel.external_id));
+    res.json({ accepted: true, events: events.length });
+    for (const evt of events) {
+      await handleOpenWaEvent(channel, evt).catch(e => console.error('[openwa] evento:', evt.type, e.message));
+    }
+  } catch (error) {
+    console.error('[openwa] webhook:', error.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// Canais da clínica (todos os provedores), para a tela Canais.
+app.get('/api/whatsapp/channels', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const rows = await waChannels.listForTenant(String(user.tenant_id));
+    res.json({ channels: rows.map(c => publicChannel(c)), openwaAvailable: openWaReady() });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao listar canais' });
+  }
+});
+
+// Conectar um número reserva por QR (OpenWA). Cria a sessão com a chave ADMIN, a chave
+// própria da sessão (operator, allowedSessions) cifrada no canal, o webhook assinado e inicia.
+app.post('/api/whatsapp/openwa/channels', async (req, res) => {
+  let provisioned = null;
+  try {
+    const { user } = await verifyAdmin(req);
+    const tenantId = String(user.tenant_id || '');
+    if (!isValidTenantId(tenantId)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!openWaReady()) return res.status(503).json({ error: 'Número reserva por QR ainda não está disponível neste servidor.' });
+    const existing = (await waChannels.listForTenant(tenantId)).filter(c => c.provider === 'openwa' && c.status === 'active');
+    if (existing.length) return res.status(409).json({ error: 'A clínica já tem um número reserva por QR. Desconecte o atual antes de conectar outro.', channel: publicChannel(existing[0]) });
+
+    const instanceName = `${tenantId.slice(0, 8)}-owa-${randomUUID().slice(0, 8)}`;
+    provisioned = await openWaProvider.provisionSession({ name: instanceName });
+    if (!provisioned.ok) return res.status(502).json({ error: 'Não foi possível criar a sessão no servidor de WhatsApp. Tente de novo em alguns minutos.' });
+
+    const channelId = randomUUID();
+    const webhookSecret = randomBytesHex(32);
+    const enc = waChannels.encryptCredentials({ id: channelId, tenant_id: tenantId }, {
+      apiKey: provisioned.apiKey, apiKeyId: provisioned.apiKeyId, webhookSecret,
+    });
+    if (!enc.ok) throw new Error('Falha ao cifrar credenciais');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: prim } = await client.query(
+        `SELECT 1 FROM whatsapp_channels WHERE tenant_id = $1 AND role = 'primary' AND status = 'active' LIMIT 1`, [tenantId]);
+      await client.query(
+        `INSERT INTO whatsapp_channels (id, tenant_id, provider, role, external_id, instance_name, credentials_enc, credentials_key_version, connection_state)
+         VALUES ($1, $2, 'openwa', $3, $4, $5, $6, $7, 'connecting')`,
+        [channelId, tenantId, prim.length ? 'backup' : 'primary', provisioned.sessionId, instanceName, enc.value, waCredentialCipher.currentVersion]
+      );
+      // Mesma transação: o mapa da instância (dono, ritmo, pausa, saúde) — o gatilho mantém o canal.
+      // DO NOTHING + conferência: nunca reatribui uma instância existente (revisão F1, I4).
+      const ins = await client.query(
+        `INSERT INTO whatsapp_instances (instance_name, tenant_id) VALUES ($1, $2)
+         ON CONFLICT (instance_name) DO NOTHING`,
+        [instanceName, tenantId]
+      );
+      if (!ins.rowCount) throw Object.assign(new Error('Nome de instância já em uso'), { code: 'WA_INSTANCE_TAKEN' });
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+    setCachedTenantId(instanceName, tenantId);
+    waChannels.invalidate(instanceName);
+    const channel = { id: channelId, tenant_id: tenantId, provider: 'openwa', external_id: provisioned.sessionId, instance_name: instanceName, credentials: { apiKey: provisioned.apiKey, apiKeyId: provisioned.apiKeyId, webhookSecret } };
+    provisioned = null; // daqui em diante a sessão pertence ao canal (removida pelo DELETE do canal)
+    const hook = await openWaProvider.registerWebhook(channel, { url: `${OPENWA_WEBHOOK_BASE}/api/webhook/openwa/${channelId}`, secret: webhookSecret });
+    if (!hook.ok) console.error(`[openwa] webhook não registrado no canal ${channelId} (HTTP ${hook.status})`);
+    const started = await openWaProvider.start(channel);
+    const created = await waChannels.getForTenant(tenantId, channelId);
+    res.status(201).json({ channel: publicChannel(created, started.state || 'connecting'), webhookRegistered: hook.ok });
+  } catch (error) {
+    if (provisioned?.ok) await openWaProvider.removeSession({ external_id: provisioned.sessionId, credentials: { apiKeyId: provisioned.apiKeyId } }).catch(() => {});
+    // Dois cliques ao mesmo tempo: o índice uq_wa_channels_one_openwa recusa o segundo canal.
+    if (error.code === '23505' || error.code === 'WA_INSTANCE_TAKEN') {
+      return res.status(409).json({ error: 'A clínica já tem um número reserva por QR sendo conectado. Atualize a página.' });
+    }
+    const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
+    if (status === 500) console.error('[openwa] criar canal:', error.message);
+    res.status(status).json({ error: status === 500 ? 'Erro ao conectar o número reserva' : error.message });
+  }
+});
+
+// Canal OpenWA da clínica com credenciais (para as rotas abaixo). null = não é da clínica.
+async function loadTenantOpenWaChannel(user, channelId) {
+  if (!isValidTenantId(user?.tenant_id)) return null;
+  const c = await waChannels.getForTenant(String(user.tenant_id), channelId);
+  if (!c || c.provider !== 'openwa') return null;
+  const cred = waChannels.decryptCredentials(c);
+  return { record: c, channel: cred.ok ? { ...c, credentials: cred.value } : null };
+}
+
+app.get('/api/whatsapp/channels/:id/qr', async (req, res) => {
+  try {
+    // Só o administrador pareia um aparelho (docs/seguranca/matriz-papeis.md; revisão F1, I1).
+    const { user } = await verifyAdmin(req);
+    const loaded = await loadTenantOpenWaChannel(user, req.params.id);
+    if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
+    if (!loaded.channel) return res.status(503).json({ error: 'Credenciais do canal indisponíveis. Desconecte e conecte de novo.' });
+    let r = await openWaProvider.getQr(loaded.channel);
+    if (!r.ok && r.state === 'close') { await openWaProvider.start(loaded.channel); r = await openWaProvider.getQr(loaded.channel); }
+    if (r.ok && r.qr) return res.json({ qr: r.qr, state: 'connecting', live: true });
+    const st = await openWaProvider.getState(loaded.channel);
+    // OpenWA fora do ar (ou sem responder): erro claro em vez de 200 {qr:null}, para a tela
+    // parar de girar "Gerando o código…" (revisão F1.1, C1).
+    if (!st.ok && (st.status === 401 || st.status === 403 || st.status === 404)) {
+      return res.status(502).json({ error: 'O servidor do número reserva recusou este canal. Remova o número reserva e conecte de novo.', live: false });
+    }
+    if (!st.ok) {
+      return res.status(502).json({ error: 'O servidor do número reserva não respondeu. Tente de novo em alguns minutos.', live: false });
+    }
+    await applyOpenWaChannelState(loaded.record, st.state, { phone: st.phone });
+    res.json({ qr: null, state: st.state, live: true });
+  } catch (error) {
+    const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
+    res.status(status).json({ error: status === 500 ? 'Erro ao obter o QR' : error.message });
+  }
+});
+
+app.get('/api/whatsapp/channels/:id/state', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const loaded = await loadTenantOpenWaChannel(user, req.params.id);
+    if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
+    if (!loaded.channel) return res.json({ channel: publicChannel(loaded.record), live: false });
+    const st = await openWaProvider.getState(loaded.channel);
+    if (st.ok && st.state !== loaded.record.connection_state) await applyOpenWaChannelState(loaded.record, st.state, { phone: st.phone, allowPromote: false });
+    res.json({ channel: publicChannel(loaded.record, st.ok ? st.state : null), live: st.ok });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao consultar o canal' });
+  }
+});
+
+// Desconectar (logout no WhatsApp; o canal continua e pode gerar QR de novo).
+app.post('/api/whatsapp/channels/:id/disconnect', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    const loaded = await loadTenantOpenWaChannel(user, req.params.id);
+    if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
+    if (loaded.channel) await openWaProvider.logout(loaded.channel);
+    await applyOpenWaChannelState(loaded.record, 'close');
+    res.json({ ok: true });
+  } catch (error) {
+    const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
+    res.status(status).json({ error: status === 500 ? 'Erro ao desconectar' : error.message });
+  }
+});
+
+// Remover o canal: apaga a sessão e revoga a chave no OpenWA; apaga a instância (o gatilho
+// apaga o canal na mesma transação).
+app.delete('/api/whatsapp/channels/:id', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    const loaded = await loadTenantOpenWaChannel(user, req.params.id);
+    if (!loaded) return res.status(404).json({ error: 'Canal não encontrado' });
+    // A sessão é apagada com a chave ADMIN: não depende de decifrar as credenciais do canal
+    // (sem elas, só a revogação da chave da sessão fica para trás) (revisão F1, I3).
+    await openWaProvider.removeSession(loaded.channel || { external_id: loaded.record.external_id, credentials: {} });
+    await pool.query('DELETE FROM whatsapp_instances WHERE instance_name = $1 AND tenant_id = $2', [loaded.record.instance_name, String(user.tenant_id)]);
+    await pool.query('DELETE FROM whatsapp_channels WHERE id = $1 AND tenant_id = $2', [loaded.record.id, String(user.tenant_id)]);
+    waChannels.invalidate(loaded.record.instance_name);
+    res.json({ ok: true });
+  } catch (error) {
+    const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
+    res.status(status).json({ error: status === 500 ? 'Erro ao remover o canal' : error.message });
+  }
+});
+
+// Tornar um canal da clínica o principal (envios automáticos saem por ele).
+app.post('/api/whatsapp/channels/:id/primary', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const r = await waChannels.setPrimary(String(user.tenant_id), req.params.id);
+    if (!r.ok) return res.status(404).json({ error: 'Canal não encontrado' });
+    res.json({ ok: true });
+  } catch (error) {
+    const status = error.message === 'Unauthorized' ? 401 : error.message === 'Admin access required' ? 403 : 500;
+    res.status(status).json({ error: status === 500 ? 'Erro ao trocar o principal' : error.message });
   }
 });
 
@@ -9999,7 +11669,8 @@ app.post('/api/sessions/assign', async (req, res) => {
               OR cm.id::text = $2
               OR (
                 REGEXP_REPLACE($2, '\\D', '', 'g') <> ''
-                AND RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($2, '\\D', '', 'g'), 11)
+                AND cm.phone IS NOT NULL
+                AND RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($2, '\\D', '', 'g'), 11)
               )
             )
           ORDER BY cm.timestamp DESC
@@ -10205,6 +11876,7 @@ function marketingFlowHasHealthVars(trigger, steps) {
 app.post('/api/automations/flows', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id, name, description, type, active, trigger, steps, stats } = req.body;
     if (!name) return res.status(400).json({ error: 'name obrigatório' });
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -10227,6 +11899,7 @@ app.post('/api/automations/flows', async (req, res) => {
 app.put('/api/automations/flows/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id } = req.params;
     const { name, description, type, active, trigger, steps } = req.body;
     if (steps !== undefined || trigger !== undefined) {
@@ -10268,6 +11941,7 @@ app.put('/api/automations/flows/:id', async (req, res) => {
 app.delete('/api/automations/flows/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id } = req.params;
     const { rowCount } = await pool.query('DELETE FROM automation_flows WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]);
     if (!rowCount) return res.status(404).json({ error: 'Fluxo não encontrado' });
@@ -10281,6 +11955,7 @@ app.delete('/api/automations/flows/:id', async (req, res) => {
 app.patch('/api/automations/flows/:id/toggle', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id } = req.params;
     const { rows } = await pool.query(
       `UPDATE automation_flows SET active = NOT active, updated_at = NOW() WHERE id = $1 AND tenant_id = $2 RETURNING active`,
@@ -10342,16 +12017,9 @@ app.get('/api/automations/solution-counts', async (req, res) => {
          AND NOT EXISTS (SELECT 1 FROM agendamentos b WHERE b.paciente_id = a.paciente_id AND b.tenant_id = a.tenant_id AND b.status IN ('realizado','confirmado','atendido'))`,
         [user.tenant_id]
       ),
-      // Inadimplência: financeiro com tipo receita e valor em parcelas vencidas (simplificado: orçamentos aprovados sem receita correspondente)
-      pool.query(
-        `SELECT COUNT(DISTINCT o.paciente_id) as total FROM orcamentos o
-         WHERE o.status = 'aprovado'
-         AND o.tenant_id = $1
-         AND NOT EXISTS (
-           SELECT 1 FROM financeiro f WHERE f.paciente_id = o.paciente_id AND f.tenant_id = o.tenant_id AND f.tipo = 'receita' AND f.valor >= o.valor_total
-         )`,
-        [user.tenant_id]
-      ),
+      // Inadimplência: sem contas a receber no sistema não há como saber quem está em atraso
+      // (a regra antiga contava todo orçamento aprovado). Fica 0 até existirem parcelas reais.
+      Promise.resolve({ rows: [{ total: 0 }] }),
       // Orçamentos em Aberto: orçamentos com status 'pendente'
       pool.query(
         `SELECT COUNT(DISTINCT paciente_id) as total FROM orcamentos WHERE status = 'pendente' AND tenant_id = $1`,
@@ -10531,20 +12199,46 @@ function waPhoneKey(phone) {
   return digits.slice(-10);
 }
 
-// Pedido de descadastro: só quando a mensagem inteira é a palavra-chave, para
-// não confundir "quero cancelar a consulta" com opt-out. "Cancelar" fica de fora
-// porque responde a lembrete de consulta.
+// Lista aprovada pela Helena (docs/juridico/parecer-optout-pr35.md): é a única forma de o
+// paciente sair sem falar com a equipe, então errar para menos prejudica o direito de
+// revogar (LGPD 8º §5º) e errar para mais corta lembretes de quem não pediu.
+// Fora de propósito: "não quero" sozinho (pega "não quero agora", "não quero, obrigado") e
+// "apague/exclua meus dados" (pedido de eliminação, LGPD art. 18 VI: vai para uma pessoa).
+// "não quero mais" fica porque a clínica pode desfazer o opt-out a pedido do paciente
+// (POST /api/whatsapp/opt-out/revogar, com registro de quem e quando).
 const WA_OPT_OUT_PHRASES = new Set([
-  'sair', 'parar', 'pare', 'stop', 'descadastrar', 'descadastre', 'remover',
-  'nao quero', 'nao quero mais', 'nao quero receber', 'nao quero receber mensagens',
-  'nao envie mais', 'nao mande mais', 'parar mensagens', 'sair da lista',
+  'sair', 'parar', 'pare', 'stop', 'descadastrar', 'descadastre', 'remover', 'unsubscribe',
+  'nao quero mais', 'nao quero receber', 'nao quero receber mensagens',
+  'nao quero mais receber', 'nao quero mais mensagens', 'nao quero mais mensagem', 'nao quero receber mais',
+  'nao envie mais', 'nao mande mais', 'nao me envie mais', 'nao me mande mais',
+  'nao mande mais mensagens', 'nao envie mais mensagens', 'nao me mande mais mensagens',
+  'me exclua da lista', 'excluir da lista', 'remover meu numero',
+  'parar mensagens', 'parar de receber', 'parar de enviar', 'pare de enviar', 'pare de mandar',
+  'cancelar mensagens', 'cancelar as mensagens', 'cancelar envio', 'cancelar envios', 'cancelar inscricao',
+  'sair da lista', 'me tire da lista', 'me tira da lista', 'tirar da lista', 'me remova', 'me remove',
+  'me descadastre', 'me descadastra', 'descadastro',
+  'quero sair', 'quero sair da lista', 'quero descadastrar', 'quero parar de receber',
 ]);
+// Cortesia que não muda a intenção ("SAIR, por favor", "pare, obrigado").
+const WA_OPT_OUT_FILLERS = /\b(por favor|porfavor|pfvr|pfv|pf|obrigad[oa]|obg|grat[oa]|agora|ja)\b/g;
+const WA_OPT_OUT_MAX_WORDS = 6;
 
-function isWhatsAppOptOutText(text) {
-  const normalized = String(text || '')
+function normalizeOptOutText(text) {
+  return String(text || '')
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-  return normalized.length > 0 && normalized.length <= 40 && WA_OPT_OUT_PHRASES.has(normalized);
+}
+
+// Pedido de descadastro: só quando a mensagem INTEIRA é o pedido (frase da lista, com
+// acento/caixa/pontuação variando e, no máximo, cortesia em volta). Frase com outro
+// assunto não conta: "vou sair do trabalho às 18h" ou "quero cancelar a consulta".
+// "Cancelar" sozinho fica de fora porque responde a lembrete de consulta.
+function isWhatsAppOptOutText(text) {
+  const normalized = normalizeOptOutText(text);
+  if (!normalized || normalized.length > 60) return false;
+  if (WA_OPT_OUT_PHRASES.has(normalized)) return true;
+  const core = normalized.replace(WA_OPT_OUT_FILLERS, ' ').replace(/\s+/g, ' ').trim();
+  return !!core && core.split(' ').length <= WA_OPT_OUT_MAX_WORDS && WA_OPT_OUT_PHRASES.has(core);
 }
 
 async function isWhatsAppOptedOut(tenantId, phone) {
@@ -10576,18 +12270,173 @@ async function recordWhatsAppOptOut(tenantId, phone, { source = 'whatsapp', keyw
 
 // Instâncias abertas na Evolution (cache curto para não martelar a API).
 let waOpenInstancesCache = { at: 0, names: new Set() };
+
+// Estado ao vivo das sessões OpenWA, por instance_name do canal. names = todos os canais
+// OpenWA conhecidos (mesmo sem resposta do OpenWA), para a saúde não os chamar de "ausente".
+async function getOpenWaLiveStates() {
+  const channels = await waChannels.listByProvider('openwa');
+  const names = new Set(channels.map(c => c.instance_name).filter(Boolean));
+  if (!channels.length || !openWaProvider.configured() || !OPENWA_ADMIN_KEY) return { ok: false, names, byInstance: new Map() };
+  const r = await openWaProvider.listStates();
+  const bySession = new Map(r.states.map(st => [st.ref, st.state]));
+  const byInstance = new Map();
+  for (const c of channels) {
+    if (!c.instance_name) continue;
+    const st = bySession.get(String(c.external_id));
+    byInstance.set(c.instance_name, st === 'restricted' ? 'close' : (st || 'ausente'));
+  }
+  return { ok: r.ok, names, byInstance };
+}
+
+// Adaptador + canal de um instance_name (fila e chat). Sem canal ou canal Evolution: Evolution
+// (comportamento de antes). OpenWA: credenciais decifradas só em memória, nunca em log.
+async function providerForInstance(instance) {
+  const channel = await waChannels.getByInstance(instance);
+  if (!channel || channel.provider === 'evolution') {
+    return { provider: providerForChannel(null), channel: channel ? { ...channel, externalId: instance } : instance, record: channel };
+  }
+  if (channel.provider === 'openwa') {
+    const cred = waChannels.decryptCredentials(channel);
+    if (!cred.ok) return { provider: null, channel, record: channel, error: `Credenciais do canal indisponíveis (${cred.error})` };
+    return { provider: openWaProvider, channel: { ...channel, credentials: cred.value }, record: channel };
+  }
+  return { provider: null, channel, record: channel, error: `Provedor ${channel.provider} ainda não suportado` };
+}
+
+// Canais não Evolution da clínica no formato da lista de instâncias (useWhatsAppInstances lê
+// name, id, integration, connectionStatus, ownerJid). Estado ao vivo do OpenWA quando ele
+// responde; senão, o último estado gravado no canal. Sem credenciais nem ids do OpenWA.
+// Chat humano: canal não Evolution do instance_name, conferindo a clínica. null = segue o
+// caminho da Evolution (sem canal ou canal Evolution). { status, error } = recusar.
+async function routeChatInstance(user, instance) {
+  const routed = await providerForInstance(instance);
+  if (!routed.record || routed.record.provider === 'evolution') {
+    // Evolution: mesma regra do send-text — número mapeado para outra clínica é recusado.
+    const mapped = await getTenantIdByInstance(instance).catch(() => null);
+    if (user?.tenant_id && mapped && String(mapped) !== String(user.tenant_id)) {
+      return { status: 403, error: 'Esta instância do WhatsApp não pertence à clínica atual. Atualize a página e selecione o canal correto.' };
+    }
+    return null;
+  }
+  if (!user?.tenant_id || String(routed.record.tenant_id) !== String(user.tenant_id)) {
+    return { status: 403, error: 'Este número de WhatsApp não pertence à sua clínica.' };
+  }
+  if (!routed.provider) return { status: 503, error: 'Canal de WhatsApp indisponível. Reconecte o número em Canais.' };
+  return { routed };
+}
+
+const WA_MEDIA_KINDS = new Set(['image', 'video', 'audio', 'document']);
+function waMediaKind(v) {
+  const k = String(v || '').toLowerCase();
+  return WA_MEDIA_KINDS.has(k) ? k : 'document';
+}
+
+// Mídia por um adaptador (OpenWA hoje; Cloud na F2). Áudio vira mensagem de voz: convertido
+// para OGG/Opus mono pelo ffmpeg (o Baileys não converte); sem ffmpeg, vai como arquivo de
+// áudio. Devolve SendResult. Sem telefone nem conteúdo no log.
+async function sendMediaByChannel(routed, to, { kind, base64, mimetype, filename, caption, delayMs = 0, idempotencyKey = null, timeoutMs = 90_000 } = {}) {
+  let b64 = cleanBase64Media(base64 || '');
+  let mime = String(mimetype || '').split(';')[0].trim() || 'application/octet-stream';
+  if (!b64 || b64.length < 10) return sendResult({ ok: false, status: 400, error: 'Mídia vazia' });
+  const k = waMediaKind(kind);
+  let ptt = false;
+  if (k === 'audio') {
+    try {
+      const t = await transcodeAudioToWhatsAppOgg(b64, mime);
+      b64 = t.base64; mime = 'audio/ogg; codecs=opus'; ptt = true;
+    } catch (e) {
+      console.warn('[whatsapp] áudio sem conversão para OGG/Opus; vai como arquivo de áudio:', String(e?.message || e).slice(0, 120));
+    }
+  }
+  return routed.provider.sendMedia(routed.channel, to, {
+    kind: k, base64: b64, mimetype: mime, filename: filename ? String(filename).slice(0, 255) : undefined,
+    caption: k === 'audio' ? undefined : (caption ? String(caption) : undefined), ptt, delayMs, idempotencyKey, timeoutMs,
+  });
+}
+
+// Erro de envio de um adaptador → status HTTP + texto para a tela (detalhe só no log).
+function providerSendFailure(sent, fallback) {
+  const httpStatus = sent.retryAfterMs ? 429 : (sent.status >= 400 && sent.status < 600 && sent.status !== 401 && sent.status !== 403 ? sent.status : 502);
+  const error = sent.uncertain
+    ? 'Envio não confirmado: confira a conversa antes de reenviar.'
+    : sent.retryAfterMs
+      ? `Muitos envios seguidos por este número. Aguarde ${Math.max(1, Math.ceil(sent.retryAfterMs / 60_000))} min e envie de novo.`
+      : sent.status === 413 ? 'Arquivo grande demais para o WhatsApp.' : fallback;
+  return { httpStatus, error };
+}
+
+// Mídia de um job da fila: só arquivos do nosso disco (/uploads/media/AAAA-MM/<uuid>.<ext>),
+// com assinatura do servidor ligada à clínica — variables vindas do cliente não apontam para
+// arquivo de outra clínica nem para fora da pasta de mídia.
+const WA_JOB_MEDIA_PATH_RE = /^\/uploads\/media\/\d{4}-\d{2}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}$/;
+function waJobMediaSignature(tenantId, media) {
+  return createHmac('sha256', `wa-job-media:${JWT_SECRET}`)
+    .update(`${tenantId}|${media.path}|${media.kind}|${media.mimetype || ''}`).digest('hex');
+}
+function signWaJobMedia(tenantId, media) {
+  if (!isValidTenantId(tenantId) || !media || !WA_JOB_MEDIA_PATH_RE.test(String(media.path || ''))) return null;
+  const m = {
+    kind: waMediaKind(media.kind), path: String(media.path),
+    mimetype: media.mimetype ? String(media.mimetype).slice(0, 120) : null,
+    filename: media.filename ? String(media.filename).slice(0, 255) : null,
+  };
+  return { ...m, sig: waJobMediaSignature(String(tenantId), m) };
+}
+async function loadWaJobMedia(tenantId, media) {
+  if (!media || typeof media !== 'object' || !WA_JOB_MEDIA_PATH_RE.test(String(media.path || ''))) return { ok: false, error: 'Mídia do envio inválida' };
+  const m = { kind: waMediaKind(media.kind), path: String(media.path), mimetype: media.mimetype || null, filename: media.filename || null };
+  const expected = Buffer.from(waJobMediaSignature(String(tenantId), m));
+  const got = Buffer.from(String(media.sig || ''));
+  if (expected.length !== got.length || !timingSafeEqual(expected, got)) return { ok: false, error: 'Mídia do envio inválida' };
+  try {
+    const buf = await readFile(path.join(UPLOADS_DIR, m.path.slice('/uploads/media/'.length)));
+    return { ok: true, media: m, base64: buf.toString('base64') };
+  } catch {
+    return { ok: false, error: 'Arquivo da mídia não encontrado no servidor' };
+  }
+}
+
+async function providerChannelsAsInstances(tenantId, skipNames = new Set()) {
+  const rows = (await waChannels.listForTenant(tenantId))
+    .filter(c => c.provider !== 'evolution' && c.status === 'active' && c.instance_name && !skipNames.has(c.instance_name));
+  if (!rows.length) return [];
+  const live = rows.some(c => c.provider === 'openwa')
+    ? await getOpenWaLiveStates().catch(() => ({ ok: false, byInstance: new Map() }))
+    : { ok: false, byInstance: new Map() };
+  return rows.map(c => {
+    const liveState = live.ok ? live.byInstance.get(c.instance_name) : null;
+    const raw = liveState && liveState !== 'ausente' ? liveState : (c.connection_state || 'close');
+    const state = raw === 'open' || raw === 'connecting' ? raw : 'close';
+    return {
+      name: c.instance_name,
+      id: c.id,
+      integration: String(c.provider).toUpperCase(),
+      connectionStatus: state,
+      ownerJid: c.display_phone ? `${c.display_phone}@s.whatsapp.net` : null,
+      provider: c.provider,
+      channelId: c.id,
+      role: c.role,
+    };
+  });
+}
+
 async function getOpenEvolutionInstances() {
   if (Date.now() - waOpenInstancesCache.at < 60_000) return waOpenInstancesCache.names;
-  const result = await evolutionFetch('/instance/fetchInstances');
-  const list = Array.isArray(result.data) ? result.data : [];
-  const names = new Set(
-    list.filter(i => (i.connectionStatus || i.status || i.instance?.state) === 'open')
-      .map(i => i.name || i.instanceName || i.instance?.instanceName)
-      .filter(Boolean)
-  );
-  // Em falha, guarda o resultado vazio por ~30 s (cache negativo) para não
-  // repetir a espera de timeout a cada mensagem enfileirada.
-  waOpenInstancesCache = result.ok ? { at: Date.now(), names } : { at: Date.now() - 30_000, names: waOpenInstancesCache.names };
+  const result = await providerForChannel(null).listStates();
+  const names = new Set(result.states.filter(st => st.state === 'open').map(st => st.ref));
+  // Sessões OpenWA prontas entram no mesmo conjunto (chave = instance_name do canal).
+  const owa = await getOpenWaLiveStates().catch(() => ({ ok: false, byInstance: new Map() }));
+  for (const [name, st] of owa.byInstance) if (st === 'open') names.add(name);
+  // Evolution em falha: guarda por ~30 s (cache negativo, para não repetir o timeout a cada
+  // mensagem) o último conjunto da Evolution UNIDO às sessões OpenWA abertas agora — é
+  // justamente quando a reserva precisa sair (revisão F1, B1).
+  if (result.ok) {
+    waOpenInstancesCache = { at: Date.now(), names };
+  } else {
+    const merged = new Set([...waOpenInstancesCache.names].filter(n => !owa.names?.has?.(n)));
+    for (const [name, st] of owa.byInstance) if (st === 'open') merged.add(name);
+    waOpenInstancesCache = { at: Date.now() - 30_000, names: merged };
+  }
   return waOpenInstancesCache.names;
 }
 
@@ -10609,6 +12458,9 @@ async function resolveInstanceTenant(instanceName) {
 async function getTenantDefaultInstance(tenantId) {
   if (!isValidTenantId(tenantId)) return null;
   const open = await getOpenEvolutionInstances();
+  // Canal principal da clínica (whatsapp_channels), se estiver conectado.
+  const primary = await waChannels.getPrimary(tenantId);
+  if (primary?.instance_name && String(primary.tenant_id) === String(tenantId) && open.has(primary.instance_name)) return primary.instance_name;
   const { rows } = await pool.query(
     'SELECT instance_name FROM whatsapp_instances WHERE tenant_id = $1 ORDER BY created_at ASC NULLS LAST',
     [tenantId]
@@ -10649,11 +12501,18 @@ const WA_MARKETING_FORBIDDEN_VARS = /\{\{\s*(procedimento|valor)\s*\}\}|\{tratam
 async function enqueueWhatsAppJob({
   tenantId, instance = null, phone, message, category = 'transactional',
   flowId = null, flowName = '', stepIndex = 0, patientName = '', variables = null,
-  scheduledAt = new Date(), triggerEvent = 'manual', id = null, expiresAt = null,
+  scheduledAt = new Date(), triggerEvent = 'manual', id = null, expiresAt = null, media = null,
 }) {
   if (!isValidTenantId(tenantId)) throw new Error('enqueueWhatsAppJob: tenantId obrigatório');
   const cleanPhone = normalizeWhatsappNumber(phone || '');
   if (!cleanPhone || !message) return null;
+  // Mídia (imagem, documento, vídeo, áudio de voz): arquivo já salvo em /uploads/media; o
+  // `message` vira a legenda (e o texto auditado/deduplicado). Assinada pelo servidor.
+  if (media) {
+    const signed = signWaJobMedia(tenantId, media);
+    if (!signed) throw new Error('enqueueWhatsAppJob: mídia inválida (use um arquivo salvo em /uploads/media)');
+    variables = { ...(variables || {}), media: signed };
+  }
   if (category === 'marketing') message = withMarketingOptOutFooter(message);
   // Já fixa o número da clínica, para o ritmo por número valer desde o início.
   const resolvedInstance = instance || await getTenantDefaultInstance(tenantId).catch(() => null);
@@ -10671,6 +12530,91 @@ async function enqueueWhatsAppJob({
     vals
   );
   return rows[0]?.id || null;
+}
+
+// Resposta automática a uma mensagem que o paciente ACABOU de mandar (boas-vindas e
+// "fora do horário" do webhook). Sai pela fila — opt-out, dedupe, número da clínica,
+// ritmo por número, "digitando" e disjuntor —, com scheduledAt imediato e prioridade
+// sobre lembretes/campanhas na escolha do próximo job do número (trigger_event
+// 'auto_reply'). Validade curta: resposta atrasada não faz sentido e não deve sair.
+// Categoria: 'service' (resposta de atendimento, sem janela de horário) para a
+// "fora do horário", que só existe fora do expediente; 'transactional' (com janela)
+// para as boas-vindas, que saem dentro do expediente — se o expediente da clínica
+// passar da janela de envio, a boas-vindas nem é enfileirada (o menu sai direto).
+const WA_AUTO_REPLY_TTL_MS = 30 * 60_000;
+const WA_AUTO_REPLY_MENU_MAX_AGE_MS = 10 * 60_000;
+
+// Endpoints da Evolution aceitos para mensagem interativa na fila (payload sem `number`).
+const WA_INTERACTIVE_ENDPOINTS = new Set(['sendButtons', 'sendList']);
+const WA_DEFAULT_DEDUPE_MINUTES = 24 * 60;
+
+// Janela de dedupe por job, limitada a [1 min, 24 h]. Menu de filas e confirmações
+// usam janela curta: a repetição legítima (paciente errou a opção) precisa sair.
+// Chaves de controle da fila em variables (dedupe por job, conteúdo interativo, kind,
+// menu após boas-vindas) só valem em jobs criados pelo próprio servidor. Em job
+// manual/de fluxo, o cliente poderia furar o dedupe de 24 h ou mandar um conteúdo
+// diferente do job.message auditado.
+const WA_INTERNAL_TRIGGERS = new Set(['auto_reply', 'satisfaction_survey', 'appointment_reminder', 'waitlist_offer']);
+const WA_CONTROL_VAR_KEYS = ['dedupeMinutes', 'interactive', 'kind', 'thenQueueMenu', 'enqueuedAt'];
+function stripWhatsAppControlVars(vars) {
+  if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return {};
+  const out = { ...vars };
+  for (const k of WA_CONTROL_VAR_KEYS) delete out[k];
+  return out;
+}
+function trustedWhatsAppJobVars(job, vars) {
+  return WA_INTERNAL_TRIGGERS.has(job?.trigger_event) ? (vars || {}) : stripWhatsAppControlVars(vars);
+}
+
+function waDedupeMinutes(vars) {
+  const n = Number(vars?.dedupeMinutes);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.round(n), WA_DEFAULT_DEDUPE_MINUTES) : WA_DEFAULT_DEDUPE_MINUTES;
+}
+
+// EXCEÇÃO ÚNICA ao opt-out: a confirmação de que o descadastro foi registrado
+// (transparência e revogação facilitada — LGPD art. 6º VI e 8º §5º). Só ela
+// passa pelo filtro de opt-out, e só quando enfileirada como auto_reply com esse kind.
+const WA_OPT_OUT_CONFIRMATION_KIND = 'opt_out_confirmation';
+function isOptOutConfirmationJob(job, vars) {
+  return job?.trigger_event === 'auto_reply' && vars?.kind === WA_OPT_OUT_CONFIRMATION_KIND;
+}
+
+async function enqueueWhatsAppAutoReply({
+  tenantId, instance, phone, message, kind, category, thenQueueMenu = false,
+  interactive = null, dedupeMinutes = WA_DEFAULT_DEDUPE_MINUTES,
+}) {
+  const text = String(message || '').trim();
+  if (!isValidTenantId(tenantId) || !phone || !text) return null;
+  if (interactive && !WA_INTERACTIVE_ENDPOINTS.has(interactive.endpoint)) throw new Error('enqueueWhatsAppAutoReply: endpoint interativo inválido');
+  // Fora da janela a fila seguraria a mensagem até expirar: nem enfileira.
+  if (category !== 'service' && !isWithinWhatsAppSendWindow()) return null;
+  if (kind !== WA_OPT_OUT_CONFIRMATION_KIND && await isWhatsAppOptedOut(tenantId, phone)) return null;
+  // Só responde pelo número que recebeu, e só se ele for desta clínica.
+  const owner = instance ? await resolveInstanceTenant(instance).catch(() => null) : null;
+  if (owner && owner !== String(tenantId)) {
+    console.warn(`[auto-reply] instância ${instance} pertence a outra clínica; resposta não enfileirada`);
+    return null;
+  }
+  // Dedupe: Evolution às vezes repete o webhook; a mesma resposta não vai duas vezes em 24 h.
+  const { rows: dup } = await pool.query(
+    `SELECT 1 FROM automation_jobs
+      WHERE tenant_id = $1 AND trigger_event = 'auto_reply' AND message = $2
+        AND status IN ('pending', 'sent')
+        AND RIGHT(regexp_replace(patient_phone, '\\D', '', 'g'), 8) = RIGHT(regexp_replace($3, '\\D', '', 'g'), 8)
+        AND scheduled_at > NOW() - make_interval(mins => $4::int) LIMIT 1`,
+    [tenantId, text, String(phone), waDedupeMinutes({ dedupeMinutes })]
+  );
+  if (dup.length) return null;
+  const now = Date.now();
+  return enqueueWhatsAppJob({
+    tenantId, instance: owner ? instance : null, phone, message: text, category,
+    triggerEvent: 'auto_reply', scheduledAt: new Date(now), expiresAt: new Date(now + WA_AUTO_REPLY_TTL_MS),
+    variables: {
+      kind, thenQueueMenu: !!thenQueueMenu, enqueuedAt: new Date(now).toISOString(),
+      dedupeMinutes: waDedupeMinutes({ dedupeMinutes }),
+      ...(interactive ? { interactive: { endpoint: interactive.endpoint, payload: interactive.payload } } : {}),
+    },
+  });
 }
 
 // Estado em memória por número: ritmo e falhas recentes.
@@ -10724,6 +12668,28 @@ async function runWhatsAppJobHooks(job, ok, errorMessage) {
   let vars = job.variables;
   if (typeof vars === 'string') { try { vars = JSON.parse(vars); } catch { vars = {}; } }
   vars = vars || {};
+  // Menu de filas depois das boas-vindas, para manter a ordem das mensagens. Se a
+  // boas-vindas falhou logo (ex.: idêntica à de ontem), o menu sai mesmo assim;
+  // se ficou parada (número desconectado), o menu atrasado não sai.
+  if (job.trigger_event === 'auto_reply' && vars.thenQueueMenu && job.instance && job.tenant_id) {
+    const age = Date.now() - new Date(vars.enqueuedAt || 0).getTime();
+    if (age >= 0 && age < WA_AUTO_REPLY_MENU_MAX_AGE_MS) {
+      await enqueueQueueMenu({ tenantId: String(job.tenant_id), instance: job.instance, phone: normalizeWhatsappNumber(job.patient_phone) })
+        .catch(e => console.warn('[auto-reply] menu de filas não enfileirado:', e.message));
+    }
+  }
+  // Pesquisa de satisfação: só depois de sair, a próxima resposta 1–5 vira avaliação.
+  if (job.trigger_event === 'satisfaction_survey' && ok && vars.leadId && job.tenant_id) {
+    const phoneDigits = String(job.patient_phone || '').replace(/\D/g, '');
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      [`awaiting_rating_${job.tenant_id}_${phoneDigits}`, JSON.stringify({
+        leadId: vars.leadId, sessionId: vars.sessionId || null,
+        attendantId: vars.attendantId || null, attendantName: vars.attendantName || null,
+      })]
+    ).catch(e => console.error('[survey hook]', e.message));
+  }
   if (job.trigger_event === 'reactivation') {
     await pool.query(
       `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status, error_message, tenant_id)
@@ -10791,7 +12757,15 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
 
   // 0) Validade
   if (job.expires_at && new Date(job.expires_at) < new Date()) {
-    return fail('Expirado: a mensagem não saiu a tempo (WhatsApp desconectado ou fila parada)');
+    // Motivo real: a última nota de espera do job diz por que ele não saiu.
+    const nota = String(job.error || '');
+    const motivo = /^Limite diário/.test(nota) ? 'limite diário de envio do número'
+      : /^Limite por hora/.test(nota) ? 'limite por hora de envio do número'
+      : /^Fora do horário/.test(nota) ? 'fora do horário de envio'
+      : /desconectad|Aguardando WhatsApp/i.test(nota) ? 'WhatsApp da clínica desconectado'
+      : /pausa/i.test(nota) ? 'número em pausa automática'
+      : 'fila parada ou WhatsApp desconectado';
+    return fail(`Expirado: a mensagem não saiu a tempo (${motivo})`);
   }
 
   // 1) Clínica dona do envio
@@ -10807,11 +12781,9 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
     if (!owner) instance = null;
   }
   if (!instance) instance = await getTenantDefaultInstance(tenantId);
-  if (!instance) {
-    const ageMs = Date.now() - new Date(job.created_at || job.scheduled_at || Date.now()).getTime();
-    if (ageMs > 3 * 86_400_000) return fail('Nenhum WhatsApp da clínica conectado há mais de 3 dias');
-    return release(new Date(Date.now() + 15 * 60_000), 'Aguardando WhatsApp da clínica conectar');
-  }
+  // Sem número da clínica conectado: segura o envio (não falha, não conta para o
+  // disjuntor). A mensagem só deixa de sair pela própria validade (expires_at, passo 0).
+  if (!instance) return release(new Date(Date.now() + 15 * 60_000), 'Aguardando WhatsApp da clínica conectar');
   if (instance !== job.instance || String(job.tenant_id || '') !== tenantId) {
     await pool.query('UPDATE automation_jobs SET instance = $2, tenant_id = $3 WHERE id = $1', [job.id, instance, tenantId]);
     job.instance = instance; job.tenant_id = tenantId;
@@ -10831,18 +12803,27 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
     return release(new Date(inst.paused_until), 'Número em pausa automática');
   }
 
-  // 3) Opt-out e duplicidade
-  if (await isWhatsAppOptedOut(tenantId, job.patient_phone)) {
+  let vars = job.variables;
+  if (typeof vars === 'string') { try { vars = JSON.parse(vars); } catch { vars = {}; } }
+  vars = trustedWhatsAppJobVars(job, vars || {});
+
+  // 3) Opt-out e duplicidade (única exceção ao opt-out: a confirmação do próprio SAIR)
+  if (!isOptOutConfirmationJob(job, vars) && await isWhatsAppOptedOut(tenantId, job.patient_phone)) {
     return fail('Paciente pediu para não receber mensagens (SAIR)');
   }
+  const dedupeMinutes = waDedupeMinutes(vars);
   const { rows: dup } = await pool.query(
     `SELECT 1 FROM automation_jobs
       WHERE tenant_id = $1 AND status = 'sent' AND id <> $2 AND message = $3
         AND RIGHT(regexp_replace(patient_phone, '\\D', '', 'g'), 8) = RIGHT(regexp_replace($4, '\\D', '', 'g'), 8)
-        AND sent_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
-    [tenantId, job.id, job.message, job.patient_phone]
+        AND sent_at > NOW() - make_interval(mins => $5::int) LIMIT 1`,
+    [tenantId, job.id, job.message, job.patient_phone, dedupeMinutes]
   );
-  if (dup.length) return fail('Mensagem idêntica já enviada a este paciente nas últimas 24h');
+  if (dup.length) {
+    return fail(dedupeMinutes >= WA_DEFAULT_DEDUPE_MINUTES
+      ? 'Mensagem idêntica já enviada a este paciente nas últimas 24h'
+      : `Mensagem idêntica já enviada a este paciente nos últimos ${dedupeMinutes} min`);
+  }
 
   // 4) Janela de horário (não vale para respostas de atendimento)
   if (job.category !== 'service' && !isWithinWhatsAppSendWindow()) {
@@ -10867,8 +12848,6 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
   }
 
   // 6) Condições específicas do job
-  let vars = job.variables;
-  if (typeof vars === 'string') { try { vars = JSON.parse(vars); } catch { vars = {}; } }
   if (vars?.requireStage && vars?.leadId) {
     const { rows: lead } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1 AND tenant_id = $2', [vars.leadId, tenantId]);
     if (!lead.length || lead[0].kanban_stage !== vars.requireStage) {
@@ -10879,16 +12858,56 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
   // 7) Envio com "digitando..."
   scheduleNextWhatsAppSend(instance);
   const phone = normalizeWhatsappNumber(job.patient_phone);
-  const result = await evolutionFetch(`/message/sendText/${encodeURIComponent(instance)}`, {
-    method: 'POST',
-    body: JSON.stringify({
-      number: phone.includes('@') ? phone : `${phone}@s.whatsapp.net`,
-      text: job.message,
-      delay: typingDelayMs(job.message),
-    }),
-    timeoutMs: 45_000, // > tempo de "digitando" + margem; evita falso "falhou"
-  });
-  const ok = result.ok && !!(result.data?.key?.id || result.data?.message?.key?.id);
+  // Adaptador do canal (whatsapp_channels; sem canal = Evolution). Sucesso = ok + id da mensagem.
+  const routed = await providerForInstance(instance);
+  if (routed.record && String(routed.record.tenant_id) !== tenantId) return fail('Bloqueado: o número de envio pertence a outra clínica');
+  if (!routed.provider) return fail(routed.error || 'Canal de WhatsApp indisponível');
+  const provider = routed.provider;
+  const sendOpts = { delayMs: 0, timeoutMs: 45_000, idempotencyKey: `job-${job.id}` };
+  // timeout > tempo de "digitando" + margem; evita falso "falhou"
+  const sendTextNow = () => provider.sendText(routed.channel, phone, job.message, { ...sendOpts, delayMs: typingDelayMs(job.message) });
+  // Botões/lista: tenta o endpoint interativo; sem ok/key.id (muitos aparelhos não
+  // exibem botões via Baileys), cai para o texto do job, que é a versão numerada.
+  const interactive = vars.interactive && WA_INTERACTIVE_ENDPOINTS.has(vars.interactive.endpoint)
+    && vars.interactive.payload && typeof vars.interactive.payload === 'object' ? vars.interactive : null;
+  let sent;
+  if (vars.media) {
+    // Mídia da fila: arquivo do nosso disco, assinatura conferida; legenda = job.message.
+    const loaded = await loadWaJobMedia(tenantId, vars.media);
+    if (!loaded.ok) return fail(loaded.error);
+    const m = loaded.media;
+    if (provider.kind === 'evolution' && m.kind === 'audio') {
+      // Evolution: mesmo caminho do chat (conversão + sendWhatsAppAudio com tentativas).
+      const r = await sendWhatsAppAudioWithFallback(instance, phone, loaded.base64, m.mimetype || 'audio/ogg', m.filename || 'audio.ogg');
+      sent = sendResult({ ok: r.ok, providerMessageId: r.ok ? extractEvolutionMessageId(r.data) : null, status: r.status, retryable: r.status >= 500, raw: r });
+    } else if (provider.kind === 'evolution') {
+      sent = await provider.sendMedia(routed.channel, phone, {
+        kind: m.kind, base64: loaded.base64, mimetype: m.mimetype || 'application/octet-stream', filename: m.filename || undefined,
+        caption: job.message, delayMs: typingDelayMs(job.message), timeoutMs: 90_000,
+      });
+    } else {
+      sent = await sendMediaByChannel(routed, phone, {
+        kind: m.kind, base64: loaded.base64, mimetype: m.mimetype, filename: m.filename, caption: job.message,
+        delayMs: typingDelayMs(job.message), idempotencyKey: `job-${job.id}`,
+      });
+    }
+  } else if (interactive) {
+    sent = await provider.sendInteractive(routed.channel, phone, {
+      ...sendOpts, endpoint: interactive.endpoint, payload: interactive.payload, delayMs: typingDelayMs(job.message),
+    });
+    // Timeout (504 do evolutionFetch): os botões podem ter saído sem a resposta chegar.
+    // Não reenvia em texto para não duplicar; o job falha como incerto. Verificar na
+    // Evolution pelo id não é possível aqui (sem key.id na resposta).
+    if (!sent.ok && !sent.uncertain) sent = await sendTextNow();
+  } else {
+    sent = await sendTextNow();
+  }
+  const ok = sent.ok;
+  const result = sent.raw || { status: sent.status, data: { error: sent.error } };
+  // Provedor recusou por ritmo (OpenWA SEND_PACING_LIMITED): reagenda; não é falha nem disjuntor.
+  if (!ok && sent.retryAfterMs > 0) {
+    return release(new Date(Date.now() + sent.retryAfterMs + randomBetween(0, 5) * 60_000), 'Limite de ritmo do provedor; nova tentativa depois');
+  }
   await recordWhatsAppOutcome(instance, tenantId, ok);
   if (ok) {
     await pool.query(`UPDATE automation_jobs SET status = 'sent', sent_at = NOW(), claimed_at = NULL, error = NULL WHERE id = $1`, [job.id]);
@@ -10916,7 +12935,8 @@ async function processAutomationJobs() {
          FROM automation_jobs
         WHERE status = 'pending' AND scheduled_at <= NOW() AND COALESCE(channel, 'whatsapp') = 'whatsapp'
           AND (claimed_at IS NULL OR claimed_at < NOW() - ${WA_CLAIM_TIMEOUT_SQL})
-        ORDER BY COALESCE(NULLIF(instance, ''), 'tenant:' || COALESCE(tenant_id::text, 'none')), scheduled_at ASC
+        ORDER BY COALESCE(NULLIF(instance, ''), 'tenant:' || COALESCE(tenant_id::text, 'none')),
+                 (trigger_event = 'auto_reply') DESC NULLS LAST, scheduled_at ASC
         LIMIT 200`
     );
     if (!candidates.length) return;
@@ -10952,6 +12972,20 @@ async function ensureWhatsAppQueueSchema() {
     `ALTER TABLE IF EXISTS broadcast_campaigns ADD COLUMN IF NOT EXISTS tenant_id UUID`,
     `ALTER TABLE IF EXISTS whatsapp_instances ADD COLUMN IF NOT EXISTS paused_until TIMESTAMPTZ`,
     `ALTER TABLE IF EXISTS whatsapp_instances ADD COLUMN IF NOT EXISTS pause_reason TEXT`,
+    `CREATE TABLE IF NOT EXISTS whatsapp_opt_out_reversals (
+       id BIGSERIAL PRIMARY KEY,
+       tenant_id UUID NOT NULL,
+       phone_key TEXT NOT NULL,
+       phone TEXT,
+       opted_out_at TIMESTAMPTZ,
+       keyword TEXT,
+       lead_id TEXT,
+       requested_via TEXT NOT NULL,
+       reverted_by UUID,
+       reverted_by_email TEXT,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_wa_opt_out_reversals_tenant ON whatsapp_opt_out_reversals (tenant_id, phone_key, created_at DESC)`,
     `CREATE TABLE IF NOT EXISTS whatsapp_opt_outs (
        tenant_id UUID NOT NULL,
        phone_key TEXT NOT NULL,
@@ -11053,7 +13087,10 @@ async function copyGlobalSettingsToTenants() {
     try {
       const { rowCount } = await pool.query(
         `WITH marcador AS (
-           INSERT INTO app_settings (key, value, updated_at) VALUES ($1, '{"feito": true}'::jsonb, NOW())
+           INSERT INTO app_settings (key, value, updated_at)
+           SELECT $1, '{"feito": true}'::jsonb, NOW()
+            -- Só marca como feito se o contexto enxerga alguma clínica real; senão tenta no próximo boot.
+            WHERE EXISTS (SELECT 1 FROM tenants t WHERE t.id::text <> ALL($3::text[]))
            ON CONFLICT (key) DO NOTHING
            RETURNING key
          ),
@@ -11068,7 +13105,9 @@ async function copyGlobalSettingsToTenants() {
             AND t.id::text <> ALL($3::text[])
             AND o.value <> '{}'::jsonb
          ON CONFLICT (tenant_id, key) DO NOTHING`,
-        [`tenant_settings_copia_${key}`, key, [...PLACEHOLDER_TENANT_IDS]]
+        // _v2: a 1ª versão gravou o marcador mas não copiou nada (o contexto de sistema
+        // não enxergava a tabela tenants por causa da RLS); roda de novo, sem sobrescrever.
+        [`tenant_settings_copia_v2_${key}`, key, [...PLACEHOLDER_TENANT_IDS]]
       );
       if (rowCount) console.log(`   ⚙️ Configuração global ${key} copiada para as clínicas: ${rowCount} registro(s)`);
     } catch (e) {
@@ -11204,6 +13243,7 @@ async function triggerAutomationFlows(triggerEvent, patientData) {
 app.post('/api/automations/enqueue', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { flowId, patientName, patientPhone, variables, instance } = req.body;
     if (!flowId || !patientPhone) return res.status(400).json({ error: 'flowId e patientPhone obrigatórios' });
 
@@ -11227,7 +13267,11 @@ app.post('/api/automations/enqueue', async (req, res) => {
     if (await isWhatsAppOptedOut(tenantId, phone)) {
       return res.status(409).json({ error: 'Este paciente pediu para não receber mensagens (SAIR).' });
     }
-    const vars = { nome: patientName || '', telefone: phone, ...(variables || {}) };
+    // Fluxo de marketing (inativos, aniversário, orçamento, lead novo) sai como marketing:
+    // rodapé SAIR e sem {{procedimento}}/{{valor}}, como no disparo automático do fluxo.
+    const isMarketing = AUTOMATION_MARKETING_TRIGGERS.has(flow.trigger_event);
+    const vars = { nome: patientName || '', telefone: phone, ...stripWhatsAppControlVars(variables) };
+    if (isMarketing) { vars.procedimento = ''; vars.valor = ''; }
     const now = new Date();
     const jobIds = [];
 
@@ -11235,20 +13279,19 @@ app.post('/api/automations/enqueue', async (req, res) => {
       const step = steps[i];
       const delayMs = (step.delayMinutes || 0) * 60 * 1000;
       const scheduledAt = new Date(now.getTime() + delayMs);
-      const finalMessage = replaceVariables(step.message, vars);
+      const replaced = replaceVariables(step.message, vars);
+      const finalMessage = isMarketing ? withMarketingOptOutFooter(replaced) : replaced;
 
       const { rows } = await pool.query(
         `INSERT INTO automation_jobs (tenant_id, category, flow_id, flow_name, step_index, patient_name, patient_phone, instance, variables, message, channel, scheduled_at, trigger_event, expires_at)
-         VALUES ($1,'transactional',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'manual', $11::timestamptz + INTERVAL '7 days') RETURNING id`,
-        [tenantId, flow.id, flow.name, i, patientName || '', phone, instanceName, JSON.stringify(vars), finalMessage, step.channel || 'whatsapp', scheduledAt]
+         VALUES ($1,$12,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'manual', $11::timestamptz + INTERVAL '7 days') RETURNING id`,
+        [tenantId, flow.id, flow.name, i, patientName || '', phone, instanceName, JSON.stringify(vars), finalMessage, step.channel || 'whatsapp', scheduledAt,
+          isMarketing ? 'marketing' : 'transactional']
       );
       jobIds.push(rows[0].id);
     }
-
-    await pool.query(
-      `UPDATE automation_flows SET stats = jsonb_set(stats, '{sent}', to_jsonb(COALESCE((stats->>'sent')::int, 0) + $1)) WHERE id = $2`,
-      [steps.length, flow.id]
-    ).catch(() => {});
+    // stats.sent não é somado aqui: o gancho pós-envio já conta cada envio real
+    // (antes contava duas vezes: no enfileiramento e no envio).
 
     console.log(`🤖 Manual enqueue: ${steps.length} jobs for flow "${flow.name}" → ${maskPhone(phone)}`);
     res.json({ success: true, jobsCreated: jobIds.length, jobIds });
@@ -11282,11 +13325,13 @@ app.get('/api/automations/jobs', async (req, res) => {
 app.delete('/api/automations/jobs/cancel', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { flowId, patientPhone } = req.body || {};
     let sql = `UPDATE automation_jobs SET status = 'cancelled' WHERE status = 'pending'`;
     const vals = [];
+    // Sem filtro, cancelaria toda a fila da clínica (lembretes e confirmações inclusive).
+    if (!flowId && !patientPhone) return res.status(400).json({ error: 'Informe flowId ou patientPhone' });
     if (!user.is_super_admin) { vals.push(user.tenant_id || null); sql += ` AND tenant_id = $${vals.length}`; }
-    else if (!flowId && !patientPhone) return res.status(400).json({ error: 'Informe flowId ou patientPhone' });
     if (flowId) { vals.push(flowId); sql += ` AND flow_id = $${vals.length}`; }
     if (patientPhone) { vals.push(normalizeWhatsappNumber(patientPhone)); sql += ` AND patient_phone = $${vals.length}`; }
     const { rowCount } = await pool.query(sql, vals);
@@ -11302,7 +13347,7 @@ app.get('/api/automations/stats', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { days = '30' } = req.query;
-    const daysInt = Math.min(parseInt(days) || 30, 365);
+    const daysInt = Math.min(Math.max(parseInt(days, 10) || 30, 1), 365);
 
     // Overall stats
     const { rows: [overall] } = await pool.query(`
@@ -11380,6 +13425,28 @@ app.get('/api/automations/stats', async (req, res) => {
 // BROADCAST CAMPAIGNS (Disparos) CRUD
 // ═══════════════════════════════════════════════════════════════
 
+// Quem pode criar/alterar/disparar marketing — o mesmo de src/lib/routeAccess.ts.
+// Antes só a tela escondia: pela API qualquer perfil (ex.: dentista) disparava campanha.
+const COMERCIAL_WRITE_ROLES = {
+  campanhas: ['admin'],
+  automacoes: ['admin'],
+  reativacao: ['admin', 'recepcionista', 'comercial'],
+};
+async function userHasAnyRole(user, roles) {
+  if (user?.is_super_admin) return true;
+  if (roles.includes(user?.role)) return true;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM user_roles WHERE user_id = $1 AND role::text = ANY($2::text[]) LIMIT 1', [user?.id, roles]
+  ).catch(() => ({ rows: [] }));
+  return rows.length > 0;
+}
+// Responde 403 e devolve true quando o perfil não pode; uso: if (await denyComercial(res, user, 'campanhas')) return;
+async function denyComercial(res, user, area) {
+  if (await userHasAnyRole(user, COMERCIAL_WRITE_ROLES[area] || ['admin'])) return false;
+  res.status(403).json({ error: 'Seu perfil não tem permissão para esta ação.' });
+  return true;
+}
+
 // List all campaigns
 function mapCampaignRow(r) {
   return {
@@ -11423,6 +13490,7 @@ app.get('/api/campaigns', async (req, res) => {
 app.post('/api/campaigns', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, template, tipo, diasSemana, horarioInicio, horarioFim, dataInicio, dataFim,
       campanhaPerpetua, usarHorarioClinica, publico, filtroCustom, numeroEnvio,
@@ -11457,6 +13525,7 @@ app.post('/api/campaigns', async (req, res) => {
 app.put('/api/campaigns/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const fields = req.body;
     const sets = [];
@@ -11512,6 +13581,7 @@ app.put('/api/campaigns/:id', async (req, res) => {
 app.delete('/api/campaigns/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const { rowCount } = await pool.query(
       'DELETE FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]
@@ -11533,6 +13603,7 @@ app.delete('/api/campaigns/:id', async (req, res) => {
 app.patch('/api/campaigns/:id/toggle', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const { rows } = await pool.query(
       `UPDATE broadcast_campaigns SET ativo = NOT ativo, updated_at = NOW() WHERE id = $1 AND tenant_id = $2 RETURNING ativo`,
@@ -11556,6 +13627,7 @@ app.patch('/api/campaigns/:id/toggle', async (req, res) => {
 app.post('/api/campaigns/:id/duplicate', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const { rows } = await pool.query(
       'SELECT * FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]
@@ -11582,45 +13654,184 @@ app.post('/api/campaigns/:id/duplicate', async (req, res) => {
 });
 
 // Público da campanha — sempre só contatos da clínica dona da campanha.
+const CAMPAIGN_AUDIENCES = ['todos', 'ativos', 'inativos', 'aniversariantes'];
 async function resolveCampaignAudience(camp, tenantId) {
   const limit = Math.min(Number(camp.capacidade_diaria) || 232, 500);
   const publico = camp.publico || 'todos';
+  const spamDays = Math.max(1, Number(camp.intervalo_spam) || 7);
   const run = async (sql) => {
     try {
-      const { rows } = await pool.query(sql, [limit, tenantId]);
+      const { rows } = await pool.query(sql, [limit, tenantId, spamDays, String(camp.id || '')]);
       return rows;
     } catch (err) {
       console.error(`[campaign audience:${publico}]`, err.message);
       return [];
     }
   };
+  // Marketing só para quem já falou com a clínica no WhatsApp (mensagem recebida do
+  // contato, nesta clínica) — regra "opt-in registrado ou conversa prévia" de
+  // docs/whatsapp/diagnostico.md. Não existe registro de opt-in de marketing: sem
+  // conversa, o contato fica de fora (lead importado/cadastrado à mão, agenda do celular).
+  const conversou = (alias, { comLead = true, dias = null } = {}) => `EXISTS (
+       SELECT 1 FROM chat_messages cm
+        WHERE cm.tenant_id = $2 AND cm.sender = 'lead'
+          ${dias ? `AND cm.timestamp > NOW() - INTERVAL '${Number(dias)} days'` : ''}
+          AND (${comLead ? `cm.lead_id = ${alias}.id::text OR ` : ''}${sqlFoneIgual('cm.phone', `${alias}.telefone`)}))`;
+  // Quem já recebeu marketing no intervalo sai ANTES do LIMIT: senão a campanha recorrente pega
+  // sempre os mesmos primeiros contatos, descarta todos no dedupe e o resto da base nunca recebe.
+  const semMarketingRecente = (alias) => `NOT EXISTS (
+       SELECT 1 FROM automation_jobs aj
+        WHERE aj.tenant_id = $2 AND aj.status IN ('sent', 'pending')
+          AND COALESCE(aj.sent_at, aj.created_at) > NOW() - INTERVAL '1 day' * $3
+          AND ((aj.trigger_event = 'campaign' AND aj.flow_id = $4) OR aj.category = 'marketing')
+          AND ${sqlFoneIgual('aj.patient_phone', `${alias}.telefone`)})`;
   if (publico === 'ativos') {
     return run(`SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
-       INNER JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.tenant_id = cl.tenant_id
-       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.timestamp > NOW() - INTERVAL '180 days'
+       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != ''
+         AND ${conversou('cl', { dias: 180 })}
+         AND ${semMarketingRecente('cl')}
        LIMIT $1`);
   }
   if (publico === 'inativos') {
+    // Já conversou alguma vez, mas não nos últimos 90 dias (mesmo casamento por lead/telefone do
+    // conversou(); o JOIN por telefone exato tratava como inativo quem falou ontem).
     return run(`SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
-       LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.tenant_id = cl.tenant_id AND cm.timestamp > NOW() - INTERVAL '90 days'
-       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL
+       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != ''
+         AND ${conversou('cl')}
+         AND NOT ${conversou('cl', { dias: 90 })}
+         AND ${semMarketingRecente('cl')}
        LIMIT $1`);
   }
   if (publico === 'aniversariantes') {
-    return run(`SELECT nome, telefone FROM contatos
-       WHERE tenant_id = $2 AND telefone IS NOT NULL AND telefone != ''
-         AND EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM NOW())
+    return run(`SELECT nome, telefone FROM contatos c
+       WHERE c.tenant_id = $2 AND c.telefone IS NOT NULL AND c.telefone != ''
+         AND EXTRACT(MONTH FROM c.data_nascimento) = EXTRACT(MONTH FROM NOW())
+         AND ${conversou('c', { comLead: false })}
+         AND ${semMarketingRecente('c')}
        LIMIT $1`);
+  }
+  // 'custom' nunca teve filtro no servidor e caía em "todos": público desconhecido não envia.
+  if (publico !== 'todos') {
+    console.warn(`[campaign audience] público "${publico}" sem filtro no servidor: nenhum contato`);
+    return [];
   }
   return run(`SELECT DISTINCT COALESCE(c.nome, cl.nome) AS nome, COALESCE(c.telefone, cl.telefone) AS telefone
      FROM crm_leads cl LEFT JOIN contatos c ON c.telefone = cl.telefone AND c.tenant_id = cl.tenant_id
      WHERE cl.tenant_id = $2 AND COALESCE(c.telefone, cl.telefone) IS NOT NULL AND COALESCE(c.telefone, cl.telefone) != ''
+       AND ${conversou('cl')}
+       AND ${semMarketingRecente('cl')}
      LIMIT $1`);
+}
+
+// ─── Período da campanha (data_inicio / data_fim / campanha_perpetua) ───
+// As colunas são TEXT (o assistente grava YYYY-MM-DD de <input type="date">): a
+// comparação é feita aqui, com o dia de São Paulo (spClock), e não por cast no SQL,
+// para um valor vazio ou fora do formato não derrubar o agendador de todas as clínicas.
+const campaignDateWarned = new Set(); // aviso único por campanha/campo (sem dado de paciente)
+function campaignDateKey(value, { campId = null, field = '' } = {}) {
+  const t = String(value ?? '').trim();
+  if (!t) return null;
+  let ymd = null;
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) ymd = `${m[1]}-${m[2]}-${m[3]}`;
+  else if ((m = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/))) ymd = `${m[3]}-${m[2]}-${m[1]}`;
+  // Ida e volta pelo Date: 2026-13-45 ou 2026-02-30 não são datas.
+  if (ymd) {
+    const d = new Date(`${ymd}T12:00:00Z`);
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== ymd) ymd = null;
+  }
+  if (!ymd && campId) {
+    const k = `${campId}:${field}`;
+    if (!campaignDateWarned.has(k)) {
+      campaignDateWarned.add(k);
+      console.warn(`[campaign] ${field || 'data'} fora do formato na campanha ${campId}: ignorada (vale como sem limite)`);
+    }
+  }
+  return ymd;
+}
+
+function addDaysYmd(ymd, n) {
+  return new Date(new Date(`${ymd}T12:00:00Z`).getTime() + n * 86_400_000).toISOString().slice(0, 10);
+}
+
+// 'antes' (início no futuro), 'encerrada' (passou do fim) ou 'vigente'.
+function campaignPeriodStatus(camp, today = spClock().day) {
+  const inicio = campaignDateKey(camp.data_inicio, { campId: camp.id, field: 'data_inicio' });
+  const fim = camp.campanha_perpetua ? null : campaignDateKey(camp.data_fim, { campId: camp.id, field: 'data_fim' });
+  if (inicio && today < inicio) return 'antes';
+  if (fim && today > fim) return 'encerrada';
+  return 'vigente';
+}
+
+function spDateTime(ymd, hhmm, fallback) {
+  const h = /^\d{2}:\d{2}/.test(String(hhmm || '')) ? String(hhmm).slice(0, 5) : fallback;
+  return new Date(`${ymd}T${h}:00-03:00`); // Brasil sem horário de verão
+}
+
+// Validade de envio de marketing: 3 dias (padrão da fila) ou o fim da campanha, o que vier antes.
+function campaignExpiry(fimYmd) {
+  const padrao = Date.now() + 3 * 86_400_000;
+  return new Date(fimYmd ? Math.min(padrao, spDateTime(fimYmd, '23:59', '23:59').getTime()) : padrao);
+}
+
+async function cancelPendingCampaignJobs(tenantId, campId, motivo) {
+  const { rowCount } = await pool.query(
+    `UPDATE automation_jobs SET status = 'cancelled', error = $3, claimed_at = NULL
+      WHERE tenant_id = $1 AND flow_id = $2 AND trigger_event = 'campaign' AND status = 'pending'`,
+    [tenantId, String(campId), motivo]
+  ).catch(e => { console.error('[campaign] cancelar pendentes:', e.message); return { rowCount: 0 }; });
+  return rowCount || 0;
 }
 
 // Coloca a campanha na fila anti-bloqueio. A fila decide quando cada mensagem
 // sai (horário, limites do número, intervalo aleatório, SAIR).
-async function enqueueCampaignForTenant(camp, tenantId) {
+// scheduledAt/expiresAt: disparo único com data marcada e fim da campanha.
+// spread (disparo único): reparte os contatos pelos dias de envio, até
+// WA_CAMPAIGN_MAX_SPREAD_DAYS dias COM janela; o que não cabe não entra na fila.
+// Cota do dia = perDay × folga (lembretes e confirmações dividem o mesmo limite do
+// número) × fração da janela de envio disponível naquele dia (domingo = 0; sábado
+// proporcional; no 1º dia só o que ainda resta da janela).
+const WA_CAMPAIGN_MAX_SPREAD_DAYS = 7;
+const WA_CAMPAIGN_DAILY_SHARE = 0.8;
+const WA_CAMPAIGN_REF_WINDOW_MIN = 12 * 60; // janela cheia de dia útil (8h–20h)
+
+function hhmmToMinutes(v) {
+  const m = String(v || '').match(/^(\d{2}):(\d{2})/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+// Plano de envio: [{ dia, cota, inicio (Date), fim (Date|null) }] só com dias que têm janela.
+// horaFim (horário de término marcado pela clínica) corta a janela do dia: a cota é
+// calculada só sobre [horaInicio, horaFim] e `fim` vira a validade dos envios daquele
+// dia (o que não sair até lá expira, com o motivo, em vez de sair fora do horário).
+// Sem horaFim (ou horaFim <= horaInicio, dado inválido): janela da fila e fim = null.
+function planCampaignSpread({ startYmd, firstAt, horaInicio, horaFim = null, perDay, now = new Date() }) {
+  const plan = [];
+  const hoje = spClock(now).day;
+  const iniMarcado = hhmmToMinutes(horaInicio);
+  let fimMarcado = hhmmToMinutes(horaFim);
+  if (fimMarcado != null && iniMarcado != null && fimMarcado <= iniMarcado) fimMarcado = null;
+  for (let d = 0; d < 31 && plan.length < WA_CAMPAIGN_MAX_SPREAD_DAYS; d++) {
+    const dia = addDaysYmd(startYmd, d);
+    const win = WA_SEND_WINDOWS[new Date(`${dia}T12:00:00Z`).getUTCDay()];
+    if (!win) continue;
+    let inicioMin = Math.max(win[0], hhmmToMinutes(horaInicio) ?? win[0]);
+    if (d === 0 && firstAt) inicioMin = Math.max(inicioMin, spClock(firstAt).minutes);
+    if (dia === hoje) inicioMin = Math.max(inicioMin, spClock(now).minutes);
+    const fimMin = fimMarcado == null ? win[1] : Math.min(win[1], fimMarcado);
+    const disponivel = Math.max(0, fimMin - inicioMin);
+    const cota = Math.floor(perDay * WA_CAMPAIGN_DAILY_SHARE * Math.min(1, disponivel / WA_CAMPAIGN_REF_WINDOW_MIN));
+    if (cota <= 0) continue;
+    const hh = String(Math.floor(inicioMin / 60)).padStart(2, '0');
+    const mm = String(inicioMin % 60).padStart(2, '0');
+    const inicio = new Date(Math.max(now.getTime(), spDateTime(dia, `${hh}:${mm}`, '08:00').getTime()));
+    const fim = fimMarcado == null ? null
+      : spDateTime(dia, `${String(Math.floor(fimMin / 60)).padStart(2, '0')}:${String(fimMin % 60).padStart(2, '0')}`, '20:00');
+    plan.push({ dia, cota, inicio, fim });
+  }
+  return plan;
+}
+async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, expiresAt = null, spread = null } = {}) {
   const template = typeof camp.template === 'string' ? JSON.parse(camp.template) : camp.template;
   const message = template?.mensagem || template?.message || '';
   if (!message) return { error: 'Template sem mensagem configurada', status: 400 };
@@ -11635,30 +13846,62 @@ async function enqueueCampaignForTenant(camp, tenantId) {
 
   const spamDays = camp.intervalo_spam || 7;
   const { rows: recentlySent } = await pool.query(
+    // Qualquer marketing (outra campanha, reativação, follow-up) no intervalo conta: o
+    // contato recebe no máximo 1 marketing por intervalo, não 1 por campanha.
     `SELECT DISTINCT patient_phone FROM automation_jobs
-      WHERE trigger_event = 'campaign' AND status IN ('sent', 'pending') AND tenant_id = $3
-        AND COALESCE(sent_at, created_at) > NOW() - INTERVAL '1 day' * $1 AND flow_id = $2`,
+      WHERE status IN ('sent', 'pending') AND tenant_id = $3
+        AND COALESCE(sent_at, created_at) > NOW() - INTERVAL '1 day' * $1
+        AND ((trigger_event = 'campaign' AND flow_id = $2) OR category = 'marketing')`,
     [spamDays, camp.id, tenantId]
   );
   const recentKeys = new Set(recentlySent.map(r => waPhoneKey(r.patient_phone)));
 
-  let enqueued = 0, optedOut = 0;
+  let perDay = null, plan = [], planIdx = 0, usadosNoDia = 0;
+  if (spread) {
+    const { rows: [inst] } = await pool.query('SELECT created_at FROM whatsapp_instances WHERE instance_name = $1 AND tenant_id = $2', [instance, tenantId])
+      .catch(() => ({ rows: [] }));
+    perDay = getRateTier(inst?.created_at).perDay;
+    plan = planCampaignSpread({ startYmd: spread.startYmd, firstAt: spread.firstAt, horaInicio: spread.horaInicio, horaFim: spread.horaFim, perDay });
+  }
+  let enqueued = 0, optedOut = 0, naoCabem = 0, ultimoDia = spread?.startYmd || null;
   const clinica = await getTenantClinicName(tenantId);
   for (const contact of contacts) {
     const phone = normalizeWhatsappNumber(contact.telefone);
     if (!phone || recentKeys.has(waPhoneKey(phone))) continue;
     if (await isWhatsAppOptedOut(tenantId, phone)) { optedOut++; continue; }
+    let jobScheduledAt = scheduledAt, jobExpiresAt = expiresAt;
+    if (spread) {
+      while (planIdx < plan.length && usadosNoDia >= plan[planIdx].cota) { planIdx++; usadosNoDia = 0; }
+      if (planIdx >= plan.length) { naoCabem++; continue; }
+      ultimoDia = plan[planIdx].dia;
+      jobScheduledAt = plan[planIdx].inicio;
+      usadosNoDia++;
+      // Com horário de término: vale até o fim do horário daquele dia. Sem: definido
+      // depois, quando se sabe o último dia.
+      jobExpiresAt = plan[planIdx].fim;
+    }
     recentKeys.add(waPhoneKey(phone));
     const personalizedMsg = message
       .replace(/\{\{nome\}\}/gi, (contact.nome || 'Cliente').split(' ')[0])
       .replace(/\{\{telefone\}\}/gi, contact.telefone || '')
       .replace(/\{\{clinica\}\}/gi, clinica)
       .replace(/\{\{\s*(procedimento|valor)\s*\}\}/gi, '');
-    await enqueueWhatsAppJob({
+    const jobId = await enqueueWhatsAppJob({
       tenantId, instance, phone, message: personalizedMsg, category: 'marketing',
       flowId: camp.id, flowName: camp.nome, patientName: contact.nome || '', triggerEvent: 'campaign',
+      ...(jobScheduledAt ? { scheduledAt: jobScheduledAt } : {}), ...(jobExpiresAt ? { expiresAt: jobExpiresAt } : {}),
     });
+    if (spread && jobId && !jobExpiresAt) (spread.jobIds ||= []).push(jobId);
     enqueued++;
+  }
+  // Validade dos envios do disparo sem horário de término: fim do dia seguinte ao
+  // último dia previsto (1 dia de folga para atrasos da fila).
+  if (spread && spread.jobIds?.length) {
+    const ate = spDateTime(addDaysYmd(ultimoDia, 1), '23:59', '23:59');
+    await pool.query(
+      `UPDATE automation_jobs SET expires_at = $3 WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+      [tenantId, spread.jobIds, ate]
+    ).catch(e => console.error('[campaign] validade do disparo:', e.message));
   }
 
   if (enqueued > 0) {
@@ -11670,21 +13913,61 @@ async function enqueueCampaignForTenant(camp, tenantId) {
       [enqueued, contacts.length, camp.id, tenantId]
     );
   }
-  return { enqueued, total: contacts.length, skipped: contacts.length - enqueued, optedOut };
+  return {
+    enqueued, total: contacts.length, skipped: contacts.length - enqueued, optedOut,
+    ...(spread ? { porDia: perDay, cotaDiaUtil: Math.floor(perDay * WA_CAMPAIGN_DAILY_SHARE), previsaoTermino: ultimoDia, naoCabem } : {}),
+  };
 }
 
 // Execute campaign — resolve contacts by audience, enqueue jobs
 app.post('/api/campaigns/:id/execute', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows: campRows } = await pool.query(
       'SELECT * FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]
     );
     if (campRows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
     const camp = campRows[0];
-    const result = await enqueueCampaignForTenant(camp, String(user.tenant_id));
+    if (!CAMPAIGN_AUDIENCES.includes(camp.publico || 'todos')) {
+      return res.status(400).json({ error: 'O filtro personalizado ainda não está disponível. Escolha outro público.' });
+    }
+    const tenantId = String(user.tenant_id);
+    const today = spClock().day;
+    let opts = {};
+    if (camp.tipo === 'recorrente') {
+      const periodo = campaignPeriodStatus(camp, today);
+      if (periodo === 'encerrada') return res.status(409).json({ error: 'A campanha já passou da data de término' });
+      if (periodo === 'antes') {
+        // Só ativa: o agendador começa a enviar na data de início.
+        await pool.query(`UPDATE broadcast_campaigns SET ativo = true, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [camp.id, tenantId]);
+        return res.json({ success: true, queued: false, enqueued: 0, agendada: true, inicio: campaignDateKey(camp.data_inicio) });
+      }
+      const fim = camp.campanha_perpetua ? null : campaignDateKey(camp.data_fim);
+      if (fim) opts.expiresAt = campaignExpiry(fim);
+    } else {
+      // Disparo único: sai na data e no horário marcados (sem data = hoje, agora).
+      // O 409 só vale para data/horário que a própria clínica marcou.
+      const dataMarcada = campaignDateKey(camp.data_inicio, { campId: camp.id, field: 'data_inicio' });
+      const dia = dataMarcada || today;
+      if (dataMarcada && dia < today) return res.status(409).json({ error: 'A data do disparo já passou' });
+      const inicio = spDateTime(dia, camp.horario_inicio, '08:00');
+      const fimJanela = spDateTime(dia, camp.horario_fim, '23:59');
+      // O wizard sempre grava horarioFim (padrão 18:00): só a data marcada justifica o 409.
+      if (dataMarcada && fimJanela.getTime() <= Date.now()) {
+        return res.status(409).json({ error: 'O horário do disparo já passou' });
+      }
+      // Hoje já depois do horário (sem nada marcado): começa amanhã.
+      const startYmd = fimJanela.getTime() <= Date.now() ? addDaysYmd(today, 1) : dia;
+      const firstAt = startYmd === dia ? new Date(Math.max(Date.now(), inicio.getTime())) : spDateTime(startYmd, camp.horario_inicio, '08:00');
+      opts = { spread: { startYmd, firstAt, horaInicio: camp.horario_inicio, horaFim: camp.horario_fim } };
+      if (startYmd > today) opts.comecaEm = startYmd;
+    }
+    const { comecaEm = null, ...enqueueOpts } = opts;
+    const result = await enqueueCampaignForTenant(camp, tenantId, enqueueOpts);
     if (result.error) return res.status(result.status || 400).json({ error: result.error });
+    if (comecaEm) result.inicio = comecaEm;
     await pool.query(
       `UPDATE broadcast_campaigns SET ativo = true, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
       [camp.id, user.tenant_id]
@@ -11730,6 +14013,18 @@ async function processCampaignScheduler() {
     const currentTime = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 
     for (const camp of activeCampaigns) {
+      // Período: início no futuro não envia; passou do fim não envia e cancela o que
+      // ainda estava na fila dessa campanha (só desta clínica).
+      const periodo = campaignPeriodStatus(camp, day);
+      if (periodo === 'antes') continue;
+      if (periodo === 'encerrada') {
+        const n = await cancelPendingCampaignJobs(String(camp.tenant_id), camp.id, 'Cancelado: campanha passou da data de término');
+        // Desativa: a tela mostra "Encerrada" e o cancelamento não roda a cada ciclo.
+        await pool.query(`UPDATE broadcast_campaigns SET ativo = false, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [camp.id, camp.tenant_id])
+          .catch(e => console.error('[campaign] encerrar:', e.message));
+        console.log(`   ⏹️ Campaign "${camp.nome}" encerrada${n ? `: ${n} envio(s) pendente(s) cancelado(s)` : ''}`);
+        continue;
+      }
       const diasSemana = typeof camp.dias_semana === 'string' ? JSON.parse(camp.dias_semana) : (camp.dias_semana || []);
       if (diasSemana.length > 0 && !diasSemana.includes(currentDay)) continue;
       if (camp.horario_inicio && currentTime < camp.horario_inicio) continue;
@@ -11744,7 +14039,9 @@ async function processCampaignScheduler() {
       if (todayJobs.length > 0) continue;
 
       try {
-        const result = await enqueueCampaignForTenant(camp, String(camp.tenant_id));
+        // Mensagem desta rodada não sai depois do fim da campanha.
+        const fim = camp.campanha_perpetua ? null : campaignDateKey(camp.data_fim);
+        const result = await enqueueCampaignForTenant(camp, String(camp.tenant_id), fim ? { expiresAt: campaignExpiry(fim) } : {});
         if (result.enqueued > 0) console.log(`   ✅ Campaign "${camp.nome}" auto-enfileirada: ${result.enqueued}`);
       } catch (campErr) {
         console.error(`   ❌ Campaign "${camp.nome}" auto-execute error:`, campErr.message);
@@ -11760,59 +14057,120 @@ let automationSchedulerInterval = null;
 // ─── Cron: Appointment Reminders 24h (runs every 1h) ────────
 let appointmentReminderInterval = null;
 
+// "Olá, Maria!" — ou "Olá!" quando o nome está vazio (nunca "Olá, !").
+function saudacaoPaciente(nome) {
+  const primeiro = String(nome || '').trim().split(/\s+/)[0];
+  return primeiro ? `Olá, ${primeiro}!` : 'Olá!';
+}
+
+// Antecedência do pedido de confirmação (coluna confirmacao_quando do agendamento).
+// 'nao' = confirmação desligada (agendamento salvo sem telefone do paciente).
+// Sem valor, ou valor antigo ('_none', 'agora', '1d'), vale a véspera: o lembrete
+// sempre existiu para toda consulta e não deve sumir de agendamentos antigos.
+const APPT_CONFIRMATION_LEAD_DAYS_SQL = `CASE a.confirmacao_quando WHEN '2d' THEN 2 WHEN '3d' THEN 3 WHEN '7d' THEN 7 ELSE 1 END`;
+const APPT_REMINDER_SKIP_STATUSES = ['cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado', 'confirmado', 'remarcar', 'em_atendimento'];
+
+// Texto do pedido de confirmação. Só clínica, data, hora e profissional: nada de
+// procedimento ou diagnóstico (a mensagem aparece na tela bloqueada — LGPD art. 6º III e 11).
+// TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+function buildAppointmentReminderMessage({ clinica, pacienteNome, weekday, dataBR, hora, profissional }) {
+  const body = `🔔 *Lembrete de consulta — ${clinica}*\n\n${saudacaoPaciente(pacienteNome)}\n\nVocê tem uma consulta marcada:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}`;
+  return {
+    body,
+    fallbackText: `${body}\n\nResponda *1* para confirmar ou *2* para remarcar.`,
+  };
+}
+
 async function processAppointmentReminders() {
   try {
-    // Consultas de amanhã (dia de Brasília) ainda sem lembrete. Cada lembrete
-    // sai pelo WhatsApp da própria clínica; a fila segura até o horário de envio.
+    // Consultas que chegaram à antecedência escolhida (dia de Brasília) e ainda sem
+    // pedido de confirmação para ESTA data. Cada lembrete sai pelo WhatsApp da própria
+    // clínica; a fila segura até a janela de envio. Nomes vêm dos cadastros da clínica.
     const { rows: appointments } = await pool.query(`
-      SELECT a.id, a.tenant_id, a.paciente_id, a.paciente_nome, a.dentista_nome, a.data, a.hora, a.procedimento, a.duracao,
+      SELECT a.id, a.tenant_id, a.paciente_id, a.data, a.hora, a.confirmacao_quando,
+             COALESCE(NULLIF(TRIM(p.nome), ''), NULLIF(TRIM(a.paciente_nome), '')) AS paciente_nome,
+             COALESCE(NULLIF(TRIM(d.nome), ''), NULLIF(TRIM(a.dentista_nome), '')) AS dentista_nome,
              p.telefone
       FROM agendamentos a
       LEFT JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+      LEFT JOIN dentistas d ON d.id = a.dentista_id AND d.tenant_id = a.tenant_id
       WHERE a.tenant_id IS NOT NULL
         AND a.tenant_id <> '00000000-0000-0000-0000-000000000001'
-        AND a.data = ((NOW() AT TIME ZONE '${WA_TZ}')::date + 1)
-        AND a.status NOT IN ('cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado')
+        AND a.data = ((NOW() AT TIME ZONE '${WA_TZ}')::date + ${APPT_CONFIRMATION_LEAD_DAYS_SQL})
+        AND COALESCE(a.status, 'agendado') <> ALL($1::text[])
+        AND COALESCE(a.confirmacao_quando, '') <> 'nao'
         AND NOT EXISTS (
           SELECT 1 FROM automation_jobs aj
-           WHERE aj.trigger_event = 'appointment_reminder'
+           WHERE aj.tenant_id = a.tenant_id
+             AND aj.trigger_event = 'appointment_reminder'
              AND aj.flow_id = 'reminder_' || a.id::text
-             AND aj.created_at > NOW() - INTERVAL '3 days'
+             AND (aj.variables::jsonb->>'apptDate' = a.data::text OR aj.created_at > NOW() - INTERVAL '3 days')
         )
-    `);
+    `, [APPT_REMINDER_SKIP_STATUSES]);
 
     if (appointments.length === 0) return;
-    console.log(`🔔 Reminder: ${appointments.length} consultas amanhã para lembrar`);
+    console.log(`🔔 Reminder: ${appointments.length} consultas para pedir confirmação`);
 
     const WEEKDAYS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+    // Clínica que desligou o lembrete não recebe pedido. Se a leitura falhar, pula a
+    // clínica nesta rodada (o padrão "ligado" poderia contrariar quem desligou).
+    const reminderEnabled = new Map();
+    const isReminderEnabled = async (tenantId) => {
+      if (!reminderEnabled.has(tenantId)) {
+        const saved = await getTenantSetting(tenantId, 'appointment_reminder', { throwOnError: true }).catch(() => ({ enabled: false }));
+        reminderEnabled.set(tenantId, saved?.enabled !== false);
+      }
+      return reminderEnabled.get(tenantId);
+    };
     for (const appt of appointments) {
       try {
+        const tenantId = String(appt.tenant_id);
+        if (!(await isReminderEnabled(tenantId))) continue;
         const phone = normalizeWhatsappNumber(appt.telefone || '');
         if (!phone) continue;
+        if (await isWhatsAppOptedOut(tenantId, phone)) continue;
 
-        const isoDate = appt.data instanceof Date ? appt.data.toISOString().split('T')[0] : String(appt.data).slice(0, 10);
+        const isoDate = appt.data instanceof Date
+          ? `${appt.data.getFullYear()}-${String(appt.data.getMonth() + 1).padStart(2, '0')}-${String(appt.data.getDate()).padStart(2, '0')}`
+          : String(appt.data).slice(0, 10);
         const [y, m, d] = isoDate.split('-');
-        const dataBR = `${d}/${m}/${y}`;
-        const weekday = WEEKDAYS[new Date(`${isoDate}T12:00:00Z`).getUTCDay()] || '';
-        const firstName = (appt.paciente_nome || '').split(' ')[0];
         const hora = String(appt.hora || '').slice(0, 5);
+        const clinica = await getTenantClinicName(tenantId);
+        const { body, fallbackText } = buildAppointmentReminderMessage({
+          clinica,
+          pacienteNome: appt.paciente_nome,
+          weekday: WEEKDAYS[new Date(`${isoDate}T12:00:00Z`).getUTCDay()] || '',
+          dataBR: `${d}/${m}/${y}`,
+          hora: hora || appt.hora || '—',
+          profissional: appt.dentista_nome,
+        });
 
-        // Data explícita em vez de "amanhã": o lembrete pode sair só no dia
-        // seguinte à criação (fila fora do horário de envio).
-        // Sem o procedimento: a mensagem aparece na tela bloqueada (LGPD art. 6º III e 46).
-        const clinica = await getTenantClinicName(appt.tenant_id);
-        const message = `🔔 *Lembrete de consulta — ${clinica}*\n\nOlá, ${firstName}!\n\nVocê tem uma consulta marcada:\n📅 ${weekday}, ${dataBR}\n⏰ ${hora || appt.hora}\n👩‍⚕️ ${appt.dentista_nome || 'Equipe da clínica'}\n\nResponda *SIM* para confirmar ou mande uma mensagem aqui para remarcar.`;
-
-        // Validade: até o horário da consulta (horário de Brasília).
+        // Validade do pedido e da resposta: até o horário da consulta (Brasília, -03:00).
         let expiresAt = new Date(`${isoDate}T${/^\d{2}:\d{2}$/.test(hora) ? hora : '23:59'}:00-03:00`);
         if (Number.isNaN(expiresAt.getTime())) expiresAt = null;
+        if (expiresAt && expiresAt.getTime() <= Date.now()) continue;
 
         await enqueueWhatsAppJob({
-          tenantId: String(appt.tenant_id), phone, message, category: 'transactional',
-          flowId: `reminder_${appt.id}`, flowName: 'Lembrete 24h', patientName: appt.paciente_nome,
-          triggerEvent: 'appointment_reminder', expiresAt,
+          tenantId, phone, message: fallbackText, category: 'transactional',
+          flowId: `reminder_${appt.id}`, flowName: 'Confirmação de consulta', patientName: appt.paciente_nome || '',
+          triggerEvent: 'appointment_reminder', ...(expiresAt ? { expiresAt } : {}),
+          variables: {
+            agendamentoId: String(appt.id), apptDate: isoDate, apptHora: hora,
+            interactive: {
+              endpoint: 'sendButtons',
+              payload: {
+                title: '',
+                description: body,
+                footer: clinica,
+                buttons: [
+                  { buttonId: `appt_confirm_${appt.id}`, buttonText: { displayText: 'Confirmar' }, type: 1 },
+                  { buttonId: `appt_reschedule_${appt.id}`, buttonText: { displayText: 'Preciso remarcar' }, type: 1 },
+                ],
+              },
+            },
+          },
         });
-        console.log(`   📩 Lembrete enfileirado (consulta ${appt.id})`);
+        console.log(`   📩 Pedido de confirmação enfileirado (consulta ${appt.id})`);
       } catch (apptErr) {
         console.error(`   ❌ Lembrete da consulta ${appt.id}:`, apptErr.message);
       }
@@ -11820,6 +14178,98 @@ async function processAppointmentReminders() {
   } catch (err) {
     console.error('❌ Appointment reminder cron error:', err.message);
   }
+}
+
+// ─── Resposta ao pedido de confirmação (botão ou 1/2, SIM legado) ───
+// Sem "ok": muitas vezes é só "recebi" e confirmaria presença sem intenção (parecer T3).
+const APPT_CONFIRM_WORDS = new Set(['1', 'sim', 'confirmo', 'confirmar', 'confirmado', 'confirmada', 'yes', 'vou', 'estarei', 'pode confirmar']);
+const APPT_RESCHEDULE_WORDS = new Set(['2', 'remarcar', 'preciso remarcar', 'quero remarcar', 'reagendar']);
+
+function parseAppointmentReminderReply(msgContent) {
+  const raw = String(msgContent || '').trim();
+  const btn = raw.match(/^appt_(confirm|reschedule)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (btn) return { action: btn[1] === 'confirm' ? 'confirmado' : 'remarcar', agendamentoId: btn[2].toLowerCase() };
+  const t = raw.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[!.\s]+$/g, '').replace(/\s+/g, ' ');
+  if (!t || t.length > 40) return null;
+  if (APPT_CONFIRM_WORDS.has(t)) return { action: 'confirmado', agendamentoId: null };
+  if (APPT_RESCHEDULE_WORDS.has(t)) return { action: 'remarcar', agendamentoId: null };
+  return null;
+}
+
+// Só vale se: houver pedido ENVIADO por esta clínica a este telefone, ainda no prazo
+// (até o horário da consulta), sem resposta anterior; o agendamento é da clínica e o
+// telefone é o do cadastro do paciente daquele agendamento.
+async function handleAppointmentReminderReply({ tenantId, phone, msgType, msgContent, instance }) {
+  if (!isValidTenantId(tenantId) || !phone) return null;
+  if (!['text', 'button_response', 'list_response'].includes(msgType)) return null;
+  const parsed = parseAppointmentReminderReply(msgContent);
+  if (!parsed) return null;
+  const key = waPhoneKey(phone);
+  const params = [tenantId, key];
+  if (parsed.agendamentoId) params.push(`reminder_${parsed.agendamentoId}`);
+  const { rows: [job] } = await pool.query(
+    `SELECT aj.id, aj.flow_id, aj.variables FROM automation_jobs aj
+      WHERE aj.tenant_id = $1 AND aj.trigger_event = 'appointment_reminder' AND aj.status = 'sent'
+        AND RIGHT(regexp_replace(aj.patient_phone, '\\D', '', 'g'), 8) = RIGHT($2, 8)
+        AND (aj.expires_at IS NULL OR aj.expires_at > NOW())
+        AND aj.sent_at > NOW() - INTERVAL '8 days'
+        AND COALESCE(aj.variables::jsonb->>'confirmationReply', '') = ''
+        ${parsed.agendamentoId ? 'AND aj.flow_id = $3' : ''}
+      ORDER BY aj.sent_at DESC LIMIT 1`,
+    params
+  );
+  if (!job) return null;
+  const agendamentoId = String(job.flow_id || '').replace(/^reminder_/, '');
+  const { rows: [appt] } = await pool.query(
+    `SELECT a.id, a.status, a.data, a.hora, p.telefone
+       FROM agendamentos a JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+      WHERE a.id::text = $1 AND a.tenant_id = $2 LIMIT 1`,
+    [agendamentoId, tenantId]
+  );
+  // Mesmo critério da fila (8 últimos dígitos): o cadastro costuma vir sem o 55.
+  const last8 = (v) => String(v || '').replace(/\D/g, '').slice(-8);
+  if (!appt || !last8(appt.telefone) || last8(appt.telefone) !== last8(phone)) return null;
+  if (['cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado', 'em_atendimento'].includes(String(appt.status || ''))) return null;
+
+  const { rowCount } = await pool.query(
+    `UPDATE agendamentos SET status = $3, updated_at = NOW()
+      WHERE id::text = $1 AND tenant_id = $2 AND status NOT IN ('cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado', 'em_atendimento')`,
+    [agendamentoId, tenantId, parsed.action]
+  );
+  if (!rowCount) return null;
+  await pool.query(
+    `UPDATE automation_jobs SET variables = jsonb_set(jsonb_set(COALESCE(variables::jsonb, '{}'), '{confirmationReply}', to_jsonb($2::text)), '{answeredAt}', to_jsonb(NOW()::text))
+      WHERE id = $1 AND tenant_id = $3`,
+    [job.id, parsed.action, tenantId]
+  ).catch(e => console.error('[confirmação] marcar resposta falhou:', e.message));
+
+  const clinica = await getTenantClinicName(tenantId);
+  // TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+  const reply = parsed.action === 'confirmado'
+    ? `✅ *Presença confirmada!*\n\nObrigado por confirmar. A ${clinica} aguarda você na data agendada. 😊`
+    // Parecer T5: diz qual consulta, que o retorno vem no horário de atendimento e que o
+    // horário atual segue reservado (o status "remarcar" não libera o horário sozinho; só
+    // a recepção decide oferecê-lo a outro paciente depois de falar com este).
+    : `📅 Recebemos seu pedido para remarcar a consulta de ${formatAgendaDateBR(appt.data)} às ${String(appt.hora || '').slice(0, 5)}. A equipe da ${clinica} vai falar com você por aqui, no horário de atendimento, para combinar um novo horário. Até lá, seu horário atual continua reservado.`;
+  await enqueueWhatsAppAutoReply({
+    tenantId, instance, phone, message: reply, category: 'service', dedupeMinutes: 10,
+    kind: parsed.action === 'confirmado' ? 'appointment_confirmed' : 'appointment_reschedule',
+  }).catch(e => console.error('[confirmação] resposta não enfileirada:', e.message));
+
+  broadcastSSE('agendamento_changed', { action: 'updated', id: agendamentoId, data: appt.data }, tenantId);
+  if (parsed.action === 'remarcar') {
+    // Aviso à recepção: evento na tela (agenda/chat) e notificação; a conversa entra na fila de atendimento.
+    const dataBR = formatAgendaDateBR(appt.data);
+    broadcastSSE('appointment_reschedule_requested', { agendamentoId, data: appt.data, hora: appt.hora }, tenantId);
+    sendPushToAll({
+      title: '📅 Pedido de remarcação',
+      body: `Um paciente pediu para remarcar a consulta de ${dataBR} às ${String(appt.hora || '').slice(0, 5)}.`,
+      tag: `remarcar-${agendamentoId}`,
+      url: '/agenda',
+    }, tenantId);
+  }
+  console.log(`📅 Resposta ao pedido de confirmação: ${parsed.action} (consulta ${agendamentoId}, final ${maskPhone(phone)})`);
+  return { handled: true, action: parsed.action, agendamentoId };
 }
 
 // ─── Cron: inactive patients & birthdays (runs every 6h) ────
@@ -11962,21 +14412,11 @@ async function processSolutionTriggers() {
                 LIMIT 100`,
         params: [],
       },
-      {
-        trigger: 'Parcela ou pagamento em atraso',
-        query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, o.valor_total::text as valor
-                FROM orcamentos o
-                JOIN pacientes p ON o.paciente_id = p.id
-                WHERE p.tenant_id = $1
-                AND o.status = 'aprovado'
-                AND p.telefone IS NOT NULL AND p.telefone != ''
-                AND NOT EXISTS (
-                  SELECT 1 FROM financeiro f
-                  WHERE f.paciente_id = o.paciente_id AND f.tipo = 'receita' AND f.valor >= o.valor_total
-                )
-                LIMIT 100`,
-        params: [],
-      },
+      // 'Parcela ou pagamento em atraso' DESLIGADO: não existe contas a receber/parcelas no sistema.
+      // A regra antiga ("orçamento aprovado sem linha na tabela financeiro") marcava como
+      // inadimplente TODO paciente com orçamento aprovado — a tela Financeiro grava em
+      // fin_movements, nunca em financeiro — e mandava cobrança por WhatsApp todo dia a quem já
+      // tinha pago (CDC art. 42). Só religar com parcelas reais (vencimento + baixa por paciente).
       {
         trigger: 'Orçamento criado e não aprovado',
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone,
@@ -12169,20 +14609,30 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { id } = req.params;
+    // CPF opcional (crm_leads não guarda CPF): vazio ou exatamente 11 dígitos.
+    const cpfBody = req.body?.cpf;
+    if (cpfBody !== undefined && cpfBody !== null && (typeof cpfBody !== 'string' || !/^(\d{11})?$/.test(cpfBody.trim()))) {
+      return res.status(400).json({ error: 'CPF inválido: informe 11 dígitos, sem pontos ou traço' });
+    }
+    const cpf = normalizarCpf(req.body?.cpf);
 
     // Fetch lead data
     const { rows: leadRows } = await pool.query(
-      'SELECT id, nome, telefone, email, cpf, origem, observacoes FROM crm_leads WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id]
+      'SELECT id, nome, telefone, email, origem, observacoes FROM crm_leads WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id]
     );
     if (leadRows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
     const lead = leadRows[0];
 
     // Check if patient already exists with same phone
     if (lead.telefone) {
-      const clean = lead.telefone.replace(/\D/g, '');
-      const { rows: existing } = await pool.query(
-        "SELECT id, nome, telefone FROM pacientes WHERE REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1 AND tenant_id = $2", [clean.slice(-8), user.tenant_id]
-      );
+      // Mesmo telefone pelos 11 últimos dígitos (com ou sem 55, com máscara), ou
+      // cadastro salvo sem DDD.
+      const candidatos = candidatosFone(lead.telefone, { semDdd: true });
+      const { rows: existing } = candidatos.length ? await pool.query(
+        `SELECT id, nome, telefone FROM pacientes
+          WHERE tenant_id = $2 AND ${foneIndexado("COALESCE(telefone, '')")} = ANY($1::text[])`,
+        [candidatos, user.tenant_id]
+      ) : { rows: [] };
       if (existing.length > 0) {
         return res.json({
           success: false,
@@ -12198,7 +14648,7 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     const pacienteId = crypto.randomUUID();
     await pool.query(
       'INSERT INTO pacientes (id, nome, cpf, telefone, email, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [pacienteId, lead.nome, lead.cpf || null, lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`, user.tenant_id]
+      [pacienteId, lead.nome, cpf, lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`, user.tenant_id]
     );
 
     // Update lead status to 'paciente' and link paciente_id
@@ -12206,9 +14656,7 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
 
     res.json({ success: true, paciente_id: pacienteId, nome: lead.nome });
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('❌ Error converting lead to patient:', error.message);
-    res.status(500).json({ error: error.message });
+    responderErroPaciente(res, error, 'crm:convert-to-patient');
   }
 });
 
@@ -12263,18 +14711,18 @@ app.get('/api/crm/leads/:id/history', async (req, res) => {
       );
       appointments = rows;
     } else if (telefone) {
-      // Try matching by phone
-      const clean = telefone.replace(/\D/g, '');
-      const { rows } = await pool.query(
+      // Pelo telefone: 11 últimos dígitos (com ou sem 55, com máscara), ou cadastro sem DDD.
+      const candidatos = candidatosFone(telefone, { semDdd: true });
+      const { rows } = candidatos.length ? await pool.query(
         `SELECT a.id, a.data, a.hora, a.procedimento, a.status, d.nome as dentista_nome
          FROM agendamentos a
          LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id
          LEFT JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
-         WHERE REPLACE(REPLACE(REPLACE(p.telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1
+         WHERE ${foneIndexado("COALESCE(p.telefone, '')")} = ANY($1::text[])
            AND a.tenant_id = $2
          ORDER BY a.data DESC, a.hora DESC LIMIT 10`,
-        [clean.slice(-8), user.tenant_id]
-      );
+        [candidatos, user.tenant_id]
+      ) : { rows: [] };
       appointments = rows;
     }
 
@@ -12382,7 +14830,8 @@ app.get('/api/crm/leads', async (req, res) => {
     }
     if (origin && origin !== 'Todos') {
       params.push(origin);
-      whereClause += ` AND l.origem = $${params.length}`;
+      // Leads automáticos do WhatsApp gravam "whatsapp"; o cadastro manual grava "WhatsApp"
+      whereClause += ` AND LOWER(l.origem) = LOWER($${params.length})`;
     }
 
     const baseFrom = `FROM crm_leads l
@@ -12461,8 +14910,18 @@ app.post('/api/sessions/first-response', async (req, res) => {
 app.post('/api/sessions/close', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    const { leadId, leadPhone, instance } = req.body;
+    const { leadId, outcome } = req.body;
+    // Instância da conversa (número em que o paciente falou). Sem ela, a fila usa o
+    // número padrão da clínica (getTenantDefaultInstance).
+    const instance = typeof req.body.instance === 'string' && req.body.instance.trim() ? req.body.instance.trim() : null;
     if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Sem clínica vinculada' });
+    // Telefone e nome do cadastro do lead desta clínica (nunca do corpo da requisição).
+    const { rows: [leadRow] } = await pool.query(
+      'SELECT nome, telefone FROM crm_leads WHERE id = $1 AND tenant_id = $2 LIMIT 1',
+      [leadId, user.tenant_id]
+    ).catch(() => ({ rows: [] }));
+    const leadPhone = normalizeWhatsappNumber(leadRow?.telefone || '') || null;
 
     const result = await pool.query(
       `UPDATE attendance_sessions SET 
@@ -12474,61 +14933,56 @@ app.post('/api/sessions/close', async (req, res) => {
     );
 
     const session = result.rows[0];
-    const ownsSurveyInstance = session && instance ? await userOwnsInstance(user, instance) : false;
+    // Pesquisa só no desfecho "atendido" (follow-up e orçamento não recebem).
+    const wantsSurvey = outcome === 'atendido';
+    const surveyInstanceOk = !instance || (isSafeInstanceName(instance) && await userOwnsInstance(user, instance));
     const surveyOptedOut = leadPhone ? await isWhatsAppOptedOut(user.tenant_id, leadPhone).catch(() => false) : false;
 
-    // Send satisfaction survey via WhatsApp buttons (só pelo número da clínica)
-    if (session && leadPhone && instance && ownsSurveyInstance && !surveyOptedOut && isSafeInstanceName(instance) && EVOLUTION_API_KEY) {
+    // Pesquisa de satisfação pela fila, pelo número da clínica: botões com fallback
+    // em texto numerado (o texto é a mensagem do job). Não é resposta imediata ao
+    // paciente, então não tem prioridade auto_reply e respeita a janela de horário.
+    let surveyJob = null;
+    if (session && wantsSurvey && leadPhone && surveyInstanceOk && !surveyOptedOut) {
       const phone = leadPhone.replace(/\D/g, '');
-      try {
-        // Try buttons first
-        await evolutionFetch(`/message/sendButtons/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({
-            number: phone,
-            title: '⭐ Avalie nosso atendimento',
-            description: 'Como você avalia o atendimento que recebeu?',
-            buttons: [
-              { buttonId: `rating_${leadId}_5`, buttonText: { displayText: '⭐⭐⭐⭐⭐ Excelente' } },
-              { buttonId: `rating_${leadId}_4`, buttonText: { displayText: '⭐⭐⭐⭐ Bom' } },
-              { buttonId: `rating_${leadId}_3`, buttonText: { displayText: '⭐⭐⭐ Regular' } },
-            ],
-          }),
-        });
-        console.log(`📊 Satisfaction survey sent to ${maskPhone(phone)}`);
-      } catch (btnErr) {
-        // Fallback: text-based survey
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({
-            number: phone,
-            text: `⭐ *Avalie nosso atendimento!*\n\nComo você avalia o atendimento que recebeu?\n\n5️⃣ Excelente\n4️⃣ Bom\n3️⃣ Regular\n2️⃣ Ruim\n1️⃣ Péssimo\n\nResponda com o número da sua avaliação.`,
-          }),
-        });
-        console.log(`📊 Satisfaction survey (text fallback) sent to ${maskPhone(phone)}`);
-      }
-
-      // Mark lead as awaiting rating
-      await pool.query(
-        `INSERT INTO app_settings (key, value, updated_at) 
-         VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-        [`awaiting_rating_${user.tenant_id}_${phone}`, JSON.stringify({ leadId, sessionId: session?.id, attendantId: session?.attendant_id, attendantName: session?.attendant_name })]
-      );
+      surveyJob = await enqueueWhatsAppJob({
+        tenantId: user.tenant_id, instance, phone, category: 'transactional',
+        triggerEvent: 'satisfaction_survey', patientName: leadRow?.nome || '',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60_000),
+        // Parecer T10: opções equilibradas (há opção negativa) e nenhuma estrela antes de o paciente avaliar.
+        message: `*Avalie nosso atendimento*\n\nComo foi o atendimento que você recebeu? Responda com um número de 1 a 5:\n\n1 - Ruim\n2 - Abaixo do esperado\n3 - Regular\n4 - Bom\n5 - Ótimo`,
+        variables: {
+          leadId: String(leadId),
+          sessionId: session.id || null, attendantId: session.attendant_id || null, attendantName: session.attendant_name || null,
+          interactive: {
+            endpoint: 'sendButtons',
+            payload: {
+              title: 'Avalie nosso atendimento',
+              description: 'Como foi o atendimento que você recebeu?',
+              buttons: [
+                { buttonId: `rating_${leadId}_5`, buttonText: { displayText: 'Ótimo (5)' } },
+                { buttonId: `rating_${leadId}_3`, buttonText: { displayText: 'Regular (3)' } },
+                { buttonId: `rating_${leadId}_1`, buttonText: { displayText: 'Ruim (1)' } },
+              ],
+            },
+          },
+        },
+      }).catch(e => { console.error('📊 Pesquisa de satisfação não enfileirada:', e.message); return null; });
+    }
+    if (surveyJob) {
+      // A flag de "aguardando avaliação" é gravada no hook do job, quando a pesquisa sair.
+      console.log(`📊 Satisfaction survey queued for ${maskPhone(leadPhone)} (job ${surveyJob})`);
     }
 
     console.log(`✅ Session closed for lead ${leadId} (duration: ${session?.duration_seconds || 0}s)`);
 
     // 🤖 Trigger "Após consulta finalizada" automation
     if (leadPhone) {
-      const leadName = session?.attendant_name || leadId;
-      // Get lead name from DB
-      const { rows: leadRows } = await pool.query('SELECT nome FROM crm_leads WHERE id = $1', [leadId]).catch(() => ({ rows: [] }));
-      const name = leadRows[0]?.nome || leadId;
+      const name = leadRow?.nome || leadId;
       triggerAutomationFlows('Após consulta finalizada', { name, phone: leadPhone, tenantId: user.tenant_id }).catch(() => {});
       triggerAutomationFlows('Atendimento finalizado sem agendamento', { name, phone: leadPhone, tenantId: user.tenant_id }).catch(() => {});
     }
 
-    res.json({ success: true, sessionId: session?.id, duration: session?.duration_seconds });
+    res.json({ success: true, sessionId: session?.id, duration: session?.duration_seconds, surveyQueued: !!surveyJob });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
@@ -12540,7 +14994,8 @@ app.get('/api/metrics/attendance', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { days = '30' } = req.query;
-    const since = `NOW() - INTERVAL '${Math.min(Number(days), 365)} days'`;
+    const daysInt = Math.min(Math.max(parseInt(days, 10) || 30, 1), 365);
+    const since = `NOW() - INTERVAL '${daysInt} days'`;
 
     // General metrics
     const { rows: general } = await pool.query(`
@@ -12879,8 +15334,8 @@ async function syncWhatsAppContacts() {
     };
 
     // 1. Fetch connected instances from Evolution API
-    const instRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
-      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+    const instRes = await evolutionProvider.rawFetch('/instance/fetchInstances', {
+      headers: { 'Content-Type': 'application/json' },
     });
     if (!instRes.ok) return;
     const instances = await instRes.json();
@@ -12894,9 +15349,9 @@ async function syncWhatsAppContacts() {
       if (!instTenantId) continue; // instância sem clínica: não importa
       try {
         let waContacts = [];
-        const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
+        const cRes = await evolutionProvider.rawFetch(`/chat/findContacts/${encodeURIComponent(name)}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ where: {} }),
         });
         if (cRes.ok) {
@@ -12905,9 +15360,9 @@ async function syncWhatsAppContacts() {
         }
         if (waContacts.length === 0) {
           try {
-            const altRes = await fetch(`${EVOLUTION_API_URL}/contact/find/${name}`, {
+            const altRes = await evolutionProvider.rawFetch(`/contact/find/${encodeURIComponent(name)}`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({}),
             });
             if (altRes.ok) {
@@ -12992,8 +15447,8 @@ app.post('/api/contatos/sync/now', async (req, res) => {
     };
 
     // 1. Fetch connected instances
-    const instRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
-      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+    const instRes = await evolutionProvider.rawFetch('/instance/fetchInstances', {
+      headers: { 'Content-Type': 'application/json' },
     });
     if (!instRes.ok) return res.json({ success: false, error: 'Falha ao buscar instâncias', instances: [] });
     const instances = await instRes.json();
@@ -13025,9 +15480,9 @@ app.post('/api/contatos/sync/now', async (req, res) => {
       try {
         let waContacts = [];
         console.log(`[sync][${name}] Tentando chat/findContacts...`);
-        const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
+        const cRes = await evolutionProvider.rawFetch(`/chat/findContacts/${encodeURIComponent(name)}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ where: {} }),
         });
         console.log(`[sync][${name}] findContacts status: ${cRes.status}`);
@@ -13045,9 +15500,9 @@ app.post('/api/contatos/sync/now', async (req, res) => {
         if (waContacts.length === 0) {
           console.log(`[sync][${name}] Tentando fallback contact/find...`);
           try {
-            const altRes = await fetch(`${EVOLUTION_API_URL}/contact/find/${name}`, {
+            const altRes = await evolutionProvider.rawFetch(`/contact/find/${encodeURIComponent(name)}`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({}),
             });
             console.log(`[sync][${name}] contact/find status: ${altRes.status}`);
@@ -13370,11 +15825,12 @@ app.get('/api/sessions/active', async (req, res) => {
         s.assigned_at AS started_at,
         (
           SELECT m.content FROM chat_messages m
-          WHERE m.lead_id = s.lead_id
+          WHERE m.lead_id = s.lead_id AND m.tenant_id = s.tenant_id
           ORDER BY m.timestamp DESC LIMIT 1
         ) AS last_message
       FROM attendance_sessions s
-      LEFT JOIN crm_leads l ON l.id = s.lead_id
+      -- attendance_sessions.lead_id é text e crm_leads.id é uuid: sem o ::text dá 500 (uuid = text).
+      LEFT JOIN crm_leads l ON l.id::text = s.lead_id AND l.tenant_id = s.tenant_id
       WHERE s.status = 'active' AND s.tenant_id = $1
       ORDER BY s.assigned_at DESC
       LIMIT 30
@@ -13685,7 +16141,7 @@ app.post('/api/messages', async (req, res) => {
 });
 
 // POST /api/media/upload — upload media file and return persistent URL
-app.post('/api/media/upload', express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
+app.post('/api/media/upload', limiteUpload, express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
   try {
     await verifyUser(req);
     const { fileName, mimeType } = req.query;
@@ -13834,7 +16290,7 @@ app.get('/api/queue/leads', async (req, res) => {
               AND cm_unread.sender = 'lead'
               AND (
                 cm_unread.lead_id = s.lead_id
-                OR (s.lead_phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm_unread.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+                OR (s.lead_phone IS NOT NULL AND cm_unread.phone IS NOT NULL AND ${sqlFoneIgual('cm_unread.phone', 's.lead_phone')})
               )
               AND cm_unread.timestamp > COALESCE(
                 (SELECT last_read_at FROM chat_read_status WHERE lead_id = s.lead_id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
@@ -13849,7 +16305,7 @@ app.get('/api/queue/leads', async (req, res) => {
            WHERE cm.tenant_id = $2
              AND (
                cm.lead_id = s.lead_id
-               OR (s.lead_phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+               OR (s.lead_phone IS NOT NULL AND cm.phone IS NOT NULL AND ${sqlFoneIgual('cm.phone', 's.lead_phone')})
              )
            ORDER BY cm.timestamp DESC
            LIMIT 1
@@ -13882,7 +16338,7 @@ app.get('/api/queue/leads', async (req, res) => {
            l.id::text = cm.lead_id
            OR (
              cm.phone IS NOT NULL
-             AND REGEXP_REPLACE(COALESCE(l.telefone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11)
+             AND ${sqlFoneIgual("COALESCE(l.telefone, '')", 'cm.phone')}
            )
          )
         WHERE cm.tenant_id = $2
@@ -13911,7 +16367,7 @@ app.get('/api/queue/leads', async (req, res) => {
               AND cm_unread.sender = 'lead'
               AND (
                 cm_unread.lead_id = mc.id
-                OR (mc.phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm_unread.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+                OR (mc.phone IS NOT NULL AND cm_unread.phone IS NOT NULL AND ${sqlFoneIgual('cm_unread.phone', 'mc.phone')})
               )
               AND cm_unread.timestamp > COALESCE(
                 (SELECT last_read_at FROM chat_read_status WHERE lead_id = mc.id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
@@ -13929,14 +16385,14 @@ app.get('/api/queue/leads', async (req, res) => {
                AND closed_s.closed_at >= mc.last_message_time
                AND (
                  closed_s.lead_id = mc.id
-                 OR (closed_s.lead_phone IS NOT NULL AND mc.phone IS NOT NULL AND REGEXP_REPLACE(closed_s.lead_phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+                 OR (closed_s.lead_phone IS NOT NULL AND mc.phone IS NOT NULL AND ${sqlFoneIgual('closed_s.lead_phone', 'mc.phone')})
                )
           )
           AND NOT EXISTS (
             SELECT 1
               FROM open_sessions os
              WHERE os.id = mc.id
-                OR (os.phone IS NOT NULL AND mc.phone IS NOT NULL AND REGEXP_REPLACE(os.phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+                OR (os.phone IS NOT NULL AND mc.phone IS NOT NULL AND ${sqlFoneIgual('os.phone', 'mc.phone')})
           )
       )
       SELECT * FROM open_sessions
@@ -14065,7 +16521,7 @@ app.post('/api/messages/batch', async (req, res) => {
       await client.query('COMMIT');
       res.json({ success: true, count: messages.length });
     } catch (err) {
-      await client.query('ROLLBACK');
+      await client.query('ROLLBACK').catch(() => {});
       throw err;
     } finally {
       client.release();
@@ -14123,16 +16579,20 @@ app.get('/api/messages/unread', async (req, res) => {
 });
 
 // Search messages globally or within a lead
+// Escapa os curingas do LIKE/ILIKE (\\, % e _) para o texto digitado ser buscado literalmente.
+const escapeLike = (text) => String(text).replace(/[\\%_]/g, (c) => `\\${c}`);
+
 app.get('/api/messages/search', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const q = req.query.q;
-    const leadId = req.query.lead_id;
-    if (!q || q.length < 2) return res.status(400).json({ error: 'Query mínima 2 caracteres' });
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
+    const leadId = typeof req.query.lead_id === 'string' ? req.query.lead_id : '';
+    if (q.length < 2) return res.status(400).json({ error: 'Query mínima 2 caracteres' });
 
-    let query = "SELECT m.*, l.nome as lead_name FROM chat_messages m LEFT JOIN crm_leads l ON l.id = m.lead_id AND l.tenant_id = m.tenant_id WHERE m.content ILIKE $1 AND m.tenant_id = $2";
-    const values = [`%${q}%`, user.tenant_id];
+    let query = "SELECT m.*, l.nome as lead_name FROM chat_messages m LEFT JOIN crm_leads l ON l.id::text = m.lead_id AND l.tenant_id = m.tenant_id WHERE m.content ILIKE $1 AND m.tenant_id = $2";
+    // chat_messages.lead_id é text e crm_leads.id é uuid: sem o ::text o Postgres dá 500 (uuid = text).
+    const values = [`%${escapeLike(q)}%`, user.tenant_id];
 
     if (leadId) {
       query += ' AND m.lead_id = $3';
@@ -14144,7 +16604,65 @@ app.get('/api/messages/search', async (req, res) => {
     const { rows } = await pool.query(query, values);
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ busca de mensagens:', error.message);
+    res.status(500).json({ error: 'Não foi possível buscar as mensagens agora' });
+  }
+});
+
+// Busca global (Ctrl+K): pacientes, leads e agendamentos da própria clínica.
+// Até 20 resultados no total e só dados de identificação (nome, telefone, data/hora):
+// nada de procedimento, observação, convênio, CPF ou anamnese (LGPD art. 11).
+app.get('/api/search', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const q = String(req.query.q || '').trim().slice(0, 80);
+    if (q.length < 2) return res.status(400).json({ error: 'Digite pelo menos 2 caracteres' });
+
+    const like = `%${escapeLike(q)}%`;
+    const digits = q.replace(/\D/g, '');
+    // Só busca por número quando há dígitos suficientes ('' casaria com tudo).
+    const digitsLike = digits.length >= 3 ? `%${digits}%` : null;
+    // CPF parcial só para admin; os demais acham paciente por CPF só com os 11 dígitos exatos.
+    const isAdmin = user.role === 'admin' || !!user.is_super_admin;
+    const cpfParam = isAdmin ? digitsLike : (digits.length === 11 ? digits : null);
+    const tId = user.tenant_id;
+
+    const [pacientes, leads, agendamentos] = await Promise.all([
+      pool.query(
+        `SELECT id, nome, telefone FROM pacientes
+          WHERE tenant_id = $1
+            AND (nome ILIKE $2
+                 OR ($3::text IS NOT NULL AND regexp_replace(COALESCE(telefone, ''), '\\D', '', 'g') LIKE $3)
+                 OR ($4::text IS NOT NULL AND regexp_replace(COALESCE(cpf, ''), '\\D', '', 'g') ${isAdmin ? 'LIKE' : '='} $4))
+          ORDER BY nome LIMIT 8`,
+        [tId, like, digitsLike, cpfParam]
+      ),
+      pool.query(
+        `SELECT id, nome, telefone, kanban_stage FROM crm_leads
+          WHERE tenant_id = $1
+            AND (nome ILIKE $2 OR ($3::text IS NOT NULL
+                 AND regexp_replace(COALESCE(telefone, ''), '\\D', '', 'g') LIKE $3))
+          ORDER BY updated_at DESC NULLS LAST LIMIT 6`,
+        [tId, like, digitsLike]
+      ),
+      pool.query(
+        `SELECT a.id, a.data, a.hora, a.status, a.paciente_id, p.nome AS paciente_nome, d.nome AS dentista_nome
+           FROM agendamentos a
+           JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+           LEFT JOIN dentistas d ON d.id = a.dentista_id AND d.tenant_id = a.tenant_id
+          WHERE a.tenant_id = $1 AND p.nome ILIKE $2 AND a.data >= CURRENT_DATE - INTERVAL '30 days'
+          ORDER BY a.data, a.hora LIMIT 6`,
+        [tId, like]
+      ),
+    ]);
+
+    res.json({ pacientes: pacientes.rows, leads: leads.rows, agendamentos: agendamentos.rows });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ busca global:', error.message);
+    res.status(500).json({ error: 'Não foi possível buscar agora' });
   }
 });
 
@@ -14269,8 +16787,9 @@ app.get('/api/ai/settings', async (req, res) => {
       api_key: r.api_key ? (user.is_super_admin ? '...' + r.api_key.slice(-4) : '...configurada') : '',
       editable: !!user.is_super_admin,
     }));
-    // Meta Ads (provider 'manus'): o token é da clínica, não da plataforma
-    if (!user.is_super_admin) {
+    // Meta Ads (provider 'manus'): o token é sempre da clínica, inclusive para super-admin
+    // (não existe mais token global de Meta Ads).
+    {
       let own = null;
       if (user.tenant_id) {
         try {
@@ -14315,7 +16834,7 @@ app.post('/api/ai/settings', async (req, res) => {
     if (!provider) return res.status(400).json({ error: 'Provider é obrigatório' });
 
     // Meta Ads (provider 'manus'): token por clínica, gravado pelo admin da própria clínica
-    if (provider === 'manus' && !user.is_super_admin) {
+    if (provider === 'manus') {
       if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
       const isNewTenantKey = api_key && !String(api_key).includes('...');
       const tenantConfig = config && typeof config === 'object' && !Array.isArray(config) ? JSON.stringify(config) : null;
@@ -14455,7 +16974,7 @@ app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
       [
         user.tenant_id, String(req.params.id), tipo, String(versao), String(texto).slice(0, 5000),
         user.id || null, user.email || null,
-        req.headers['x-forwarded-for'] || req.ip || null,
+        clientIp(req),
         req.headers['user-agent'] || null,
       ]
     );
@@ -14483,7 +17002,7 @@ app.post('/api/consentimentos/:id/revogar', async (req, res) => {
 // ─── Transcribe audio via OpenAI Whisper ────────────────────
 // O áudio fica só num arquivo temporário durante a chamada e é apagado em seguida
 // (LGPD art. 16). Exige consentimento ativo do paciente para gravação/transcrição por IA.
-app.post('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), async (req, res) => {
+app.post('/api/ai/transcribe', limiteUpload, express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), async (req, res) => {
   let tmpDir = null;
   try {
     const { user } = await verifyUser(req);
@@ -14651,6 +17170,16 @@ app.get('/api/ai/reports/:patientId', async (req, res, next) => {
   }
 });
 
+// prescricoes é JSONB e nem sempre é lista (objeto, texto, null): nunca derrubar a rota por isso.
+function prescricoesComoLista(v) {
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'string') {
+    try { const p = JSON.parse(v || '[]'); return Array.isArray(p) ? p : []; } catch { return []; }
+  }
+  return [];
+}
+const PRESCRICOES_QTD_SQL = `(CASE WHEN jsonb_typeof(prescricoes) = 'array' THEN jsonb_array_length(prescricoes) ELSE 0 END)`;
+
 // ─── List clinical reports with filters (period, status, patient, dentist) ──
 // GET /api/ai/reports?from=YYYY-MM-DD&to=YYYY-MM-DD&status=com_prescricao|sem_prescricao|todos&patientId=&attendantId=&q=
 app.get('/api/ai/reports', async (req, res) => {
@@ -14672,8 +17201,8 @@ app.get('/api/ai/reports', async (req, res) => {
       where.push(`(LOWER(patient_name) LIKE $${idx} OR LOWER(queixa_principal) LIKE $${idx} OR LOWER(procedimento) LIKE $${idx})`);
       params.push(`%${String(q).toLowerCase()}%`); idx++;
     }
-    if (status === 'com_prescricao') where.push(`jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) > 0`);
-    if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
+    if (status === 'com_prescricao') where.push(`${PRESCRICOES_QTD_SQL} > 0`);
+    if (status === 'sem_prescricao') where.push(`${PRESCRICOES_QTD_SQL} = 0`);
 
     // Non-admin users only see their own reports
     if (user.role !== 'admin' && user.role !== 'gerente') {
@@ -14695,7 +17224,7 @@ app.get('/api/ai/reports', async (req, res) => {
 
     // Aggregated stats
     const total = rows.length;
-    const comPrescricao = rows.filter(r => Array.isArray(r.prescricoes) ? r.prescricoes.length > 0 : (r.prescricoes && JSON.parse(r.prescricoes || '[]').length > 0)).length;
+    const comPrescricao = rows.filter(r => prescricoesComoLista(r.prescricoes).length > 0).length;
     const totalDuration = rows.reduce((s, r) => s + (r.duration_seconds || 0), 0);
     const pacientesUnicos = new Set(rows.map(r => r.patient_id)).size;
     registrarAcessoProntuario(pool, user, rows.map(r => r.patient_id), 'relatorio_clinico');
@@ -14718,13 +17247,11 @@ app.get('/api/ai/reports', async (req, res) => {
 });
 
 // ─── Export clinical reports as CSV ─────────────────────────
-// GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=&token=<JWT>
+// GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=
+// Só com Authorization: Bearer (a tela baixa por fetch). O JWT na URL (?token=) não vale mais:
+// ficava no histórico do navegador e no log de acesso do nginx por 7 dias.
 app.get('/api/ai/reports/export.csv', async (req, res) => {
   try {
-    // Allow token via query string for direct browser download links
-    if (req.query.token && !req.headers.authorization) {
-      req.headers.authorization = `Bearer ${req.query.token}`;
-    }
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { from, to, status, patientId, attendantId, q } = req.query;
@@ -14741,8 +17268,8 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
       where.push(`(LOWER(patient_name) LIKE $${idx} OR LOWER(queixa_principal) LIKE $${idx} OR LOWER(procedimento) LIKE $${idx})`);
       params.push(`%${String(q).toLowerCase()}%`); idx++;
     }
-    if (status === 'com_prescricao') where.push(`jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) > 0`);
-    if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
+    if (status === 'com_prescricao') where.push(`${PRESCRICOES_QTD_SQL} > 0`);
+    if (status === 'sem_prescricao') where.push(`${PRESCRICOES_QTD_SQL} = 0`);
     if (user.role !== 'admin' && user.role !== 'gerente') {
       where.push(`attendant_id = $${idx++}`);
       params.push(user.id);
@@ -14760,13 +17287,15 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
 
     const esc = (v) => {
       if (v === null || v === undefined) return '';
-      const s = String(v).replace(/"/g, '""').replace(/\r?\n/g, ' ');
+      let s = String(v).replace(/"/g, '""').replace(/\r?\n/g, ' ');
+      // Neutraliza fórmula no Excel/Sheets (nome do paciente pode vir do WhatsApp)
+      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
       return `"${s}"`;
     };
     const header = ['Data', 'Hora', 'Paciente', 'Dentista', 'Queixa', 'Procedimento', 'Dente/Região', 'Duração (min)', 'Nº Prescrições'].map(esc).join(',');
     const lines = rows.map(r => {
       const d = new Date(r.created_at);
-      const presc = Array.isArray(r.prescricoes) ? r.prescricoes : (typeof r.prescricoes === 'string' ? JSON.parse(r.prescricoes || '[]') : []);
+      const presc = prescricoesComoLista(r.prescricoes);
       return [
         d.toLocaleDateString('pt-BR'),
         d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
@@ -14807,6 +17336,30 @@ app.post('/api/consultations', async (req, res) => {
 
     if (!patient_id) return res.status(400).json({ error: 'patient_id é obrigatório' });
 
+    // Tudo precisa ser desta clínica. A tela manda o id do agendamento quando ele não tem
+    // paciente vinculado; se o agendamento tiver paciente, grava no paciente real (antes a
+    // consulta ficava fora do histórico dele).
+    let pacienteId = String(patient_id);
+    let agendamentoId = appointment_id ? String(appointment_id) : null;
+    if (await validarReferenciasDoTenant(user.tenant_id, { pacienteId })) {
+      const ag = PACIENTE_UUID_RE.test(pacienteId)
+        ? (await pool.query('SELECT paciente_id FROM agendamentos WHERE id = $1 AND tenant_id = $2 LIMIT 1', [pacienteId, user.tenant_id])).rows[0]
+        : null;
+      if (!ag) return res.status(404).json({ error: 'Paciente não encontrado' });
+      agendamentoId = agendamentoId || pacienteId;
+      if (ag.paciente_id) pacienteId = String(ag.paciente_id);
+    }
+    if (agendamentoId && agendamentoId !== String(patient_id)) {
+      const okAg = PACIENTE_UUID_RE.test(agendamentoId)
+        && (await pool.query('SELECT paciente_id FROM agendamentos WHERE id = $1 AND tenant_id = $2 LIMIT 1', [agendamentoId, user.tenant_id])).rows.length > 0;
+      if (!okAg) return res.status(400).json({ error: 'Agendamento não encontrado' });
+    }
+    if (clinical_report_id) {
+      const okRel = PACIENTE_UUID_RE.test(String(clinical_report_id))
+        && (await pool.query('SELECT 1 FROM clinical_reports WHERE id = $1 AND tenant_id = $2 LIMIT 1', [clinical_report_id, user.tenant_id])).rows.length > 0;
+      if (!okRel) return res.status(400).json({ error: 'Relatório clínico não encontrado' });
+    }
+
     const { rows } = await pool.query(
       `INSERT INTO consultations
         (patient_id, patient_name, appointment_id, dentist_id, dentist_name,
@@ -14816,7 +17369,7 @@ app.post('/api/consultations', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),$15)
        RETURNING id, finished_at`,
       [
-        patient_id, patient_name || null, appointment_id || null,
+        pacienteId, patient_name || null, agendamentoId,
         user.id, user.name,
         queixa_principal || null, procedimento || null, dente_regiao || null, observacoes || null,
         JSON.stringify(prescricoes || []), duration_seconds || 0, gravacoes_count || 0,
@@ -15058,9 +17611,8 @@ async function metaAdsUpsert(table, tenantId, keys, values) {
   }
 }
 
-// Token do Meta Ads da clínica (tenant_ai_settings). A configuração global (ai_settings)
-// só é usada como fallback para super-admin.
-async function getManusSettings(tenantId, allowGlobalFallback = false) {
+// Token do Meta Ads da clínica (tenant_ai_settings). Não há token global.
+async function getManusSettings(tenantId) {
   if (tenantId) {
     try {
       const { rows } = await pool.query(
@@ -15073,21 +17625,20 @@ async function getManusSettings(tenantId, allowGlobalFallback = false) {
       console.warn('[meta-ads] tenant_ai_settings não existe — aplique a migração de segurança P0');
     }
   }
-  if (!allowGlobalFallback) return null;
-  const result = await pool.query(`SELECT * FROM ai_settings WHERE provider = 'manus' AND enabled = true`);
-  return result.rows[0] ? { ...result.rows[0], _source: 'global' } : null;
+  return null;
 }
 
 /**
  * Helper: call Meta Graph API with access token from Manus config
  */
+// O token vai no header Authorization (aceito pela Graph API), não na URL, para não
+// aparecer em logs de proxy nem em mensagens de erro.
 async function metaGraphFetch(path, accessToken, params = {}) {
   const url = new URL(`https://graph.facebook.com/v19.0${path}`);
-  url.searchParams.set('access_token', accessToken);
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, String(v));
   }
-  const resp = await fetch(url.toString());
+  const resp = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
     throw new Error(`Meta API ${resp.status}: ${JSON.stringify(err.error || err)}`);
@@ -15132,7 +17683,7 @@ app.get('/api/ai/meta-ads/overview', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
 
-    const manus = await getManusSettings(user.tenant_id, false);
+    const manus = await getManusSettings(user.tenant_id);
     const connected = !!manus?.api_key;
 
     // Try to get cached insights from DB
@@ -15213,7 +17764,7 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
     const { user } = await verifyAdmin(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
 
-    const manus = await getManusSettings(user.tenant_id, false);
+    const manus = await getManusSettings(user.tenant_id);
     if (!manus?.api_key) {
       return res.status(400).json({ error: 'Manus AI não configurado. Vá em Configurações → IA e adicione a API key.' });
     }
@@ -15232,17 +17783,11 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
       if (meData.data && meData.data.length > 0) {
         adAccountId = meData.data[0].id;
         adAccountName = meData.data[0].name || adAccountId;
-        // Guarda a conta descoberta na configuração de quem forneceu o token
-        if (manus._source === 'global') {
-          await pool.query(`UPDATE ai_settings SET config = config || $1::jsonb WHERE provider = 'manus'`, [
-            JSON.stringify({ ad_account_id: adAccountId }),
-          ]);
-        } else {
-          await pool.query(
-            `UPDATE tenant_ai_settings SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb WHERE tenant_id = $2 AND provider = 'manus'`,
-            [JSON.stringify({ ad_account_id: adAccountId }), user.tenant_id]
-          ).catch(e => { if (e.code !== '42703') throw e; });
-        }
+        // Guarda a conta descoberta na configuração da clínica
+        await pool.query(
+          `UPDATE tenant_ai_settings SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb WHERE tenant_id = $2 AND provider = 'manus'`,
+          [JSON.stringify({ ad_account_id: adAccountId }), user.tenant_id]
+        ).catch(e => { if (e.code !== '42703') throw e; });
       } else {
         return res.status(400).json({ error: 'Nenhuma conta de anúncio encontrada. Verifique o token de acesso.' });
       }
@@ -15366,7 +17911,7 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
-import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
+import { registerClinicorp, reconciliationTick, hashWebhookSecret, generateWebhookSecret, WEBHOOK_SECRET_GRACE_HOURS, clinicorpBaseUrlPermitida, clinicorpBaseUrlSegura } from './clinicorp.mjs';
 import { registerLgpd, registrarAcessoProntuario } from './lgpd.mjs';
 registerClinicorp(app, pool, { verifyUser });
 // Direitos do titular (LGPD art. 18): exportar, excluir, anonimizar; log de acesso ao prontuário.
@@ -15383,6 +17928,21 @@ async function clinicorpUserOf(req) {
   return user;
 }
 
+// Alterar ou remover as credenciais e gerar o segredo do webhook: só admin da clínica.
+async function clinicorpAdminOf(req, res) {
+  try {
+    const { user } = await verifyAdmin(req);
+    return user;
+  } catch (e) {
+    if (e.message === 'Admin access required') {
+      res.status(403).json({ error: 'Apenas o administrador da clínica pode alterar a integração com a Clinicorp' });
+    } else {
+      res.status(401).json({ error: 'Unauthorized' });
+    }
+    return null;
+  }
+}
+
 app.get('/api/clinicorp/my-settings', async (req, res) => {
   let user;
   try { user = await clinicorpUserOf(req); }
@@ -15391,22 +17951,31 @@ app.get('/api/clinicorp/my-settings', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT enabled, subscriber_id, base_url,
               api_token IS NOT NULL AND api_token <> '' AS has_api_token,
-              webhook_secret IS NOT NULL AND webhook_secret <> '' AS has_webhook_secret,
-              CASE WHEN webhook_secret IS NOT NULL AND length(webhook_secret) >= 8
-                   THEN substring(webhook_secret from 1 for 4) || '…' || substring(webhook_secret from length(webhook_secret) - 3)
-                   ELSE '' END AS webhook_secret_preview,
+              webhook_secret_hash IS NOT NULL AS has_webhook_secret,
+              CASE WHEN webhook_secret_anterior_hash IS NOT NULL AND anterior_expira_em > NOW()
+                   THEN anterior_expira_em END AS previous_secret_expires_at,
+              CASE WHEN webhook_secret_hash IS NOT NULL THEN webhook_secret_legado_ate END AS legacy_secret_deadline,
               last_sync_at, last_sync_status, last_sync_error, sync_progress, updated_at
          FROM clinicorp_user_settings WHERE user_id = $1`,
       [user.id]
     );
     const s = rows[0] || {};
+    // Mesma regra do verifyAdmin, sem o aviso de segurança no log (a tela consulta isto em polling).
+    const canManage = Boolean(user.is_super_admin || user.role === 'admin') || (await pool.query(
+      'SELECT 1 FROM user_roles WHERE user_id = $1 AND role = $2', [user.id, 'admin']
+    ).then(r => r.rows.length > 0, () => false));
     res.json({
       enabled: s.enabled ?? false,
       subscriber_id: s.subscriber_id || '',
       base_url: s.base_url || CLINICORP_DEFAULT_BASE_URL,
       has_api_token: Boolean(s.has_api_token),
       has_webhook_secret: Boolean(s.has_webhook_secret),
-      webhook_secret_preview: s.webhook_secret_preview || '',
+      // O segredo não fica guardado em claro: a tela só mostra que existe.
+      webhook_secret_preview: s.has_webhook_secret ? '••••••••' : '',
+      previous_secret_expires_at: s.previous_secret_expires_at || null,
+      // Segredo antigo (escolhido à mão): vale até esta data; depois, é preciso gerar um novo.
+      legacy_secret_deadline: s.legacy_secret_deadline || null,
+      can_manage: canManage,
       last_sync_at: s.last_sync_at || null,
       last_sync_status: s.last_sync_status || null,
       last_sync_error: s.last_sync_error || null,
@@ -15416,14 +17985,13 @@ app.get('/api/clinicorp/my-settings', async (req, res) => {
     });
   } catch (e) {
     console.error('[clinicorp my-settings GET]', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Erro ao carregar as credenciais da Clinicorp' });
   }
 });
 
 app.put('/api/clinicorp/my-settings', async (req, res) => {
-  let user;
-  try { user = await clinicorpUserOf(req); }
-  catch { return res.status(401).json({ error: 'Unauthorized' }); }
+  const user = await clinicorpAdminOf(req, res);
+  if (!user) return;
   try {
     const { enabled, api_token, subscriber_id, webhook_secret, base_url } = req.body || {};
 
@@ -15434,56 +18002,94 @@ app.put('/api/clinicorp/my-settings', async (req, res) => {
       }
     }
     if (base_url !== undefined && base_url !== null && base_url !== '') {
-      try { new URL(base_url); } catch { return res.status(400).json({ error: 'base_url inválida' }); }
+      if (!clinicorpBaseUrlPermitida(base_url)) return res.status(400).json({ error: 'base_url inválida: use o endereço da API da Clinicorp (https://api.clinicorp.com/...)' });
     }
     if (api_token !== undefined && api_token !== '' && api_token !== null) {
       if (typeof api_token !== 'string' || api_token.length < 8 || api_token.length > 2048) {
         return res.status(400).json({ error: 'api_token inválido (8–2048 chars)' });
       }
     }
+    // O segredo do webhook é gerado só pelo servidor (POST /my-settings/rotate-secret).
     if (webhook_secret !== undefined && webhook_secret !== '' && webhook_secret !== null) {
-      if (typeof webhook_secret !== 'string' || webhook_secret.length < 8 || webhook_secret.length > 256) {
-        return res.status(400).json({ error: 'webhook_secret inválido (8–256 chars)' });
-      }
+      return res.status(400).json({ error: 'O segredo do webhook é gerado pelo sistema. Use "Gerar novo segredo".' });
     }
 
     await pool.query(
-      `INSERT INTO clinicorp_user_settings (user_id, enabled, api_token, subscriber_id, webhook_secret, base_url, updated_at)
-       VALUES ($1, COALESCE($2, FALSE), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), COALESCE(NULLIF($6, ''), '${CLINICORP_DEFAULT_BASE_URL}'), NOW())
+      `INSERT INTO clinicorp_user_settings (user_id, enabled, api_token, subscriber_id, base_url, updated_at)
+       VALUES ($1, COALESCE($2, FALSE), NULLIF($3, ''), NULLIF($4, ''), COALESCE(NULLIF($5, ''), '${CLINICORP_DEFAULT_BASE_URL}'), NOW())
        ON CONFLICT (user_id) DO UPDATE SET
          enabled = COALESCE($2, clinicorp_user_settings.enabled),
          api_token = COALESCE(NULLIF($3, ''), clinicorp_user_settings.api_token),
          subscriber_id = COALESCE(NULLIF($4, ''), clinicorp_user_settings.subscriber_id),
-         webhook_secret = COALESCE(NULLIF($5, ''), clinicorp_user_settings.webhook_secret),
-         base_url = COALESCE(NULLIF($6, ''), clinicorp_user_settings.base_url),
+         base_url = COALESCE(NULLIF($5, ''), clinicorp_user_settings.base_url),
          updated_at = NOW()`,
       [
         user.id,
         typeof enabled === 'boolean' ? enabled : null,
         typeof api_token === 'string' ? api_token.trim().replace(/^Bearer\s+/i, '') : '',
         typeof subscriber_id === 'string' ? subscriber_id.trim() : '',
-        webhook_secret ?? '',
         base_url ?? '',
       ]
     );
     res.json({ ok: true });
   } catch (e) {
-    // webhook_secret é usado para achar o tenant do webhook: precisa ser único.
-    if (e.code === '23505') return res.status(409).json({ error: 'Este webhook secret já está em uso. Gere outro.' });
     console.error('[clinicorp my-settings PUT]', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Erro ao salvar as credenciais da Clinicorp' });
+  }
+});
+
+// Gera um segredo novo para o webhook. Só o sha256 é gravado; o valor em claro
+// volta nesta resposta e não pode ser consultado depois. O segredo anterior
+// continua aceito por WEBHOOK_SECRET_GRACE_HOURS para dar tempo de trocar na Clinicorp.
+app.post('/api/clinicorp/my-settings/rotate-secret', async (req, res) => {
+  const user = await clinicorpAdminOf(req, res);
+  if (!user) return;
+  if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+  try {
+    // Colisão de 32 bytes aleatórios é improvável; o índice único garante e aqui só tentamos de novo.
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      const secret = generateWebhookSecret();
+      try {
+        await pool.query(
+          `INSERT INTO clinicorp_user_settings (user_id, enabled, base_url, webhook_secret_hash, updated_at)
+           VALUES ($1, FALSE, $3, $2, NOW())
+           ON CONFLICT (user_id) DO UPDATE SET
+             -- Só o hash atual vira o anterior. Segredo em claro sem hash (ex.: repetido
+             -- entre clínicas) não ganha prazo: poderia autenticar eventos de outra clínica.
+             -- Segredo legado já vencido também não volta a valer.
+             webhook_secret_anterior_hash = CASE
+               WHEN clinicorp_user_settings.webhook_secret_legado_ate IS NULL
+                 OR clinicorp_user_settings.webhook_secret_legado_ate > NOW()
+               THEN clinicorp_user_settings.webhook_secret_hash END,
+             anterior_expira_em = NOW() + make_interval(hours => $4::int),
+             webhook_secret_hash = EXCLUDED.webhook_secret_hash,
+             webhook_secret_legado_ate = NULL,
+             webhook_secret = NULL,
+             updated_at = NOW()`,
+          [user.id, hashWebhookSecret(secret), CLINICORP_DEFAULT_BASE_URL, WEBHOOK_SECRET_GRACE_HOURS]
+        );
+        res.set('Cache-Control', 'no-store');
+        return res.json({ ok: true, webhook_secret: secret, previous_valid_hours: WEBHOOK_SECRET_GRACE_HOURS });
+      } catch (e) {
+        if (e.code === '23505' && tentativa < 3) continue;
+        throw e;
+      }
+    }
+  } catch (e) {
+    console.error('[clinicorp rotate-secret]', e.message);
+    res.status(500).json({ error: 'Não foi possível gerar o segredo. Tente de novo.' });
   }
 });
 
 app.delete('/api/clinicorp/my-settings', async (req, res) => {
-  let user;
-  try { user = await clinicorpUserOf(req); }
-  catch { return res.status(401).json({ error: 'Unauthorized' }); }
+  const user = await clinicorpAdminOf(req, res);
+  if (!user) return;
   try {
     await pool.query('DELETE FROM clinicorp_user_settings WHERE user_id = $1', [user.id]);
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[clinicorp my-settings DELETE]', e.message);
+    res.status(500).json({ error: 'Erro ao remover as credenciais da Clinicorp' });
   }
 });
 
@@ -15520,14 +18126,15 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       const saved = rows[0] || {};
       api_token = api_token || saved.api_token;
       subscriber_id = subscriber_id || saved.subscriber_id;
-      base_url = base_url || saved.base_url;
+      // URL antiga salva fora da lista: usa o padrão, como o sync (só a URL enviada agora é recusada)
+      if (!base_url && saved.base_url) base_url = clinicorpBaseUrlSegura(saved.base_url);
     }
     base_url = base_url || CLINICORP_DEFAULT_BASE_URL;
     const emptyResult = { total_latency_ms: 0, base_url, subscriber_id: subscriber_id || '', results: [] };
 
     if (!api_token) return res.json({ ok: false, auth: 'invalid_token', error: 'Informe o API Token', ...emptyResult });
     if (!subscriber_id) return res.json({ ok: false, auth: 'invalid_token', error: 'Informe o Subscriber ID', ...emptyResult });
-    try { new URL(base_url); } catch { return res.status(400).json({ ok: false, error: 'URL base inválida' }); }
+    if (!clinicorpBaseUrlPermitida(base_url)) return res.status(400).json({ ok: false, error: 'URL base inválida: use o endereço da API da Clinicorp (https://api.clinicorp.com/...)' });
 
     const settings = { api_token, subscriber_id, base_url };
 
@@ -15681,7 +18288,7 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
 // A Clinicorp só aceita HTTP Basic (Usuário API : Token API); o token nunca
 // vai na URL.
 async function clinicorpFetchProbe(settings, pathName, opts = {}) {
-  const base = (settings.base_url || CLINICORP_DEFAULT_BASE_URL).replace(/\/$/, '');
+  const base = clinicorpBaseUrlSegura(settings.base_url).replace(/\/$/, '');
   const url = new URL(base + pathName);
   const apiUser = String(settings.subscriber_id || '').trim();
   const apiToken = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
@@ -15737,6 +18344,38 @@ const clinicorpProbeSleep = (ms) => new Promise(resolve => setTimeout(resolve, m
 // ═══════════════════════════════════════════════════════════════
 
 // Listar tipos de exame do tenant
+const EXAME_STATUS = ['novo', 'em_andamento', 'aguardando_laudo', 'concluido', 'entregue', 'cancelado'];
+const EXAME_PRIORIDADE = ['baixa', 'normal', 'alta', 'urgente'];
+const EXAME_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Resposta de erro do módulo de exames: 401 para sessão inválida, 500 genérico
+// (sem repassar a mensagem do banco) para o resto. Nada de dado do paciente no log.
+function responderErroExame(res, err, tag) {
+  if (err?.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+  console.error(`[${tag}]`, err?.message);
+  return res.status(500).json({ error: 'Erro interno ao processar o exame' });
+}
+
+// Confere status/prioridade/tipo enviados pelo cliente antes de gravar.
+// Devolve a mensagem para 400 ou null.
+async function validarCamposExame(tenantId, body) {
+  if (body.status !== undefined && body.status !== null && !EXAME_STATUS.includes(body.status)) return 'Status inválido';
+  if (body.prioridade !== undefined && body.prioridade !== null && !EXAME_PRIORIDADE.includes(body.prioridade)) return 'Prioridade inválida';
+  if (body.tipo_exame_id) {
+    if (!EXAME_UUID_RE.test(String(body.tipo_exame_id))) return 'Tipo de exame não encontrado';
+    const { rows } = await pool.query('SELECT 1 FROM exame_tipos WHERE id = $1 AND tenant_id = $2', [body.tipo_exame_id, tenantId]);
+    if (!rows.length) return 'Tipo de exame não encontrado';
+  }
+  if (body.valor !== undefined && body.valor !== null && body.valor !== '' && !(Number.isFinite(Number(body.valor)) && Number(body.valor) >= 0)) return 'Valor inválido';
+  for (const campo of ['data_realizacao', 'data_entrega']) {
+    const v = body[campo];
+    if (v !== undefined && v !== null && v !== '' && Number.isNaN(Date.parse(String(v)))) return 'Data inválida';
+  }
+  return validarReferenciasDoTenant(tenantId, {
+    pacienteId: body.paciente_id, dentistaId: body.dentista_solicitante_id,
+  });
+}
+
 app.get('/api/exame-tipos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -15750,7 +18389,7 @@ app.get('/api/exame-tipos', async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(401).json({ error: err.message });
+    responderErroExame(res, err, 'exame-tipos:list');
   }
 });
 
@@ -15760,6 +18399,9 @@ app.post('/api/exame-tipos', async (req, res) => {
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
     const { nome, categoria, codigo_tiss, preco, ativo } = req.body || {};
     if (!nome?.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
+    if (preco !== undefined && preco !== null && preco !== '' && !(Number.isFinite(Number(preco)) && Number(preco) >= 0)) {
+      return res.status(400).json({ error: 'Preço inválido' });
+    }
     const { rows } = await pool.query(
       `INSERT INTO exame_tipos (tenant_id, nome, categoria, codigo_tiss, preco, ativo)
        VALUES ($1,$2,$3,$4,$5,COALESCE($6,true))
@@ -15769,12 +18411,11 @@ app.post('/api/exame-tipos', async (req, res) => {
              preco=EXCLUDED.preco,
              ativo=EXCLUDED.ativo
        RETURNING *`,
-      [user.tenant_id, nome.trim(), categoria || null, codigo_tiss || null, preco ?? 0, ativo]
+      [user.tenant_id, nome.trim(), categoria || null, codigo_tiss || null, preco || 0, ativo]
     );
     res.json(rows[0]);
   } catch (err) {
-    console.error('[exame-tipos:post]', err.message);
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exame-tipos:post');
   }
 });
 
@@ -15782,13 +18423,16 @@ app.delete('/api/exame-tipos/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
-    await pool.query(
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Tipo de exame não encontrado' });
+    // Os exames já pedidos guardam o nome (tipo_nome) e ficam com tipo_exame_id NULL (FK SET NULL).
+    const { rowCount } = await pool.query(
       `DELETE FROM exame_tipos WHERE id=$1 AND tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
+    if (!rowCount) return res.status(404).json({ error: 'Tipo de exame não encontrado' });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exame-tipos:delete');
   }
 });
 
@@ -15798,6 +18442,11 @@ app.get('/api/exames', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json([]);
     const { status, paciente_id, q, from, to, terceirizado } = req.query;
+    if (paciente_id && !EXAME_UUID_RE.test(String(paciente_id))) return res.json([]);
+    if (status && !EXAME_STATUS.includes(String(status))) return res.status(400).json({ error: 'Status inválido' });
+    if ((from && Number.isNaN(Date.parse(String(from)))) || (to && Number.isNaN(Date.parse(String(to))))) {
+      return res.status(400).json({ error: 'Data inválida' });
+    }
     const params = [user.tenant_id];
     const where = ['e.tenant_id = $1'];
     if (status)       { params.push(status);       where.push(`e.status = $${params.length}`); }
@@ -15824,8 +18473,7 @@ app.get('/api/exames', async (req, res) => {
     registrarAcessoProntuario(pool, user, rows.map(r => r.paciente_id), 'exame');
     res.json(rows);
   } catch (err) {
-    console.error('[exames:list]', err.message);
-    res.status(401).json({ error: err.message });
+    responderErroExame(res, err, 'exames:list');
   }
 });
 
@@ -15842,7 +18490,7 @@ app.get('/api/exames/stats', async (req, res) => {
     for (const r of rows) { stats[r.status] = r.total; stats.total += r.total; }
     res.json(stats);
   } catch (err) {
-    res.status(401).json({ error: err.message });
+    responderErroExame(res, err, 'exames:stats');
   }
 });
 
@@ -15850,14 +18498,15 @@ app.post('/api/exames', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const body = req.body || {};
     const {
       paciente_id, dentista_solicitante_id, clinica_origem,
       tipo_exame_id, tipo_nome, prioridade, valor, modo_entrega,
       observacoes, terceirizado, fornecedor_terc, status
-    } = req.body || {};
+    } = body;
     if (!tipo_nome?.trim()) return res.status(400).json({ error: 'tipo_nome obrigatório' });
-    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_solicitante_id });
-    if (refErro) return res.status(400).json({ error: refErro });
+    const campoErro = await validarCamposExame(user.tenant_id, body);
+    if (campoErro) return res.status(400).json({ error: campoErro });
 
     // Gera código sequencial simples por tenant
     const { rows: [{ next_code }] } = await pool.query(
@@ -15878,14 +18527,13 @@ app.post('/api/exames', async (req, res) => {
         user.tenant_id, next_code,
         paciente_id || null, dentista_solicitante_id || null, clinica_origem || null,
         tipo_exame_id || null, tipo_nome.trim(),
-        status, prioridade, valor, modo_entrega || null,
+        status || null, prioridade || null, valor === '' ? null : valor, modo_entrega || null,
         observacoes || null, terceirizado, fornecedor_terc || null, user.id
       ]
     );
     res.json(rows[0]);
   } catch (err) {
-    console.error('[exames:create]', err.message);
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exames:create');
   }
 });
 
@@ -15893,18 +18541,30 @@ app.patch('/api/exames/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Exame não encontrado' });
+    const body = req.body || {};
     const allowed = ['status','prioridade','valor','modo_entrega','laudo_texto','arquivo_url',
                      'observacoes','terceirizado','fornecedor_terc','data_realizacao','data_entrega',
                      'paciente_id','dentista_solicitante_id','clinica_origem','tipo_exame_id','tipo_nome'];
+    // tipo_nome é NOT NULL: vazio apagaria o nome do exame (o banco recusaria com erro 500)
+    if (body.tipo_nome !== undefined && !String(body.tipo_nome ?? '').trim()) {
+      return res.status(400).json({ error: 'tipo_nome obrigatório' });
+    }
     const sets = []; const params = [];
     for (const k of allowed) {
-      if (req.body[k] !== undefined) { params.push(req.body[k]); sets.push(`${k}=$${params.length}`); }
+      if (body[k] !== undefined) {
+        // '' vira NULL nos campos opcionais (o banco recusaria '' em uuid/data/número)
+        const v = body[k] === '' ? null : body[k];
+        params.push(k === 'tipo_nome' ? String(v).trim() : v);
+        sets.push(`${k}=$${params.length}`);
+      }
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada a atualizar' });
-    const refErro = await validarReferenciasDoTenant(user.tenant_id, {
-      pacienteId: req.body.paciente_id, dentistaId: req.body.dentista_solicitante_id,
-    });
-    if (refErro) return res.status(400).json({ error: refErro });
+    for (const k of ['status', 'prioridade', 'terceirizado']) {
+      if (body[k] === null || body[k] === '') return res.status(400).json({ error: `${k} não pode ficar vazio` });
+    }
+    const campoErro = await validarCamposExame(user.tenant_id, body);
+    if (campoErro) return res.status(400).json({ error: campoErro });
     params.push(req.params.id, user.tenant_id);
     const { rows } = await pool.query(
       `UPDATE exames SET ${sets.join(', ')}
@@ -15915,8 +18575,7 @@ app.patch('/api/exames/:id', async (req, res) => {
     if (!rows[0]) return res.status(404).json({ error: 'Exame não encontrado' });
     res.json(rows[0]);
   } catch (err) {
-    console.error('[exames:patch]', err.message);
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exames:patch');
   }
 });
 
@@ -15924,25 +18583,41 @@ app.delete('/api/exames/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
-    await pool.query(
-      `DELETE FROM exames WHERE id=$1 AND tenant_id=$2`,
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Exame não encontrado' });
+    // Exame com laudo ou imagem é parte do prontuário (guarda mínima de 20 anos, Lei 13.787/2018):
+    // não é apagado; a clínica cancela o exame. Só pedidos sem resultado podem ser excluídos.
+    const { rows } = await pool.query(
+      `SELECT (COALESCE(btrim(laudo_texto), '') <> '' OR arquivo_url IS NOT NULL) AS tem_resultado
+         FROM exames WHERE id=$1 AND tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
+    if (!rows.length) return res.status(404).json({ error: 'Exame não encontrado' });
+    if (rows[0].tem_resultado) {
+      return res.status(409).json({ error: 'Este exame já tem laudo ou imagem e faz parte do prontuário. Em vez de excluir, mude o status para Cancelado.' });
+    }
+    const { rowCount } = await pool.query(
+      `DELETE FROM exames WHERE id=$1 AND tenant_id=$2
+          AND COALESCE(btrim(laudo_texto), '') = '' AND arquivo_url IS NULL`,
+      [req.params.id, user.tenant_id]
+    );
+    // Recebeu laudo/imagem entre a leitura e a exclusão: nada foi apagado
+    if (!rowCount) return res.status(409).json({ error: 'O exame mudou enquanto você excluía. Atualize a lista e tente de novo.' });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    responderErroExame(res, err, 'exames:delete');
   }
 });
+
 
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
 
 if (process.env.NODE_ENV !== 'test') {
-  const server = app.listen(PORT, async () => {
+  const server = app.listen(PORT, LISTEN_HOST, async () => {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
   console.log(`   Webhook URL: ${WEBHOOK_URL}`);
-  console.log(`   Clinicorp webhook: ${APP_URL}/api/webhook/clinicorp?user_api=<secret>`);
+  console.log(`   Clinicorp webhook: ${APP_URL}/api/webhook/clinicorp (header x-user-api)`);
 
   // ─── Auto-migration: ensure required columns/tables exist ───
   let checkedStatements = 0;
@@ -16126,6 +18801,66 @@ if (process.env.NODE_ENV !== 'test') {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
 
+      // ─── Exames (radiologia): tabelas base, depois de pacientes/dentistas (FKs). DDL igual ao de
+      // migration-schema-alinhamento.sql (#39): quem rodar primeiro cria, o outro vira no-op. ───
+      `CREATE TABLE IF NOT EXISTS exame_tipos (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id uuid NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+        nome text NOT NULL,
+        categoria text,
+        codigo_tiss text,
+        preco numeric(10,2) DEFAULT 0,
+        ativo boolean NOT NULL DEFAULT true,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (tenant_id, nome)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exame_tipos_tenant ON exame_tipos (tenant_id)`,
+      `CREATE TABLE IF NOT EXISTS exames (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id uuid NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+        codigo text,
+        paciente_id uuid REFERENCES pacientes(id) ON DELETE SET NULL,
+        dentista_solicitante_id uuid REFERENCES dentistas(id) ON DELETE SET NULL,
+        clinica_origem text,
+        tipo_exame_id uuid REFERENCES exame_tipos(id) ON DELETE SET NULL,
+        tipo_nome text NOT NULL,
+        status text NOT NULL DEFAULT 'novo'
+          CHECK (status IN ('novo','em_andamento','aguardando_laudo','concluido','entregue','cancelado')),
+        prioridade text NOT NULL DEFAULT 'normal'
+          CHECK (prioridade IN ('baixa','normal','alta','urgente')),
+        data_solicitacao timestamptz NOT NULL DEFAULT now(),
+        data_realizacao timestamptz,
+        data_entrega timestamptz,
+        valor numeric(10,2) DEFAULT 0,
+        modo_entrega text,
+        laudo_texto text,
+        arquivo_url text,
+        observacoes text,
+        terceirizado boolean NOT NULL DEFAULT false,
+        fornecedor_terc text,
+        created_by uuid REFERENCES profiles(id) ON DELETE SET NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_tenant ON exames (tenant_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_status ON exames (tenant_id, status)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_paciente ON exames (tenant_id, paciente_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_data_solic ON exames (tenant_id, data_solicitacao DESC)`,
+      // Função só é criada se faltar: se o deploy (postgres) já a criou, CREATE OR REPLACE
+      // pela API falharia ("must be owner") e geraria aviso em todo boot
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'exames_touch_updated_at') THEN
+           EXECUTE 'CREATE FUNCTION exames_touch_updated_at() RETURNS trigger AS $f$ BEGIN NEW.updated_at = now(); RETURN NEW; END; $f$ LANGUAGE plpgsql';
+         END IF;
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exames_updated' AND tgrelid = 'public.exames'::regclass) THEN
+           CREATE TRIGGER trg_exames_updated BEFORE UPDATE ON exames FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
+         END IF;
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exame_tipos_updated' AND tgrelid = 'public.exame_tipos'::regclass) THEN
+           CREATE TRIGGER trg_exame_tipos_updated BEFORE UPDATE ON exame_tipos FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
+         END IF;
+       END $$`,
+
       `CREATE TABLE IF NOT EXISTS agendamentos (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         paciente_id UUID REFERENCES pacientes(id) ON DELETE CASCADE,
@@ -16236,6 +18971,8 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS clinicorp_appointment_id TEXT`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT false`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS paciente_nome TEXT`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS dentista_nome TEXT`,
       `CREATE TABLE IF NOT EXISTS orcamentos (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         tenant_id UUID,
@@ -16248,11 +18985,23 @@ if (process.env.NODE_ENV !== 'test') {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
       `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS clinicorp_estimate_id TEXT`,
+      // B2/B3 (migration-schema-b2-b3.sql, Renata): só os ALTER simples, para o primeiro boot
+      // antes do deploy. O arquivo inteiro (blocos DO, catálogo, versões, reativação) vai no deploy.
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS itens JSONB DEFAULT '[]'::jsonb`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS valor_total NUMERIC(12,2) DEFAULT 0`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS desconto NUMERIC(12,2) DEFAULT 0`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS validade TIMESTAMPTZ`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS observacoes TEXT`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS forma_pagamento TEXT`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS parcelas INTEGER DEFAULT 1`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS titulo TEXT`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS print_config JSONB`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS odontograma_snapshot JSONB`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS clinicorp_patient_id TEXT`,
       `ALTER TABLE clinicorp_financial_entries ADD COLUMN IF NOT EXISTS tenant_id UUID`,
       `ALTER TABLE clinicorp_monthly_summary ADD COLUMN IF NOT EXISTS tenant_id UUID`,
-      `UPDATE clinicorp_financial_entries SET tenant_id = (SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1) WHERE tenant_id IS NULL`,
-      `UPDATE clinicorp_monthly_summary SET tenant_id = (SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1) WHERE tenant_id IS NULL`,
+      // (Removido 2026-11-07) UPDATE ... SET tenant_id = <clínica do admin mais antigo> WHERE tenant_id IS NULL:
+      // a cada boot dava o financeiro sem dono para uma clínica qualquer.
       `ALTER TABLE clinicorp_monthly_summary DROP CONSTRAINT IF EXISTS clinicorp_monthly_summary_source_period_month_business_id_key`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_clinicorp_monthly_summary_tenant_period ON clinicorp_monthly_summary(source, period_month, business_id, tenant_id)`,
 
@@ -16293,7 +19042,9 @@ if (process.env.NODE_ENV !== 'test') {
       } catch (migErr) {
         // 42701 = column already exists, 42P07 = relation already exists — both are fine
         if (!['42701', '42P07', '42723'].includes(migErr?.code)) {
-          console.warn(`⚠️ Auto-migration warning on statement ${checkedStatements}: ${migErr.message.slice(0, 120)}`);
+          // Coluna que não foi criada quebra as rotas que a usam (ex.: INSERT da agenda): é erro, não aviso.
+          const log = /\bADD COLUMN\b/i.test(sql) ? console.error : console.warn;
+          log(`⚠️ Auto-migration ${log === console.error ? 'error' : 'warning'} on statement ${checkedStatements}: ${migErr.message.slice(0, 120)}`);
         }
       }
     }
@@ -16329,6 +19080,14 @@ if (process.env.NODE_ENV !== 'test') {
   // (o intervalo real entre mensagens é controlado por número dentro da fila)
   await asSystemJob(ensureWhatsAppQueueSchema)();
   await asSystemJob(ensureTenantConfigSchema)();
+  await asSystemJob(ensureWaitlistSchema)();
+  await asSystemJob(ensureWhatsAppHealthSchema)();
+  await asSystemJob(ensureWhatsAppChannelsSchema)();
+  asSystemJob(checkWhatsAppHealth)();
+  setInterval(asSystemJob(checkWhatsAppHealth), WA_HEALTH_INTERVAL_MS);
+  // Dedupe de webhooks (whatsapp_webhook_events): guarda 8 dias (a Meta reentrega por 7).
+  setInterval(asSystemJob(() => pruneWebhookEvents(pool)), 6 * 60 * 60 * 1000);
+  console.log(`   🩺 Saúde do WhatsApp: verificação a cada ${WA_HEALTH_INTERVAL_MS / 60_000} min`);
   asSystemJob(processAutomationJobs)();
   automationSchedulerInterval = setInterval(asSystemJob(processAutomationJobs), 5 * 1000);
   console.log('   🤖 Fila anti-bloqueio do WhatsApp ativa (ciclo de 5s)');
@@ -16366,6 +19125,19 @@ if (process.env.NODE_ENV !== 'test') {
 
 export { app, pool };
 // Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
-export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation };
+export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation, processAppointmentReminders };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
+export { buildChatPushPayload };
 
+export { processCampaignScheduler, campaignPeriodStatus, processAutomationJobs as processAutomationJobsForCampaignTests };
+export { checkWhatsAppHealth, processAutomationJobs as processAutomationJobsForHealthTests };
+export { processAutomationJobs };
+// Mídia na fila (tests/whatsapp-openwa-midia.test.js): enfileirar e assinar como o servidor.
+export { enqueueWhatsAppJob, signWaJobMedia, UPLOADS_DIR as WA_UPLOADS_DIR_FOR_TESTS };
+export function resetWhatsAppQueueStateForTests() {
+  waPacing.clear(); waOutcomes.clear(); waOpenInstancesCache = { at: 0, names: new Set() };
+  waChannels.invalidate();
+}
+export { parseAppointmentReminderReply };
+export { parseWaitlistOfferReply };
+export { isWhatsAppOptOutText };
