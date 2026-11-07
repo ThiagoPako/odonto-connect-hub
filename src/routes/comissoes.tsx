@@ -152,7 +152,7 @@ function ComissoesPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Gestão de Comissões" />
-      <main className="flex-1 p-4 sm:p-6 overflow-auto space-y-5">
+      <div className="flex-1 p-4 sm:p-6 overflow-auto space-y-5">
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 animate-slide-up" style={{ animationFillMode: 'both' }}>
           <KpiBox icon={DollarSign} label="Total Comissões" value={brl(totalAll)} color="text-primary" />
@@ -164,7 +164,7 @@ function ComissoesPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Dentist cards */}
           {/* No celular/tablet o filtro "Profissional" da barra substitui esta lista */}
-          <div className="hidden lg:block lg:col-span-4 space-y-3">
+          <div className="hidden lg:block lg:col-span-4 xl:col-span-3 space-y-3">
             <h3 className="text-sm font-semibold text-foreground">Profissionais</h3>
             <button onClick={() => setSelectedDentista(null)}
               className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all text-xs font-medium ${!selectedDentista ? "bg-primary/5 border-primary/30 text-primary" : "border-transparent hover:bg-muted text-muted-foreground"}`}>
@@ -198,8 +198,10 @@ function ComissoesPage() {
             {dentistas.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhum dentista cadastrado</p>}
           </div>
 
-          {/* Entries table */}
-          <div className="lg:col-span-8 space-y-3">
+          {/* Entries table — a tabela só aparece quando ESTE bloco tem largura para as 8 colunas
+              (container query, não a tela: com o menu lateral de 256 px, 1280 px de tela davam ~640 px
+              aqui e a coluna "Ações" ficava fora da vista). Abaixo disso, cartões. */}
+          <div className="@container lg:col-span-8 xl:col-span-9 min-w-0 space-y-3">
             <h3 className="text-sm font-semibold text-foreground break-words">
               {selectedDentista ? `Comissões — ${dentistas.find(d => d.id === selectedDentista)?.nome ?? "profissional"}` : "Todas as comissões"}
             </h3>
@@ -218,8 +220,8 @@ function ComissoesPage() {
               }
             />
 
-            {/* Celular: cartões */}
-            <ul className="xl:hidden space-y-2">
+            {/* Bloco estreito (celular, tablet, notebook com menu aberto): cartões */}
+            <ul className="@3xl:hidden space-y-2">
               {filteredEntries.map(entry => {
                 const cfg = statusCfg[entry.status] || statusCfg.pendente;
                 return (
@@ -263,19 +265,19 @@ function ComissoesPage() {
               )}
             </ul>
 
-            <div className="hidden xl:block bg-card rounded-xl border border-border overflow-hidden">
+            <div className="hidden @3xl:block bg-card rounded-xl border border-border overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Profissional</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Paciente</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Procedimento</th>
-                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">%</th>
-                      <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Comissão</th>
-                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Data</th>
-                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Status</th>
-                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Ações</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-muted-foreground">Profissional</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-muted-foreground">Paciente</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-muted-foreground">Procedimento</th>
+                      <th className="text-center px-3 py-2.5 font-medium text-muted-foreground">%</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-muted-foreground">Comissão</th>
+                      <th className="text-center px-3 py-2.5 font-medium text-muted-foreground">Data</th>
+                      <th className="text-center px-3 py-2.5 font-medium text-muted-foreground">Status</th>
+                      <th className="text-center px-3 py-2.5 font-medium text-muted-foreground">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -283,20 +285,20 @@ function ComissoesPage() {
                       const cfg = statusCfg[entry.status] || statusCfg.pendente;
                       return (
                         <tr key={entry.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                          <td className="px-4 py-2.5 text-foreground font-medium">{entry.dentista_nome}</td>
-                          <td className="px-4 py-2.5 text-foreground">{entry.paciente_nome}</td>
-                          <td className="px-4 py-2.5 text-muted-foreground">{entry.procedimento}</td>
-                          <td className="px-4 py-2.5 text-center text-muted-foreground">{entry.percentual}%</td>
-                          <td className="px-4 py-2.5 text-right font-bold text-foreground">
+                          <td className="px-3 py-2.5 text-foreground font-medium">{entry.dentista_nome}</td>
+                          <td className="px-3 py-2.5 text-foreground">{entry.paciente_nome}</td>
+                          <td className="px-3 py-2.5 text-muted-foreground">{entry.procedimento}</td>
+                          <td className="px-3 py-2.5 text-center text-muted-foreground">{entry.percentual}%</td>
+                          <td className="px-3 py-2.5 text-right font-bold text-foreground whitespace-nowrap tabular-nums">
                             R$ {entry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                           </td>
-                          <td className="px-4 py-2.5 text-center text-muted-foreground">{entry.data}</td>
-                          <td className="px-4 py-2.5 text-center">
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color}`}>
+                          <td className="px-3 py-2.5 text-center text-muted-foreground whitespace-nowrap tabular-nums">{entry.data}</td>
+                          <td className="px-3 py-2.5 text-center">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap ${cfg.color}`}>
                               <cfg.icon className="h-2.5 w-2.5" /> {cfg.label}
                             </span>
                           </td>
-                          <td className="px-4 py-2.5 text-center">
+                          <td className="px-3 py-2.5 text-center">
                             <div className="flex flex-wrap items-center justify-center gap-1">
                               {entry.status === "pendente" && (
                                 <button onClick={() => setStatusTarget({ entry, status: "aprovado" })}
@@ -391,7 +393,7 @@ function ComissoesPage() {
             </div>
           </div>
         )}
-      </main>
+      </div>
     </div>
   );
 }

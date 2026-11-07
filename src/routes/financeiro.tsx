@@ -314,7 +314,7 @@ function FinanceiroPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Financeiro" />
-      <main className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto">
         {/* Tabs */}
         <div className="border-b border-border bg-card/80 sticky top-0 z-30 backdrop-blur-md">
           <div role="tablist" aria-label="Seções do financeiro" className="flex flex-wrap gap-x-1 px-3 sm:px-6">
@@ -408,7 +408,7 @@ function FinanceiroPage() {
           )}
           {activeTab === "dre" && <TabDRE movements={movements} />}
         </div>
-      </main>
+      </div>
     </div>
   );
 }
