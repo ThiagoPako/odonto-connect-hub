@@ -18061,10 +18061,8 @@ app.get('/api/clinicorp/my-settings', async (req, res) => {
       [user.id]
     );
     const s = rows[0] || {};
-    // Mesma regra do verifyAdmin, sem o aviso de segurança no log (a tela consulta isto em polling).
-    const canManage = Boolean(user.is_super_admin || user.role === 'admin') || (await pool.query(
-      'SELECT 1 FROM user_roles WHERE user_id = $1 AND role = $2', [user.id, 'admin']
-    ).then(r => r.rows.length > 0, () => false));
+    // Mesma regra do verifyAdmin (papel do banco na clínica, matriz #86), sem log (a tela consulta em polling).
+    const canManage = (await papelAtual(user).catch(() => null)) === 'admin';
     res.json({
       enabled: s.enabled ?? false,
       subscriber_id: s.subscriber_id || '',

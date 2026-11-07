@@ -6,6 +6,7 @@
 // SQL real (índice único, NOW()) é conferida à parte num Postgres local.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { assinarComPapel } from './helpers/papel-do-jwt.mjs';
 import { createHash } from 'crypto';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
@@ -29,7 +30,7 @@ describe('Clinicorp — segredo do webhook', () => {
   const atendenteA = '55555555-5555-5555-5555-555555555555';
   const tenantDe = { [adminA]: tenantA, [atendenteA]: tenantA, [adminB]: tenantB };
 
-  const token = (sub, extra = {}) => jwt.sign({
+  const token = (sub, extra = {}) => assinarComPapel({
     sub, email: `${sub.slice(0, 4)}@clinica.com`, role: 'admin',
     tenant_id: tenantDe[sub], is_super_admin: false, ...extra,
   }, JWT_SECRET);
