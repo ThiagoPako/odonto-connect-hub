@@ -106,7 +106,7 @@ beforeEach(() => {
       return Promise.resolve(pacientes[params[0]]?.tenant === params[1] ? { rows: [{}], rowCount: 1 } : vazio);
     }
     if (/FROM consentimentos_pacientes/.test(text)) {
-      return Promise.resolve(opcoes.consentimento && pacientes[params[1]]?.tenant === params[0]
+      return Promise.resolve(opcoes.consentimento && [].concat(params[1]).some(id => pacientes[id]?.tenant === params[0])
         ? { rows: [{ id: 'c1', tipo: params[2], versao: '2.0', decisao: 'autorizo' }], rowCount: 1 } : vazio);
     }
     if (/FROM dentistas\s+WHERE tenant_id = \$1 AND user_id = \$2::uuid/.test(text)) {

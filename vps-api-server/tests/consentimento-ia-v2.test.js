@@ -18,6 +18,7 @@ const tenantA = '11111111-1111-1111-1111-111111111111';
 const tenantB = '22222222-2222-2222-2222-222222222222';
 const tenantC = '55555555-5555-5555-5555-555555555555'; // clínica sem encarregado (o cache de tenant_settings é por clínica)
 const pacId = '33333333-3333-3333-3333-333333333333';
+const aptSemPac = '77777777-7777-4777-8777-777777777777';
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 const token = (extra = {}) => jwt.sign({
   sub: '44444444-4444-4444-4444-444444444444', email: 'dentista@clinica-a.com',
@@ -53,12 +54,44 @@ beforeEach(() => {
     if (/FROM pacientes WHERE id::text = \$1 AND tenant_id = \$2/.test(t)) {
       return ok([tenantA, tenantC].includes(params[1]) && params[0] === pacId && db.paciente ? [db.paciente] : []);
     }
+    // agendamento sem paciente (aptSemPac) que depois foi vinculado a pacId (db.vinculado)
+    if (/SELECT paciente_id::text AS paciente_id FROM agendamentos WHERE id::text = \$1 AND tenant_id = \$2/.test(t)) {
+      return ok(db.vinculado && params[0] === aptSemPac && params[1] === tenantA ? [{ paciente_id: pacId }] : []);
+    }
+    if (/SELECT id::text AS id FROM agendamentos WHERE tenant_id = \$1 AND paciente_id::text = \$2/.test(t)) {
+      return ok(db.vinculado && params[0] === tenantA && params[1] === pacId ? [{ id: aptSemPac }] : []);
+    }
     if (/FROM agendamentos WHERE id::text/.test(t)) return ok([]);
+    // Consentimentos guardados por titular (db.porId): leitura, alvo da revogação e revogação.
+    if (db.porId) {
+      if (/SELECT paciente_id, tipo FROM consentimentos_pacientes WHERE id::text = \$1 AND tenant_id = \$2/.test(t)) {
+        const c = db.porId.find((x) => x.id === params[0] && params[1] === tenantA);
+        return ok(c ? [{ paciente_id: c.paciente_id, tipo: c.tipo }] : []);
+      }
+      if (/^\s*UPDATE consentimentos_pacientes/.test(t)) {
+        // formato antigo (revoga só o paciente_id do alvo) e novo (lista de titulares)
+        let alvos;
+        if (/FROM consentimentos_pacientes alvo/.test(t)) {
+          const a = db.porId.find((x) => x.id === params[0]);
+          alvos = db.porId.filter((x) => a && x.paciente_id === a.paciente_id && x.tipo === a.tipo);
+        } else {
+          alvos = db.porId.filter((x) => params[0] === tenantA && params[1].includes(x.paciente_id) && x.tipo === params[4]);
+        }
+        alvos = alvos.filter((x) => !x.revogado);
+        alvos.forEach((x) => { x.revogado = true; });
+        return Promise.resolve({ rows: [], rowCount: alvos.length });
+      }
+      if (/FROM consentimentos_pacientes/.test(t)) {
+        if (params[0] !== tenantA) return ok([]);
+        const ids = [].concat(params[1]);
+        return ok(db.porId.filter((x) => ids.includes(x.paciente_id) && !x.revogado).sort((a, b) => b.aceito_em - a.aceito_em));
+      }
+    }
     // #79: o relatório exige paciente da clínica e o dentista do atendimento
     if (/SELECT 1 FROM pacientes WHERE id = \$1::uuid AND tenant_id = \$2/.test(t)) {
       return ok(params[0] === pacId && params[1] === tenantA ? [{ '?column?': 1 }] : []);
     }
-    if (/FROM dentistas\s+WHERE tenant_id = \$1 AND LOWER\(email\)/.test(t)) return ok([{ id: 'd1', nome: 'Dra', cro: 'CRO 1' }]);
+    if (/FROM dentistas\s+WHERE tenant_id = \$1 AND user_id = \$2::uuid/.test(t)) return ok([{ id: 'd1', nome: 'Dra', cro: 'CRO 1' }]);
     if (/SELECT nome, cnpj FROM tenants/.test(t)) return ok([{ nome: 'Clínica Sorriso', cnpj: '12.345.678/0001-90' }]);
     if (/FROM tenant_settings/.test(t)) {
       if (params[1] === 'lgpd_encarregado') return ok(params[0] === tenantA && db.encarregado ? [{ value: db.encarregado }] : []);
@@ -227,6 +260,15 @@ describe('POST /api/pacientes/:id/consentimentos', () => {
     expect(insert().params[6]).toBe('nao_autorizo');
   });
 
+  test('IP da prova vem de req.ip (trust proxy), não do X-Forwarded-For bruto', async () => {
+    // o 1º valor é forjável pelo cliente; o nginx acrescenta o IP real no fim
+    const res = await registrar(adulto).set('X-Forwarded-For', '6.6.6.6, 203.0.113.9');
+    expect(res.status).toBe(200);
+    expect(insert().params[18]).toBe('203.0.113.9');
+    const assin = sqlLog.find((q) => /INSERT INTO assinaturas_eletronicas/.test(q.text));
+    expect(assin.params[3]).toBe('203.0.113.9');
+  });
+
   test('sem decisão → 400', async () => {
     const res = await registrar({ assinante_tipo: 'paciente', assinante_nome: 'Ana', assinatura: { base64: PNG } });
     expect(res.status).toBe(400);
@@ -304,12 +346,54 @@ describe('rotas que mandam dado do paciente à IA exigem consentimento v2.0', ()
     expect(sqlLog.some((q) => /FROM consentimentos_pacientes/.test(q.text))).toBe(false);
   });
 
-  test('revogar desativa todas as linhas ativas do paciente e tipo', async () => {
-    await auth(request(app).post('/api/consentimentos/c0/revogar')).send({ canal: 'recepcao' });
-    const up = sqlLog.find((q) => /UPDATE consentimentos_pacientes c SET revogado_em/.test(q.text));
-    expect(up.text).toMatch(/c\.paciente_id = alvo\.paciente_id AND c\.tipo = alvo\.tipo/);
-    expect(up.text).toMatch(/alvo\.tenant_id = \$2/);
-    expect(up.params).toEqual(['c0', tenantA, '44444444-4444-4444-4444-444444444444', 'recepcao']);
+  const consent = (id, paciente_id, decisao = 'autorizo', t = 1) =>
+    ({ id, paciente_id, tipo: 'gravacao_transcricao_ia', versao: '2.0', decisao, aceito_em: t });
+
+  test('revogar desativa todas as linhas ativas do paciente e tipo, na clínica do usuário', async () => {
+    db.porId = [consent('c0', pacId, 'autorizo', 2), consent('c1', pacId, 'autorizo', 1)];
+    const res = await auth(request(app).post('/api/consentimentos/c0/revogar')).send({ canal: 'recepcao' });
+    expect(res.body.success).toBe(true);
+    expect(db.porId.every((c) => c.revogado)).toBe(true);
+    const up = sqlLog.find((q) => /UPDATE consentimentos_pacientes/.test(q.text));
+    expect(up.text).toMatch(/tenant_id = \$1 AND paciente_id = ANY\(\$2::text\[\]\) AND tipo = \$5/);
+    expect(up.params[0]).toBe(tenantA);
+    expect(up.params.slice(2, 5)).toEqual(['44444444-4444-4444-4444-444444444444', 'recepcao', 'gravacao_transcricao_ia']);
+  });
+
+  test('consentimento de outra clínica: não revoga nada', async () => {
+    db.porId = [consent('c0', pacId)];
+    const res = await auth(request(app).post('/api/consentimentos/c0/revogar'), token({ tenant_id: tenantB })).send({});
+    expect(res.body.success).toBe(false);
+    expect(db.porId[0].revogado).toBeUndefined();
+  });
+
+  test('consentimento gravado no agendamento sem paciente: depois de vincular e revogar, transcribe é barrado', async () => {
+    // autorizo gravado no id do agendamento; depois o agendamento ganha o paciente, que autoriza e revoga
+    db.porId = [consent('cAg', aptSemPac, 'autorizo', 1), consent('cPac', pacId, 'autorizo', 2)];
+    db.vinculado = true;
+    await auth(request(app).post('/api/consentimentos/cPac/revogar')).send({ canal: 'recepcao' });
+    expect(db.porId.find((c) => c.id === 'cAg').revogado).toBe(true);
+    const res = await auth(request(app).post(`/api/ai/transcribe?paciente_id=${aptSemPac}`))
+      .set('Content-Type', 'audio/webm').send(Buffer.from('x'));
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('CONSENT_REQUIRED');
+  });
+
+  test('recusa registrada no paciente depois de vincular anula o "autorizo" gravado no agendamento', async () => {
+    db.porId = [consent('cAg', aptSemPac, 'autorizo', 1), consent('cPac', pacId, 'nao_autorizo', 2)];
+    db.vinculado = true;
+    const res = await auth(request(app).post(`/api/ai/transcribe?paciente_id=${aptSemPac}`))
+      .set('Content-Type', 'audio/webm').send(Buffer.from('x'));
+    expect(res.status).toBe(403);
+    const q = sqlLog.find((x) => /FROM consentimentos_pacientes/.test(x.text));
+    expect(q.params[1]).toEqual([aptSemPac, pacId]);
+  });
+
+  test('agendamento sem paciente vinculado continua usando só o próprio consentimento', async () => {
+    db.porId = [consent('cAg', aptSemPac, 'autorizo', 1)];
+    const res = await auth(request(app).post(`/api/ai/transcribe?paciente_id=${aptSemPac}`))
+      .set('Content-Type', 'audio/webm').send(Buffer.from('x'));
+    expect(res.status).toBe(400); // passou do consentimento; para na OpenAI não configurada
   });
 });
 

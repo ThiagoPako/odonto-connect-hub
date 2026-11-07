@@ -16880,14 +16880,23 @@ const CONSENT_ADMIN_KEY_ENCARREGADO = 'lgpd_encarregado';
 // Consentimento que AUTORIZA hoje: não revogado, decisão "autorizo" e versão >= mínima.
 // Versões antigas (1.0) não cobrem o envio do relatório à OpenAI nem a retenção no provedor.
 async function findActiveConsent(tenantId, pacienteId, tipo) {
+  // Consentimento gravado no id do agendamento (sem paciente vinculado na hora): depois de
+  // vincular, vale também a decisão registrada no paciente (a mais recente das duas ganha), para
+  // que uma recusa ou revogação no paciente alcance o que foi gravado no agendamento.
+  const ids = [String(pacienteId)];
+  const { rows: ag } = await pool.query(
+    'SELECT paciente_id::text AS paciente_id FROM agendamentos WHERE id::text = $1 AND tenant_id = $2 AND paciente_id IS NOT NULL LIMIT 1',
+    [String(pacienteId), tenantId]
+  );
+  if (ag[0]?.paciente_id && ag[0].paciente_id !== ids[0]) ids.push(ag[0].paciente_id);
   // Coluna nova ainda não criada (primeiros segundos do boot, 42703): ninguém está autorizado —
   // bloqueia a gravação em vez de liberar com base em registro antigo.
   const { rows } = await pool.query(
     `SELECT id, tipo, versao, aceito_em, registrado_por_email, decisao, assinante_nome, assinante_tipo
        FROM consentimentos_pacientes
-      WHERE tenant_id = $1 AND paciente_id = $2 AND tipo = $3 AND revogado_em IS NULL
+      WHERE tenant_id = $1 AND paciente_id = ANY($2::text[]) AND tipo = $3 AND revogado_em IS NULL
       ORDER BY aceito_em DESC LIMIT 20`,
-    [tenantId, String(pacienteId), tipo]
+    [tenantId, ids, tipo]
   ).catch((err) => { if (err.code === '42703') return { rows: [] }; throw err; });
   // Vale a decisão mais recente na versão atual: um "não autorizo" posterior anula um "autorizo".
   const atual = rows.find((r) => versaoMaiorOuIgual(r.versao, CONSENT_VERSAO_MINIMA));
@@ -17243,7 +17252,8 @@ app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
       }
     }
 
-    const ip = req.headers['x-forwarded-for'] || req.ip || null;
+    // IP da prova: req.ip com trust proxy (clientIp), nunca o X-Forwarded-For bruto (forjável).
+    const ip = clientIp(req);
     const ua = req.headers['user-agent'] || null;
     let assinaturaId = null;
     if (assinaturaBase64) {
@@ -17286,15 +17296,30 @@ app.post('/api/consentimentos/:id/revogar', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
     const canal = ['recepcao', 'whatsapp', 'dentista', 'outro'].includes(req.body?.canal) ? req.body.canal : 'outro';
-    // Revoga TODAS as linhas ativas do mesmo paciente e tipo (não só a indicada): senão um
-    // "autorizo" mais antigo voltaria a valer depois da revogação.
+    const { rows: alvo } = await pool.query(
+      'SELECT paciente_id, tipo FROM consentimentos_pacientes WHERE id::text = $1 AND tenant_id = $2 LIMIT 1',
+      [String(req.params.id), user.tenant_id]
+    );
+    if (!alvo[0]) return res.json({ success: false });
+    // Titular: o paciente. Se o consentimento foi gravado no id de um agendamento (sem paciente na
+    // hora) que depois foi vinculado, o titular é o paciente desse agendamento.
+    const { rows: ag } = await pool.query(
+      'SELECT paciente_id::text AS paciente_id FROM agendamentos WHERE id::text = $1 AND tenant_id = $2 AND paciente_id IS NOT NULL LIMIT 1',
+      [String(alvo[0].paciente_id), user.tenant_id]
+    );
+    const titular = ag[0]?.paciente_id || String(alvo[0].paciente_id);
+    // Consentimentos gravados nos agendamentos desse paciente também são dele (LGPD art. 8º §5º).
+    const { rows: ags } = await pool.query(
+      'SELECT id::text AS id FROM agendamentos WHERE tenant_id = $1 AND paciente_id::text = $2',
+      [user.tenant_id, titular]
+    );
+    const ids = [...new Set([String(alvo[0].paciente_id), titular, ...ags.map((a) => a.id)])];
+    // Revoga TODAS as linhas ativas do titular e tipo (não só a indicada): senão um "autorizo"
+    // mais antigo, ou gravado no agendamento, voltaria a valer depois da revogação.
     const { rowCount } = await pool.query(
-      `UPDATE consentimentos_pacientes c SET revogado_em = NOW(), revogado_por = $3, revogacao_canal = $4
-         FROM consentimentos_pacientes alvo
-        WHERE alvo.id = $1 AND alvo.tenant_id = $2
-          AND c.tenant_id = alvo.tenant_id AND c.paciente_id = alvo.paciente_id AND c.tipo = alvo.tipo
-          AND c.revogado_em IS NULL`,
-      [req.params.id, user.tenant_id, user.id || null, canal]
+      `UPDATE consentimentos_pacientes SET revogado_em = NOW(), revogado_por = $3, revogacao_canal = $4
+        WHERE tenant_id = $1 AND paciente_id = ANY($2::text[]) AND tipo = $5 AND revogado_em IS NULL`,
+      [user.tenant_id, ids, user.id || null, canal, alvo[0].tipo]
     );
     res.json({ success: rowCount > 0 });
   } catch (err) { consentError(res, err, 'revogação'); }
