@@ -722,8 +722,8 @@ function ConsultaPage() {
                                 {apt.patientInitials}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-foreground truncate">{apt.patientName}</p>
-                                <p className="text-[11px] text-muted-foreground truncate">{apt.procedure}</p>
+                                <p className="text-sm font-medium text-foreground break-words">{apt.patientName}</p>
+                                <p className="text-[11px] text-muted-foreground break-words">{apt.procedure}</p>
                               </div>
                             </div>
                             <div className="flex items-center justify-between mt-2">
@@ -782,13 +782,13 @@ function ConsultaPage() {
                                 </span>
                               </div>
                               {c.procedimento && (
-                                <p className="text-[10px] text-primary font-medium truncate">{c.procedimento}</p>
+                                <p className="text-[10px] text-primary font-medium break-words">{c.procedimento}</p>
                               )}
                               {c.queixa_principal && (
-                                <p className="text-[10px] text-muted-foreground truncate mt-0.5">Queixa: {c.queixa_principal}</p>
+                                <p className="text-[10px] text-muted-foreground break-words mt-0.5">Queixa: {c.queixa_principal}</p>
                               )}
                               {c.dente_regiao && (
-                                <p className="text-[10px] text-muted-foreground truncate">Dente: {c.dente_regiao}</p>
+                                <p className="text-[10px] text-muted-foreground break-words">Dente: {c.dente_regiao}</p>
                               )}
                               {c.dentist_name && (
                                 <p className="text-[9px] text-muted-foreground/70 mt-1">{c.dentist_name}</p>
@@ -1289,7 +1289,7 @@ function ConsultaPage() {
                                             D{job.delay_days}
                                           </div>
                                           <div className="flex-1 min-w-0">
-                                            <p className="text-foreground truncate">{job.message}</p>
+                                            <p className="text-foreground truncate" title={job.message}>{job.message}</p>
                                             <p className="text-[10px] text-muted-foreground">
                                               Envio: {new Date(job.scheduled_at).toLocaleDateString('pt-BR')} às {new Date(job.scheduled_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                             </p>

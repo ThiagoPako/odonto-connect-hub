@@ -501,7 +501,7 @@ export function NovoAgendamentoModal({
                   Como conheceu?
                 </Label>
                 <Select value={comoConheceu || "_none"} onValueChange={(v) => setComoConheceu(v === "_none" ? "" : v)}>
-                  <SelectTrigger className="h-8">
+                  <SelectTrigger className="min-h-0 h-8">
                     <SelectValue placeholder="Origem do paciente" />
                   </SelectTrigger>
                   <SelectContent>

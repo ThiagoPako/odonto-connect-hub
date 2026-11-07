@@ -1,4 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { pacientesApi, type HistoricoConsulta } from "@/lib/vpsApi";
@@ -33,15 +35,17 @@ import {
   Save,
   Loader2,
   Trash2,
-  Filter,
-  ChevronDown,
-  RotateCcw,
 } from "lucide-react";
 
+// Na URL só vão filtros NÃO identificáveis (convênio, sexo). A busca por nome/CPF/telefone fica só na memória (LGPD).
+type PacientesSearch = { pacienteId?: string; convenio?: string; sexo?: string };
 export const Route = createFileRoute("/pacientes")({
-  validateSearch: (search: Record<string, unknown>): { pacienteId?: string } => {
-    const id = search.pacienteId;
-    return typeof id === "string" && id.length > 0 ? { pacienteId: id } : {};
+  validateSearch: (search: Record<string, unknown>): PacientesSearch => {
+    const out: PacientesSearch = {};
+    if (typeof search.pacienteId === "string" && search.pacienteId) out.pacienteId = search.pacienteId;
+    if (typeof search.convenio === "string" && search.convenio) out.convenio = search.convenio;
+    if (typeof search.sexo === "string" && ["masculino", "feminino", "outro"].includes(search.sexo)) out.sexo = search.sexo;
+    return out;
   },
   ssr: false,
   component: PacientesPage,
@@ -132,6 +136,19 @@ function calcularIdade(dataNasc: string | null): number | null {
   return idade;
 }
 
+function semAcento(t: string) {
+  return t.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/** "M"/"masculino" → "masculino"; "F"/"feminino" → "feminino"; outro valor → "outro"; vazio → "". */
+function normalizarSexo(sexo: string | null | undefined): "" | "masculino" | "feminino" | "outro" {
+  const v = (sexo ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "m" || v.startsWith("masc")) return "masculino";
+  if (v === "f" || v.startsWith("fem")) return "feminino";
+  return "outro";
+}
+
 function getInitials(nome: string) {
   return nome
     .split(/\s+/)
@@ -148,9 +165,8 @@ function PacientesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [selectedPaciente, setSelectedPaciente] = useState<PacienteAPI | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
-  const [filterConvenio, setFilterConvenio] = useState("");
-  const [filterSexo, setFilterSexo] = useState("");
+  const [convenioUrl, setFilterConvenio] = useFiltroUrl("convenio");
+  const [filterSexo, setFilterSexo] = useFiltroUrl("sexo", ["masculino", "feminino", "outro"]);
   const [filterIdadeMin, setFilterIdadeMin] = useState("");
   const [filterIdadeMax, setFilterIdadeMax] = useState("");
   const [usingDemo, setUsingDemo] = useState(false);
@@ -194,17 +210,21 @@ function PacientesPage() {
 
   // Unique convenios for filter dropdown
   const convenios = [...new Set(pacientes.map((p) => p.convenio).filter(Boolean))] as string[];
+  // Valor da URL que não existe nas opções atuais (link antigo, item apagado) é ignorado: nada de filtro invisível.
+  const filterConvenio = convenioUrl === "__particular" || convenios.includes(convenioUrl) ? convenioUrl : "";
 
-  const hasActiveFilters = filterConvenio || filterSexo || filterIdadeMin || filterIdadeMax;
+  const termo = searchTerm.trim().toLowerCase();
+  const termoDigitos = termo.replace(/\D/g, "");
 
   const filtered = pacientes.filter((p) => {
-    // Text search
-    // CPF e telefone comparam só os dígitos: "529.982" acha "52998224725" e vice-versa
-    const buscaDigitos = soDigitos(searchTerm);
-    const matchesSearch =
-      p.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (buscaDigitos.length >= 3 && (soDigitos(p.cpf).includes(buscaDigitos) || soDigitos(p.telefone).includes(buscaDigitos)));
-    if (!matchesSearch) return false;
+    // Busca: nome (sem acento/caixa) ou CPF/telefone (só dígitos, aceita com ou sem máscara)
+    if (termo) {
+      const nomeOk = semAcento(p.nome.toLowerCase()).includes(semAcento(termo));
+      const digOk =
+        termoDigitos.length >= 3 &&
+        (soDigitos(p.cpf).includes(termoDigitos) || soDigitos(p.telefone).includes(termoDigitos));
+      if (!nomeOk && !digOk) return false;
+    }
 
     // Convenio filter
     if (filterConvenio === "__particular") {
@@ -214,7 +234,8 @@ function PacientesPage() {
     }
 
     // Sexo filter
-    if (filterSexo && (p.sexo || "").toLowerCase() !== filterSexo.toLowerCase()) return false;
+    // Sexo: o cadastro grava "masculino"/"feminino", importações (Clinicorp) gravam "M"/"F"
+    if (filterSexo && normalizarSexo(p.sexo) !== filterSexo) return false;
 
     // Age range filter
     const idade = calcularIdade(p.data_nascimento);
@@ -231,27 +252,27 @@ function PacientesPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Cadastro de Pacientes" />
-      <main className="flex-1 p-8 space-y-6 overflow-auto">
+      <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 overflow-auto">
         {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
-          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
+          <div className="group bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Total</p>
+            <p className="text-[11px] sm:text-xs uppercase sm:tracking-wider text-muted-foreground font-medium break-words">Total</p>
             <p className="text-2xl font-bold text-card-foreground mt-1 font-heading">{pacientes.length}</p>
           </div>
-          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+          <div className="group bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Com Convênio</p>
+            <p className="text-[11px] sm:text-xs uppercase sm:tracking-wider text-muted-foreground font-medium break-words">Com Convênio</p>
             <p className="text-2xl font-bold text-primary mt-1 font-heading">{comConvenio}</p>
           </div>
-          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+          <div className="group bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Particular</p>
+            <p className="text-[11px] sm:text-xs uppercase sm:tracking-wider text-muted-foreground font-medium break-words">Particular</p>
             <p className="text-2xl font-bold text-card-foreground mt-1 font-heading">{pacientes.length - comConvenio}</p>
           </div>
-          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+          <div className="group bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-success/5 to-transparent rounded-bl-full pointer-events-none" />
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Cadastrados Hoje</p>
+            <p className="text-[11px] sm:text-xs uppercase sm:tracking-wider text-muted-foreground font-medium break-words">Cadastrados Hoje</p>
             <p className="text-2xl font-bold text-success mt-1 font-heading">
               {pacientes.filter((p) => {
                 // Data local: toISOString() é UTC e, depois das 21h, contava o cadastro como "amanhã"
@@ -261,125 +282,78 @@ function PacientesPage() {
           </div>
         </div>
 
-        {/* Search + Actions */}
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          {/* No celular a busca ocupa a linha inteira (antes ficava com ~40 px) */}
-          <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-1 min-w-0">
-            <div className="relative flex-1 min-w-0 sm:max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                type="search"
-                aria-label="Buscar paciente por nome, CPF ou telefone"
-                placeholder="Buscar por nome, CPF ou telefone..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full h-10 pl-10 pr-4 rounded-xl bg-card border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-              />
-            </div>
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              aria-expanded={showFilters}
-              className={`shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-xs font-semibold transition-colors ${
-                hasActiveFilters
-                  ? "bg-primary/10 border-primary/30 text-primary"
-                  : "bg-card border-border/60 text-muted-foreground hover:text-foreground hover:border-border"
-              }`}
-            >
-              <Filter className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Filtros</span>
-              <span className="sr-only sm:hidden">Filtros</span>
-              {hasActiveFilters && (
-                <span className="ml-1 h-4 w-4 rounded-full bg-primary text-primary-foreground text-[9px] flex items-center justify-center font-bold">
-                  {[filterConvenio, filterSexo, filterIdadeMin || filterIdadeMax].filter(Boolean).length}
-                </span>
-              )}
-              <ChevronDown className={`hidden sm:block h-3 w-3 transition-transform ${showFilters ? "rotate-180" : ""}`} />
-            </button>
-          </div>
-          <button
-            onClick={() => setShowForm(true)}
-            className="w-full sm:w-auto justify-center flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
-          >
-            <UserPlus className="h-4 w-4" />
-            Novo Paciente
-          </button>
-        </div>
-
-        {/* Advanced Filters */}
-        {showFilters && (
-          <div className="bg-card rounded-xl border border-border/60 p-4 animate-fade-in shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Filtros Avançados</p>
-              {hasActiveFilters && (
-                <button
-                  onClick={() => { setFilterConvenio(""); setFilterSexo(""); setFilterIdadeMin(""); setFilterIdadeMax(""); }}
-                  className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <RotateCcw className="h-3 w-3" />
-                  Limpar filtros
-                </button>
-              )}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div>
-                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Convênio</label>
-                <select
-                  value={filterConvenio}
-                  onChange={(e) => setFilterConvenio(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-                >
-                  <option value="">Todos</option>
-                  <option value="__particular">Particular (sem convênio)</option>
-                  {convenios.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Sexo</label>
-                <select
-                  value={filterSexo}
-                  onChange={(e) => setFilterSexo(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-                >
-                  <option value="">Todos</option>
-                  <option value="masculino">Masculino</option>
-                  <option value="feminino">Feminino</option>
-                  <option value="outro">Outro</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Idade mínima</label>
+        {/* Busca + filtros + ação */}
+        <BarraFiltros
+          busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Nome, CPF ou telefone", rotulo: "Buscar paciente por nome, CPF ou telefone" }}
+          filtros={[
+            {
+              id: "convenio",
+              rotulo: "Convênio",
+              valor: filterConvenio,
+              onChange: setFilterConvenio,
+              opcoes: [{ valor: "__particular", rotulo: "Particular (sem convênio)" }, ...convenios.map((c) => ({ valor: c, rotulo: c }))],
+            },
+            {
+              id: "sexo",
+              rotulo: "Sexo",
+              valor: filterSexo,
+              onChange: setFilterSexo,
+              opcoes: [
+                { valor: "feminino", rotulo: "Feminino" },
+                { valor: "masculino", rotulo: "Masculino" },
+                { valor: "outro", rotulo: "Outro" },
+              ],
+            },
+          ]}
+          extras={
+            <fieldset className="flex flex-col gap-1">
+              <legend className="text-xs font-medium text-muted-foreground mb-1">Idade (anos)</legend>
+              <div className="flex items-center gap-2">
                 <input
                   type="number"
+                  inputMode="numeric"
                   min="0"
                   max="120"
+                  aria-label="Idade mínima"
                   value={filterIdadeMin}
                   onChange={(e) => setFilterIdadeMin(e.target.value)}
-                  placeholder="Ex: 18"
-                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="de"
+                  className="w-20 h-10 px-3 rounded-xl bg-card border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
-              </div>
-              <div>
-                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Idade máxima</label>
+                <span className="text-xs text-muted-foreground">a</span>
                 <input
                   type="number"
+                  inputMode="numeric"
                   min="0"
                   max="120"
+                  aria-label="Idade máxima"
                   value={filterIdadeMax}
                   onChange={(e) => setFilterIdadeMax(e.target.value)}
-                  placeholder="Ex: 65"
-                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="até"
+                  className="w-20 h-10 px-3 rounded-xl bg-card border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
               </div>
-            </div>
-            {hasActiveFilters && (
-              <p className="text-[10px] text-muted-foreground mt-3">
-                {filtered.length} paciente{filtered.length !== 1 ? "s" : ""} encontrado{filtered.length !== 1 ? "s" : ""}
-              </p>
-            )}
-          </div>
-        )}
+            </fieldset>
+          }
+          extrasAtivos={filterIdadeMin || filterIdadeMax ? 1 : 0}
+          onLimpar={() => {
+            setSearchTerm("");
+            setFilterConvenio("");
+            setFilterSexo("");
+            setFilterIdadeMin("");
+            setFilterIdadeMax("");
+          }}
+          resultado={`${filtered.length} paciente${filtered.length !== 1 ? "s" : ""}`}
+          acoes={
+            <button
+              onClick={() => setShowForm(true)}
+              className="flex items-center gap-2 px-5 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
+            >
+              <UserPlus className="h-4 w-4" />
+              Novo paciente
+            </button>
+          }
+        />
 
         {/* Loading */}
         {loading && (
@@ -395,9 +369,11 @@ function PacientesPage() {
             {filtered.map((pac) => {
               const idade = calcularIdade(pac.data_nascimento);
               return (
-                <div
+                <button
+                  type="button"
                   key={pac.id}
-                  className="bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 cursor-pointer group"
+                  aria-label={`Abrir ficha de ${pac.nome}`}
+                  className="w-full text-left bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 cursor-pointer group focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                   onClick={() => setSelectedPaciente(pac)}
                 >
                   <div className="flex items-start gap-3">
@@ -405,10 +381,10 @@ function PacientesPage() {
                       {getInitials(pac.nome)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-foreground truncate">{pac.nome}</p>
+                      <p className="text-sm font-semibold text-foreground break-words">{pac.nome}</p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">
                         {idade !== null ? `${idade} anos` : ""}
-                        {pac.sexo ? ` • ${pac.sexo === "masculino" ? "M" : pac.sexo === "feminino" ? "F" : "O"}` : ""}
+                        {normalizarSexo(pac.sexo) ? `${idade !== null ? " • " : ""}${({ masculino: "Masculino", feminino: "Feminino", outro: "Outro" } as const)[normalizarSexo(pac.sexo) as "masculino"]}` : ""}
                       </p>
                       {pac.telefone && (
                         <span className="text-[10px] text-muted-foreground flex items-center gap-1 mt-2">
@@ -421,11 +397,11 @@ function PacientesPage() {
                         </span>
                       )}
                     </div>
-                    <button className="p-2 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-muted/60 transition-all">
+                    <span aria-hidden className="p-2 rounded-lg opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-all">
                       <Eye className="h-4 w-4 text-muted-foreground" />
-                    </button>
+                    </span>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -678,7 +654,7 @@ function NovoPacienteModal({ pacientes, onClose, onSaved }: { pacientes: Pacient
                         {lead.initials}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-foreground truncate">{lead.name}</p>
+                        <p className="text-xs font-semibold text-foreground break-words">{lead.name}</p>
                         <p className="text-[10px] text-muted-foreground">{lead.phone} • {lead.origin}</p>
                       </div>
                       {selectedLeadId === lead.id && (

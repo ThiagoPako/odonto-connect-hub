@@ -52,11 +52,11 @@ export function AgendaProfessionalsList({
                     }`}
                   >
                     <span
-                      className={`h-3 w-3 rounded-sm ${color} ${
+                      className={`h-3 w-3 shrink-0 rounded-sm ${color} ${
                         checked ? "" : "opacity-30"
                       }`}
                     />
-                    <span className={`truncate ${checked ? "text-foreground" : "text-muted-foreground"}`}>
+                    <span className={`break-words min-w-0 ${checked ? "text-foreground" : "text-muted-foreground"}`}>
                       {p.nome}
                     </span>
                   </button>
@@ -80,7 +80,7 @@ export function AgendaProfessionalsList({
           <ul className="space-y-1.5">
             {alertasRetorno.slice(0, 5).map((a, i) => (
               <li key={i} className="flex items-center justify-between text-xs">
-                <span className="text-foreground truncate">{a.paciente_nome}</span>
+                <span className="text-foreground break-words min-w-0">{a.paciente_nome}</span>
                 <span className="text-muted-foreground shrink-0 ml-2">{a.data}</span>
               </li>
             ))}

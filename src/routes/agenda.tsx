@@ -310,7 +310,7 @@ function AgendaPage() {
                 value={intervaloOverride == null ? "padrao" : String(intervalo)}
                 onValueChange={(v) => setIntervalo(v === "padrao" ? null : Number(v))}
               >
-                <SelectTrigger aria-label="Tempo de cada linha da agenda" className="h-7 w-[160px] border-0 shadow-none focus:ring-0 px-1 text-[11px] font-bold uppercase tracking-wider">
+                <SelectTrigger aria-label="Tempo de cada linha da agenda" className="min-h-0 h-7 w-auto min-w-[10rem] border-0 shadow-none focus:ring-0 px-1 text-[11px] font-bold uppercase tracking-wider">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="rounded-xl border-border/40 glass-card">

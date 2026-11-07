@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
-  Search, Plus, AlertTriangle, Package, ArrowDownCircle, ArrowUpCircle,
+  Plus, AlertTriangle, Package, ArrowDownCircle, ArrowUpCircle,
   Loader2, Pencil, Trash2, CalendarClock,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
+import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   inventoryCategories,
@@ -62,7 +64,8 @@ function EstoquePage() {
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [categoryFilter, setCategoryFilter] = useFiltroUrl("categoria", inventoryCategories.map((c) => c.id));
+  const [situacaoFilter, setSituacaoFilter] = useFiltroUrl("situacao", ["baixo", "zerado", "ok"]);
   const [showAddItem, setShowAddItem] = useState(false);
   const [showAddMov, setShowAddMov] = useState(false);
   const [movItemId, setMovItemId] = useState<string | undefined>(undefined);
@@ -91,8 +94,13 @@ function EstoquePage() {
   useEffect(() => { loadAll(); }, [loadAll]);
 
   const filteredItems = items
-    .filter((i) => categoryFilter === "all" || i.category === categoryFilter)
-    .filter((i) => !searchTerm || i.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    .filter((i) => !categoryFilter || i.category === categoryFilter)
+    .filter((i) =>
+      !situacaoFilter ||
+      (situacaoFilter === "zerado" && i.currentStock === 0) ||
+      (situacaoFilter === "baixo" && i.currentStock <= i.minStock) ||
+      (situacaoFilter === "ok" && i.currentStock > i.minStock))
+    .filter((i) => !searchTerm.trim() || (i.name || "").toLowerCase().includes(searchTerm.trim().toLowerCase()));
 
   const lowStock = items.filter((i) => i.currentStock <= i.minStock);
   // Vencidos ou vencendo em até 30 dias
@@ -221,7 +229,7 @@ function EstoquePage() {
               <TabsTrigger value="inventory">Inventário</TabsTrigger>
               <TabsTrigger value="movements">Movimentações</TabsTrigger>
             </TabsList>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button onClick={() => { setMovItemId(undefined); setShowAddMov(true); }} disabled={items.length === 0}
                 title={items.length === 0 ? "Cadastre um item primeiro" : undefined}
                 className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-muted text-foreground text-xs font-medium hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -234,38 +242,82 @@ function EstoquePage() {
           </div>
 
           <TabsContent value="inventory">
-            {/* Filters */}
-            <div className="flex flex-wrap items-center gap-2 mb-4">
-              <div className="relative w-full sm:w-auto">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <input type="search" aria-label="Buscar item" placeholder="Buscar item..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                  className="h-8 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-full sm:w-48" />
-              </div>
-              <div className="inline-flex h-9 items-center rounded-lg bg-muted p-0.5 max-w-full overflow-x-auto">
-                <button onClick={() => setCategoryFilter("all")} aria-pressed={categoryFilter === "all"} className={`shrink-0 h-8 px-2.5 rounded-md text-[11px] font-medium transition-colors ${categoryFilter === "all" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}>
-                  Todos
-                </button>
-                {inventoryCategories.map((c) => (
-                  <button key={c.id} onClick={() => setCategoryFilter(c.id)} aria-pressed={categoryFilter === c.id} className={`shrink-0 h-8 px-2.5 rounded-md text-[11px] font-medium transition-colors ${categoryFilter === c.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}>
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* Filtros */}
+            <BarraFiltros
+              className="mb-4"
+              busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Buscar item" }}
+              filtros={[
+                {
+                  id: "categoria",
+                  rotulo: "Categoria",
+                  valor: categoryFilter,
+                  onChange: setCategoryFilter,
+                  rotuloTodos: "Todas",
+                  opcoes: inventoryCategories.map((c) => ({ valor: c.id, rotulo: c.label })),
+                },
+                {
+                  id: "situacao",
+                  rotulo: "Situação",
+                  valor: situacaoFilter,
+                  onChange: setSituacaoFilter,
+                  opcoes: [
+                    { valor: "baixo", rotulo: "Estoque baixo" },
+                    { valor: "zerado", rotulo: "Sem estoque" },
+                    { valor: "ok", rotulo: "Estoque normal" },
+                  ],
+                },
+              ]}
+              onLimpar={() => { setSearchTerm(""); setCategoryFilter(""); setSituacaoFilter(""); }}
+              resultado={`${filteredItems.length} ${filteredItems.length !== 1 ? "itens" : "item"}`}
+            />
+
+            {/* Celular: cartões em vez de tabela */}
+            <ul className="lg:hidden space-y-2">
+              {filteredItems.map((item) => (
+                <li key={item.id} className="bg-card rounded-xl border border-border p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground break-words flex items-center gap-1.5">
+                        {item.currentStock <= item.minStock && <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" aria-label="Estoque baixo" />}
+                        {item.name}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{inventoryCategories.find((c) => c.id === item.category)?.label || item.category}</p>
+                    </div>
+                    <p className="text-right shrink-0">
+                      <span className={`text-base font-bold ${item.currentStock === 0 ? "text-destructive" : item.currentStock <= item.minStock ? "text-warning" : "text-foreground"}`}>{item.currentStock}</span>
+                      <span className="text-[11px] text-muted-foreground ml-1">{item.unit}</span>
+                      <span className="block text-[11px] text-muted-foreground">mínimo {item.minStock}</span>
+                    </p>
+                  </div>
+                  <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                    <dt className="text-muted-foreground">Custo unitário</dt><dd className="text-foreground text-right">{formatBRL(item.unitCost)}</dd>
+                    {item.supplier && (<><dt className="text-muted-foreground">Fornecedor</dt><dd className="text-foreground text-right break-words">{item.supplier}</dd></>)}
+                    {item.expirationDate && (<><dt className="text-muted-foreground">Validade</dt><dd className={`text-right ${item.expirationDate <= em30 ? "text-destructive font-semibold" : "text-foreground"}`}>{isoParaBr(item.expirationDate)}</dd></>)}
+                    {item.lastEntry && (<><dt className="text-muted-foreground">Atualizado em</dt><dd className="text-foreground text-right">{item.lastEntry}</dd></>)}
+                  </dl>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" className="h-9 text-xs" onClick={() => { setMovItemId(item.id); setShowAddMov(true); }}>Movimentar</Button>
+                    <Button size="sm" variant="outline" className="h-9 text-xs gap-1.5" onClick={() => setEditItem(item)}><Pencil className="h-3.5 w-3.5" />Editar</Button>
+                    <Button size="sm" variant="outline" className="h-9 text-xs gap-1.5 text-destructive hover:text-destructive" onClick={() => setDeleteItem(item)}><Trash2 className="h-3.5 w-3.5" />Excluir</Button>
+                  </div>
+                </li>
+              ))}
+              {filteredItems.length === 0 && <li className="py-8 text-center text-xs text-muted-foreground">{items.length === 0 ? "Nenhum item cadastrado. Clique em \u201cNovo Item\u201d para começar." : "Nenhum item com esse filtro."}</li>}
+            </ul>
 
             {/* relative: o rótulo sr-only (absolute) da coluna Ações fica preso à rolagem da tabela */}
-            <div className="relative bg-card rounded-xl border border-border overflow-x-auto">
+            <div className="relative hidden lg:block bg-card rounded-xl border border-border overflow-x-auto">
               <table className="w-full min-w-[820px]">
                 <thead>
                   <tr className="border-b border-border text-left">
                     <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Item</th>
                     <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Categoria</th>
                     <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider text-center">Estoque</th>
-                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider text-center">Mín</th>
-                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider text-right">Custo Unit.</th>
+                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider text-center">Mínimo</th>
+                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider text-right">Custo unitário</th>
                     <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Fornecedor</th>
                     <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Validade</th>
-                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Última Atualiz.</th>
+                    <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Atualizado em</th>
                     <th className="px-4 py-3"><span className="sr-only">Ações</span></th>
                   </tr>
                 </thead>

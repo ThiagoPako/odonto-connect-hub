@@ -1326,7 +1326,7 @@ app.get('/api/plans', async (_req, res) => {
 });
 
 app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
     const { clinic_name, admin_name, email, password, plan_slug, telefone, cnpj, termos_versao, politica_versao } = req.body || {};
     if (!clinic_name || !admin_name || !email || !password) {
@@ -1340,6 +1340,8 @@ app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
     const existing = await getProfileByEmail(normalizedEmail);
     if (existing) return res.status(409).json({ error: 'Email já cadastrado' });
 
+    // Conexão só depois de validar a entrada, dentro do try (se o banco cair, responde 500).
+    client = await pool.connect();
     const planSlug = plan_slug || 'starter';
     const { rows: planRows } = await client.query('SELECT * FROM plans WHERE slug = $1 AND ativo = true', [planSlug]);
     const plan = planRows[0];
@@ -1399,11 +1401,11 @@ app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
       plan,
     });
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    console.error('Signup error:', error);
-    res.status(500).json({ error: error.message || 'Erro ao criar conta' });
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('Signup error:', error.message);
+    res.status(500).json({ error: 'Erro ao criar conta' });
   } finally {
-    client.release();
+    client?.release();
   }
 });
 
@@ -1667,11 +1669,14 @@ app.post('/api/super-admin/plans', async (req, res) => {
   }
 });
 
+const PLANO_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 app.patch('/api/super-admin/plans/:id', async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
     await verifySuperAdmin(req);
     const { id } = req.params;
+    if (!PLANO_UUID_RE.test(String(id))) return res.status(404).json({ error: 'Plano não encontrado' });
     const b = req.body || {};
     const fields = ['nome','descricao','preco_mensal','preco_anual','trial_days',
       'max_usuarios','max_dentistas','max_pacientes','max_whatsapp_instances','features','ativo','display_order'];
@@ -1681,7 +1686,8 @@ app.patch('/api/super-admin/plans/:id', async (req, res) => {
       if (b[f] !== undefined) { sets.push(`${f} = $${i++}`); vals.push(b[f]); }
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
-    
+
+    client = await pool.connect();
     await client.query('BEGIN');
     
     sets.push('updated_at = NOW()');
@@ -1691,6 +1697,10 @@ app.patch('/api/super-admin/plans/:id', async (req, res) => {
       vals
     );
     const updatedPlan = rows[0];
+    if (!updatedPlan) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Plano não encontrado' });
+    }
 
     // Synchronization logic: Notify or log the change for affected tenants
     // In this architecture, limits are checked against the current plan in real-time.
@@ -1710,11 +1720,15 @@ app.patch('/api/super-admin/plans/:id', async (req, res) => {
     await client.query('COMMIT');
     res.json({ data: updatedPlan, synced_tenants: affectedTenants });
   } catch (e) {
-    await client.query('ROLLBACK');
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (e.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (e.message === 'Super admin access required') return res.status(403).json({ error: e.message });
+    // id já validado acima: 22P02 aqui é valor inválido no corpo (ex.: preco_mensal "12,90").
+    if (e.code === '22P02') return res.status(400).json({ error: 'Dados inválidos' });
     console.error('Plan update sync error:', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Erro ao atualizar o plano' });
   } finally {
-    client.release();
+    client?.release();
   }
 });
 
@@ -7494,10 +7508,11 @@ app.get('/api/procedimentos-catalogo', async (req, res) => {
 });
 
 app.post('/api/procedimentos-catalogo', async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    client = await pool.connect();
     const {
       codigo, nome, categoria, valor_particular, valor_convenio,
       duracao_minutos, cor, requer_dente, requer_face, descricao,
@@ -7521,18 +7536,21 @@ app.post('/api/procedimentos-catalogo', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1 AND tenant_id=$2', [id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: error.message });
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[catálogo] erro:', error.message);
+    res.status(500).json({ error: 'Erro ao salvar procedimento' });
   } finally {
-    client.release();
+    client?.release();
   }
 });
 
 app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    client = await pool.connect();
     const procId = req.params.id;
     const fields = ['codigo','nome','categoria','valor_particular','valor_convenio','duracao_minutos','cor','requer_dente','requer_face','descricao','ativo'];
 
@@ -7566,10 +7584,12 @@ app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1 AND tenant_id=$2', [procId, user.tenant_id]);
     res.json({ ...rows[0], _nova_versao: novaVersao });
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: error.message });
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[catálogo] erro:', error.message);
+    res.status(500).json({ error: 'Erro ao salvar procedimento' });
   } finally {
-    client.release();
+    client?.release();
   }
 });
 
@@ -13861,7 +13881,8 @@ app.get('/api/crm/leads', async (req, res) => {
     }
     if (origin && origin !== 'Todos') {
       params.push(origin);
-      whereClause += ` AND l.origem = $${params.length}`;
+      // Leads automáticos do WhatsApp gravam "whatsapp"; o cadastro manual grava "WhatsApp"
+      whereClause += ` AND LOWER(l.origem) = LOWER($${params.length})`;
     }
 
     const baseFrom = `FROM crm_leads l
@@ -15551,7 +15572,7 @@ app.post('/api/messages/batch', async (req, res) => {
       await client.query('COMMIT');
       res.json({ success: true, count: messages.length });
     } catch (err) {
-      await client.query('ROLLBACK');
+      await client.query('ROLLBACK').catch(() => {});
       throw err;
     } finally {
       client.release();

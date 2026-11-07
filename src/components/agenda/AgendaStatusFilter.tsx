@@ -37,7 +37,7 @@ export function AgendaStatusFilter({ selected, onToggle, onSelectAll, onOnlyUnco
                 }`}
               >
                 <Icon className={`h-3.5 w-3.5 ${checked ? "text-foreground" : "text-muted-foreground/40"}`} />
-                <span className={`truncate ${checked ? "text-foreground" : "text-muted-foreground"}`}>
+                <span className={`break-words min-w-0 ${checked ? "text-foreground" : "text-muted-foreground"}`}>
                   {s.label}
                 </span>
               </button>

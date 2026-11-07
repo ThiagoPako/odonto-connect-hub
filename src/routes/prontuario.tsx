@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
-  Search, FileText, Camera, FlaskConical, Upload, ChevronRight,
+  FileText, Camera, FlaskConical, Upload, ChevronRight,
   AlertCircle, Pill, Heart, User, Calendar, Phone, Loader2, Plus, X,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { BarraFiltros } from "@/components/filtros/BarraFiltros";
 import { prontuariosApi, pacientesApi } from "@/lib/vpsApi";
 import { AlertasMedicosBanner, type EstadoAnamnese } from "@/components/AlertasMedicosBanner";
 import { extrairAlertasMedicos, type AnamneseVPS } from "@/lib/alertasMedicos";
@@ -155,14 +156,13 @@ function ProntuarioPage() {
       <div className="flex-1 p-4 sm:p-6 overflow-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 h-full">
           {/* Patient list */}
-          <div className="lg:col-span-3 space-y-3">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <input type="search" aria-label="Buscar paciente" placeholder="Buscar paciente..." value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full h-9 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
-            </div>
-            <div className="space-y-1.5 max-h-[calc(100vh-220px)] overflow-y-auto">
+          <div className="lg:col-span-4 xl:col-span-3 space-y-3">
+            <BarraFiltros
+              busca={{ valor: searchTerm, onChange: setSearchTerm, placeholder: "Buscar paciente", rotulo: "Buscar paciente pelo nome" }}
+              onLimpar={() => setSearchTerm("")}
+              resultado={`${allFiltered.length} paciente${allFiltered.length !== 1 ? "s" : ""}`}
+            />
+            <div className="space-y-1.5 max-h-[40vh] lg:max-h-[calc(100vh-220px)] overflow-y-auto">
               {allFiltered.map((p, i) => {
                 const count = prontuarios.filter(pr => pr.paciente_id === p.id).length;
                 return (
@@ -172,8 +172,8 @@ function ProntuarioPage() {
                       {getInitials(p.nome)}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-foreground truncate">{p.nome}</p>
-                      <p className="text-[10px] text-muted-foreground">{count === 1 ? "1 registro" : `${count} registros`}</p>
+                      <p className="text-xs font-medium text-foreground break-words">{p.nome}</p>
+                      <p className="text-[10px] text-muted-foreground">{count} registro{count !== 1 ? "s" : ""}</p>
                     </div>
                   </button>
                 );
@@ -183,7 +183,7 @@ function ProntuarioPage() {
           </div>
 
           {/* Patient details */}
-          <div className="lg:col-span-9 space-y-4 scroll-mt-4" ref={detailRef}>
+          <div className="lg:col-span-8 xl:col-span-9 space-y-4 scroll-mt-4" ref={detailRef}>
             {selectedPaciente ? (
               <>
                 {/* Header card */}
@@ -192,8 +192,8 @@ function ProntuarioPage() {
                     <div className={`h-14 w-14 rounded-full bg-primary flex items-center justify-center text-lg font-bold text-primary-foreground shrink-0`}>
                       {getInitials(selectedPaciente.nome)}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-semibold text-foreground">{selectedPaciente.nome}</h3>
+                    <div className="flex-1 min-w-[min(100%,12rem)]">
+                      <h3 className="text-base font-semibold text-foreground break-words">{selectedPaciente.nome}</h3>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-muted-foreground">
                         {selectedPaciente.cpf && <span className="flex items-center gap-1"><User className="h-3 w-3" /> CPF: {selectedPaciente.cpf}</span>}
                         {selectedPaciente.telefone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" /> {selectedPaciente.telefone}</span>}
