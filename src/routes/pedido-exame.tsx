@@ -9,8 +9,7 @@ import { toast } from "sonner";
 import { Printer, Send, FileDown, Upload, X } from "lucide-react";
 import { mediaApi, pacientesApi } from "@/lib/vpsApi";
 import { examesApi } from "@/lib/examesApi";
-import odontogramaFullAsset from "@/assets/odontograma-full.png.asset.json";
-import odontogramaAdultoAsset from "@/assets/odontograma-adulto.png.asset.json";
+import { OdontogramaSelecao } from "@/components/OdontogramaSelecao";
 import { parsePedidoFile } from "@/lib/pedidoExameParser";
 
 type ToothPos = { n: number; x: number };
@@ -36,54 +35,6 @@ const DETALHES_PEDIDO: Array<{ secao: string; itens: Array<[string, string]> }> 
   { secao: "Fotografias", itens: [["foto_extra", "Extrabucal"], ["foto_intra", "Intrabucal"], ["foto_outros", "Outros"]] },
   { secao: "Análises", itens: [["an_dent", "Análise dentária"], ["an_facial", "Análise facial"], ["an_modelo", "Análise de modelo"]] },
 ];
-
-/**
- * Seleção de dentes por número, usada quando o desenho do odontograma não carrega.
- * Cada linha é uma fileira de dentes (lado direito do paciente | lado esquerdo).
- */
-function DentesPorNumero({
-  linhas,
-  selecionados,
-  onToggle,
-}: {
-  linhas: Array<{ titulo: string; dir: number[]; esq: number[] }>;
-  selecionados: Set<number>;
-  onToggle: (n: number) => void;
-}) {
-  const botao = (n: number) => {
-    const checked = selecionados.has(n);
-    return (
-      <button
-        key={n}
-        type="button"
-        onClick={() => onToggle(n)}
-        aria-pressed={checked}
-        aria-label={`Dente ${n}`}
-        className={cn(
-          "min-w-[2rem] h-8 px-1 rounded border text-xs font-mono transition-colors",
-          checked ? "bg-orange-500 border-orange-600 text-white" : "bg-white border-slate-300 text-slate-700 hover:border-orange-500",
-        )}
-      >
-        {n}
-      </button>
-    );
-  };
-  return (
-    <div className="space-y-2">
-      <p className="text-xs text-slate-500">Desenho do odontograma indisponível. Marque os dentes pelo número.</p>
-      {linhas.map((l) => (
-        <div key={l.titulo}>
-          <div className="text-[11px] font-semibold text-slate-500 uppercase mb-1">{l.titulo}</div>
-          <div className="flex flex-wrap items-center gap-1">
-            {l.dir.map(botao)}
-            <span className="mx-1 h-6 w-px bg-orange-300" aria-hidden />
-            {l.esq.map(botao)}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 const LINHAS_PERMANENTES_SUP = { titulo: "Superiores", dir: [18, 17, 16, 15, 14, 13, 12, 11], esq: [21, 22, 23, 24, 25, 26, 27, 28] };
 const LINHAS_PERMANENTES_INF = { titulo: "Inferiores", dir: [48, 47, 46, 45, 44, 43, 42, 41], esq: [31, 32, 33, 34, 35, 36, 37, 38] };
@@ -189,8 +140,6 @@ function PedidoExamePage() {
   const [obs, setObs] = useState("");
   const [analise, setAnalise] = useState("");
   const [fotoOutros, setFotoOutros] = useState("");
-  const [imgFullFalhou, setImgFullFalhou] = useState(false);
-  const [imgAdultoFalhou, setImgAdultoFalhou] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -459,47 +408,8 @@ function PedidoExamePage() {
   };
 
 
-  // Tooth positions over the odontograma image
-  type T = { n: number; x: number; y: number };
-  const allTeeth: T[] = [
-    { n: 18, x: 6.84, y: 11.26 }, { n: 17, x: 13.26, y: 10.76 }, { n: 16, x: 19.41, y: 11.26 },
-    { n: 15, x: 24.98, y: 11.52 }, { n: 14, x: 30.83, y: 11.52 }, { n: 13, x: 36.13, y: 11.74 },
-    { n: 12, x: 41.68, y: 12.00 }, { n: 11, x: 47.70, y: 11.74 },
-    { n: 21, x: 53.85, y: 11.77 }, { n: 22, x: 59.57, y: 12.00 }, { n: 23, x: 64.97, y: 12.23 },
-    { n: 24, x: 70.41, y: 12.49 }, { n: 25, x: 75.98, y: 12.24 }, { n: 26, x: 81.98, y: 11.27 },
-    { n: 27, x: 87.99, y: 11.52 }, { n: 28, x: 93.70, y: 10.75 },
-    { n: 55, x: 24.84, y: 32.73 }, { n: 54, x: 31.27, y: 34.47 }, { n: 53, x: 36.84, y: 34.46 },
-    { n: 52, x: 41.84, y: 34.72 }, { n: 51, x: 47.27, y: 34.48 },
-    { n: 61, x: 53.55, y: 34.97 }, { n: 62, x: 59.12, y: 34.98 }, { n: 63, x: 64.41, y: 35.19 },
-    { n: 64, x: 69.84, y: 35.22 }, { n: 65, x: 76.13, y: 34.47 },
-    { n: 85, x: 23.56, y: 61.36 }, { n: 84, x: 30.69, y: 61.37 }, { n: 83, x: 36.70, y: 61.88 },
-    { n: 82, x: 41.99, y: 62.38 }, { n: 81, x: 47.40, y: 62.38 },
-    { n: 71, x: 53.70, y: 63.10 }, { n: 72, x: 58.98, y: 63.09 }, { n: 73, x: 64.41, y: 63.11 },
-    { n: 74, x: 70.12, y: 62.12 }, { n: 75, x: 76.98, y: 62.13 },
-    { n: 48, x: 6.28, y: 81.60 }, { n: 47, x: 13.26, y: 82.37 }, { n: 46, x: 19.70, y: 82.89 },
-    { n: 45, x: 25.98, y: 84.11 }, { n: 44, x: 31.69, y: 84.57 }, { n: 43, x: 37.27, y: 85.09 },
-    { n: 42, x: 42.55, y: 84.57 }, { n: 41, x: 47.55, y: 84.57 },
-    { n: 31, x: 53.27, y: 84.11 }, { n: 32, x: 58.13, y: 84.58 }, { n: 33, x: 63.41, y: 85.09 },
-    { n: 34, x: 69.12, y: 84.83 }, { n: 35, x: 74.71, y: 84.57 }, { n: 36, x: 81.13, y: 83.35 },
-    { n: 37, x: 87.41, y: 82.13 }, { n: 38, x: 94.26, y: 81.62 },
-  ];
   const selectedSorted = Array.from(teethSel).sort((a, b) => a - b);
 
-  type TT = { n: number; x: number; y: number };
-  const tomoTeeth: TT[] = [
-    { n: 18, x: 4.63, y: 32.49 }, { n: 17, x: 11.72, y: 33.46 }, { n: 16, x: 18.94, y: 32.25 },
-    { n: 15, x: 25.73, y: 31.75 }, { n: 14, x: 31.88, y: 32.26 }, { n: 13, x: 37.82, y: 31.75 },
-    { n: 12, x: 43.97, y: 32.01 }, { n: 11, x: 49.49, y: 31.51 }, { n: 21, x: 54.57, y: 31.77 },
-    { n: 22, x: 59.77, y: 32.00 }, { n: 23, x: 65.81, y: 31.51 }, { n: 24, x: 71.32, y: 32.52 },
-    { n: 25, x: 77.16, y: 32.26 }, { n: 26, x: 83.19, y: 32.51 }, { n: 27, x: 89.57, y: 33.47 },
-    { n: 28, x: 95.39, y: 32.74 },
-    { n: 48, x: 4.83, y: 75.24 }, { n: 47, x: 11.95, y: 74.45 }, { n: 46, x: 19.46, y: 75.45 },
-    { n: 45, x: 26.48, y: 75.19 }, { n: 44, x: 33.05, y: 75.45 }, { n: 43, x: 38.77, y: 75.22 },
-    { n: 42, x: 44.38, y: 75.46 }, { n: 41, x: 49.48, y: 75.45 }, { n: 31, x: 54.78, y: 74.96 },
-    { n: 32, x: 60.20, y: 75.22 }, { n: 33, x: 65.70, y: 75.45 }, { n: 34, x: 71.12, y: 75.71 },
-    { n: 35, x: 76.64, y: 75.72 }, { n: 36, x: 82.89, y: 74.24 }, { n: 37, x: 89.57, y: 74.47 },
-    { n: 38, x: 96.03, y: 74.97 },
-  ];
   const tomoSorted = Array.from(tomoSel).sort((a, b) => a - b);
 
   return (
@@ -622,31 +532,9 @@ function PedidoExamePage() {
             </div>
 
             <div className="p-3 relative">
-              {imgFullFalhou ? (
-                <DentesPorNumero linhas={LINHAS_ODONTOGRAMA_FULL} selecionados={teethSel} onToggle={toggleTooth} />
-              ) : (
-                <div className="relative w-full">
-                  <img
-                    src={odontogramaFullAsset.url}
-                    alt="Odontograma"
-                    className="w-full h-auto select-none pointer-events-none"
-                    draggable={false}
-                    onError={() => setImgFullFalhou(true)}
-                    ref={(el) => { if (el && el.complete && el.naturalWidth === 0) setImgFullFalhou(true); }}
-                  />
-                  {allTeeth.map(({ n, x, y }) => {
-                    const checked = teethSel.has(n);
-                    return (
-                      <button key={n} type="button" onClick={() => toggleTooth(n)} title={`Dente ${n}`} aria-label={`Dente ${n}`} aria-pressed={checked}
-                        className={cn(
-                          "absolute w-3 h-3 -translate-x-1/2 -translate-y-1/2 rounded-[2px] border transition-colors",
-                          checked ? "bg-orange-500 border-orange-600" : "bg-white/90 border-slate-400 hover:border-orange-500"
-                        )}
-                        style={{ left: `${x}%`, top: `${y}%` }} />
-                    );
-                  })}
-                </div>
-              )}
+              <div className="text-slate-700">
+                <OdontogramaSelecao linhas={LINHAS_ODONTOGRAMA_FULL} selecionados={teethSel} onToggle={toggleTooth} rotulo="Dentes para radiografia periapical" />
+              </div>
               <div className="mt-2 min-h-[28px] text-xs text-slate-700">
                 <span className="font-semibold text-slate-600">Dentes selecionados: </span>
                 {selectedSorted.length === 0 ? (
@@ -711,32 +599,9 @@ function PedidoExamePage() {
                 </div>
               </div>
               <div>
-                {imgAdultoFalhou ? (
-                  <DentesPorNumero linhas={LINHAS_ODONTOGRAMA_ADULTO} selecionados={tomoSel} onToggle={toggleTomo} />
-                ) : (
-                  <div className="relative w-full select-none">
-                    <img
-                      src={odontogramaAdultoAsset.url}
-                      alt="Odontograma adulto"
-                      className="w-full h-auto block pointer-events-none"
-                      draggable={false}
-                      onError={() => setImgAdultoFalhou(true)}
-                      ref={(el) => { if (el && el.complete && el.naturalWidth === 0) setImgAdultoFalhou(true); }}
-                    />
-                    {tomoTeeth.map(({ n, x, y }) => {
-                      const checked = tomoSel.has(n);
-                      return (
-                        <button key={n} type="button" onClick={() => toggleTomo(n)}
-                          className={cn(
-                            "absolute -translate-x-1/2 -translate-y-1/2 size-3 rounded-[2px] border-2 transition-colors",
-                            checked ? "bg-orange-500 border-orange-600" : "bg-white border-orange-400 hover:border-orange-600"
-                          )}
-                          style={{ left: `${x}%`, top: `${y}%` }}
-                          aria-label={`Dente ${n}`} aria-pressed={checked} title={`Dente ${n}`} />
-                      );
-                    })}
-                  </div>
-                )}
+                <div className="text-slate-700">
+                  <OdontogramaSelecao linhas={LINHAS_ODONTOGRAMA_ADULTO} selecionados={tomoSel} onToggle={toggleTomo} rotulo="Dentes para tomografia" />
+                </div>
                 <div className="mt-2 text-xs text-slate-700">
                   <span className="font-semibold">Dentes selecionados: </span>
                   {tomoSorted.length > 0 ? tomoSorted.join(", ") : "—"}
