@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { listaEsperaApi, pacientesApi, type ListaEsperaItem } from "@/lib/vpsApi";
+import { semAcento } from "@/lib/utils";
 
 const PERIODOS: { value: ListaEsperaItem["periodo"]; label: string }[] = [
   { value: "qualquer", label: "Qualquer horário" },
@@ -53,9 +54,9 @@ export function ListaEsperaDialog({ open, onOpenChange, professionals }: {
   }, [open, load]);
 
   const filtrados = useMemo(() => {
-    const t = busca.trim().toLowerCase();
+    const t = semAcento(busca.trim());
     if (t.length < 2) return [];
-    return pacientes.filter((p) => p.nome?.toLowerCase().includes(t)).slice(0, 8);
+    return pacientes.filter((p) => semAcento(p.nome).includes(t)).slice(0, 8);
   }, [busca, pacientes]);
   const selecionado = pacientes.find((p) => p.id === pacienteId);
 
