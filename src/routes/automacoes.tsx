@@ -252,7 +252,7 @@ function AutomacoesPage() {
         </div>
 
         {/* Tab switcher — pill style */}
-        <div className="flex items-center gap-1.5 bg-card rounded-2xl p-1.5 w-fit max-w-full overflow-x-auto border border-border shadow-card">
+        <div className="flex flex-wrap items-center gap-1.5 bg-card rounded-2xl p-1.5 w-fit max-w-full border border-border shadow-card">
           {([
             { key: "solutions" as const, label: "Soluções", icon: Rocket, count: preConfiguredSolutions.length },
             { key: "flows" as const, label: "Fluxos", icon: Zap, count: flows.length },
@@ -264,7 +264,8 @@ function AutomacoesPage() {
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`relative flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-300 ${
+                aria-pressed={isActive}
+                className={`relative flex items-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-300 ${
                   isActive
                     ? "gradient-primary text-primary-foreground shadow-glow-primary"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -1021,7 +1022,7 @@ function FlowEditor({
                   className="text-left p-2.5 rounded-lg bg-card border border-border hover:border-primary/40 transition-colors"
                 >
                   <p className="text-xs font-medium text-foreground mb-1">{template.name}</p>
-                  <p className="text-[11px] text-muted-foreground line-clamp-2">{template.message}</p>
+                  <p className="text-[11px] text-muted-foreground line-clamp-2" title={template.message}>{template.message}</p>
                 </button>
               ))}
             </div>
@@ -1059,7 +1060,7 @@ function FlowEditor({
                           updateStep(step.id, { delay: v, delayMinutes: opt?.minutes ?? 0 });
                         }}
                       >
-                        <SelectTrigger className="h-7 w-[130px] text-xs">
+                        <SelectTrigger className="min-h-7 h-auto w-auto min-w-[8rem] text-xs whitespace-normal">
                           <Clock className="h-3 w-3 mr-1 text-muted-foreground" />
                           <SelectValue />
                         </SelectTrigger>
@@ -1074,7 +1075,7 @@ function FlowEditor({
                         value={step.channel}
                         onValueChange={(v) => updateStep(step.id, { channel: v as AutomationChannel })}
                       >
-                        <SelectTrigger className="h-7 w-[120px] text-xs">
+                        <SelectTrigger className="min-h-7 h-auto w-auto min-w-[7.5rem] text-xs whitespace-normal">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -1437,7 +1438,7 @@ function SolutionsGrid({
               <h3 className="font-bold text-foreground text-sm mb-1 font-heading group-hover:text-primary transition-colors duration-200">{sol.name}</h3>
 
               {/* Description */}
-              <p className="text-[11px] text-muted-foreground mb-3 line-clamp-2 leading-relaxed">{sol.description}</p>
+              <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">{sol.description}</p>
 
               {/* Patient count + sent messages */}
               <div className="flex items-center gap-2 mb-3">

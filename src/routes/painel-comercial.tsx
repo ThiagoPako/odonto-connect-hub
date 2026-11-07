@@ -57,6 +57,8 @@ function PainelComercialPage() {
   const [data, setData] = useState<any>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Sem nenhuma leitura boa, zeros e "Sem follow-ups 🎉" pareceriam um dia sem trabalho.
+  const [hasData, setHasData] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,7 +68,7 @@ function PainelComercialPage() {
       const { data: res, error: err } = await comercialApi.painel();
       if (cancelled) return;
       if (err) setError(err);
-      else if (res) setData(res);
+      else if (res) { setData(res); setHasData(true); }
       setLoading(false);
     }
     load();
@@ -75,11 +77,13 @@ function PainelComercialPage() {
   }, []);
 
   const { kpis, followUps, conversionByOrigin } = data;
+  const semDados = !!error && !hasData;
+  const kv = (v: string | number) => (semDados ? "—" : v);
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Painel Comercial" />
-      <main className="flex-1 p-6 space-y-6">
+      <main className="flex-1 p-4 sm:p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl bg-chart-4/15 flex items-center justify-center">
@@ -97,18 +101,22 @@ function PainelComercialPage() {
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          <div role="alert" className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
             <AlertCircle className="h-4 w-4" />
-            <span>Erro ao carregar painel: {error}</span>
+            <span>
+              {hasData
+                ? `Não foi possível atualizar o painel (${error}). Mostrando a última leitura.`
+                : `Não foi possível carregar o painel: ${error}. Os números abaixo não estão disponíveis.`}
+            </span>
           </div>
         )}
 
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiMini icon={MessageSquare} label="Atendimentos hoje" value={kpis.atendimentosHoje} color="text-primary" bg="bg-primary/10" />
-          <KpiMini icon={CalendarCheck} label="Agendamentos hoje" value={kpis.agendamentosHoje} color="text-chart-2" bg="bg-chart-2/10" />
-          <KpiMini icon={TrendingUp} label="Taxa de conversão" value={`${kpis.taxaConversao}%`} color="text-chart-4" bg="bg-chart-4/10" />
-          <KpiMini icon={AlertCircle} label="Leads pendentes" value={kpis.leadsPendentes} color="text-destructive" bg="bg-destructive/10" />
+          <KpiMini icon={MessageSquare} label="Atendimentos hoje" value={kv(kpis.atendimentosHoje)} color="text-primary" bg="bg-primary/10" />
+          <KpiMini icon={CalendarCheck} label="Agendamentos hoje" value={kv(kpis.agendamentosHoje)} color="text-chart-2" bg="bg-chart-2/10" />
+          <KpiMini icon={TrendingUp} label="Taxa de conversão" value={kv(`${kpis.taxaConversao}%`)} color="text-chart-4" bg="bg-chart-4/10" />
+          <KpiMini icon={AlertCircle} label="Leads pendentes" value={kv(kpis.leadsPendentes)} color="text-destructive" bg="bg-destructive/10" />
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -121,7 +129,9 @@ function PainelComercialPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {followUps.length === 0 && !loading ? (
+              {semDados ? (
+                <p className="text-sm text-destructive text-center py-6">Não foi possível carregar os follow-ups.</p>
+              ) : followUps.length === 0 && !loading ? (
                 <p className="text-sm text-muted-foreground text-center py-6">
                   Sem follow-ups pendentes 🎉
                 </p>
@@ -152,7 +162,9 @@ function PainelComercialPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {conversionByOrigin.length === 0 && !loading ? (
+              {semDados ? (
+                <p className="text-sm text-destructive text-center py-12">Não foi possível carregar a conversão.</p>
+              ) : conversionByOrigin.length === 0 && !loading ? (
                 <p className="text-sm text-muted-foreground text-center py-12">
                   Nenhum lead atribuído ainda.
                 </p>
