@@ -46,13 +46,16 @@ export function AutomationReportPanel() {
   const [stats, setStats] = useState<AutomationStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState(30);
+  const [error, setError] = useState<string | null>(null);
 
+  // Com erro limpa os números: antes ficavam os do período anterior sob o rótulo do novo.
   const loadStats = (days: number) => {
     setLoading(true);
-    automationsApi.getStats(days)
-      .then((res) => { if (res.data) setStats(res.data as unknown as AutomationStats); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    automationsApi.getStats(days).then((res) => {
+      setError(res.error);
+      setStats(!res.error && res.data ? (res.data as unknown as AutomationStats) : null);
+      setLoading(false);
+    });
   };
 
   useEffect(() => { loadStats(period); }, [period]);
@@ -68,7 +71,9 @@ export function AutomationReportPanel() {
   if (!stats) {
     return (
       <div className="text-center py-12 text-muted-foreground text-sm">
-        <p>Sem dados de relatório disponíveis</p>
+        {error
+          ? <p role="alert" className="text-destructive">Não foi possível carregar o relatório. {error}</p>
+          : <p>Sem dados de relatório disponíveis</p>}
         <Button variant="outline" size="sm" className="mt-3" onClick={() => loadStats(period)}>
           <RefreshCcw className="h-3.5 w-3.5 mr-1.5" /> Tentar novamente
         </Button>

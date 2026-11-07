@@ -19,6 +19,7 @@ import {
 } from "@/data/automationMockData";
 import { automationsApi, type FollowupAutomationConfig } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -49,6 +50,11 @@ function AutomacoesPage() {
   const [followupConfig, setFollowupConfig] = useState<FollowupAutomationConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [solutionCounts, setSolutionCounts] = useState<Record<string, number>>({});
+  const [flowsError, setFlowsError] = useState<string | null>(null);
+  const [followupError, setFollowupError] = useState<string | null>(null);
+  const [savingFlow, setSavingFlow] = useState(false);
+  const togglingRef = useRef<Set<string>>(new Set());
+  const [confirm, confirmDialog] = useConfirm();
   // Trava contra clique duplo: o fluxo só entra na lista depois que o servidor responde,
   // então sem isso dois cliques rápidos criariam dois fluxos iguais.
   const creatingRef = useRef(false);
@@ -64,53 +70,64 @@ function AutomacoesPage() {
     setCreating(false);
   };
 
+  // Erro de carga não vira "nenhum fluxo": a tela mostra o erro e bloqueia criar/ativar,
+  // senão a clínica recriava fluxos que já existem (envio em dobro).
+  const loadFlows = useCallback(() => {
+    setLoadingFlows(true);
+    automationsApi.listFlows().then((res) => {
+      setFlowsError(res.error);
+      if (!res.error) setFlows(Array.isArray(res.data) ? res.data : []);
+      setLoadingFlows(false);
+    });
+  }, []);
+
+  const loadFollowup = useCallback(() => {
+    setLoadingConfig(true);
+    automationsApi.getFollowup().then((res) => {
+      setFollowupError(res.error);
+      if (!res.error && res.data) setFollowupConfig(res.data);
+      setLoadingConfig(false);
+    });
+  }, []);
+
   // Load flows from API
   useEffect(() => {
-    automationsApi.listFlows()
-      .then((res) => {
-        if (res.error) {
-          toast.error("Não foi possível carregar os fluxos de automação: " + res.error);
-          setFlows([]);
-        } else if (res.data && Array.isArray(res.data)) {
-          setFlows(res.data);
-        } else {
-          setFlows([]);
-        }
-      })
-      .finally(() => setLoadingFlows(false));
-
-    automationsApi.getFollowup()
-      .then((res) => {
-        if (res.error) toast.error("Não foi possível carregar a configuração de follow-up: " + res.error);
-        else if (res.data) setFollowupConfig(res.data);
-      })
-      .finally(() => setLoadingConfig(false));
+    loadFlows();
+    loadFollowup();
 
     // Load real patient counts for solutions
     automationsApi.getSolutionCounts()
       .then((res) => { if (res.data) setSolutionCounts(res.data); });
     // Contagens são só informativas: falha não bloqueia a tela
-  }, []);
+  }, [loadFlows, loadFollowup]);
 
   const filtered = filterType === "all" ? flows : flows.filter((f) => f.type === filterType);
 
-  const toggleActive = (id: string) => {
-    setFlows((prev) => prev.map((f) => f.id === id ? { ...f, active: !f.active } : f));
+  const toggleActive = async (id: string) => {
     const flow = flows.find(f => f.id === id);
-    automationsApi.toggleFlow(id).then(({ error }) => {
-      if (error) {
-        // Desfaz: o servidor não mudou o status
-        setFlows((prev) => prev.map((f) => f.id === id ? { ...f, active: !f.active } : f));
-        toast.error("Erro ao alterar status: " + error);
-        return;
-      }
-      toast.success(flow?.active ? `"${flow.name}" pausado` : `"${flow?.name}" ativado`);
-    });
+    if (!flow || togglingRef.current.has(id)) return;
+    if (!flow.active) {
+      const count = solutionCounts[flow.type];
+      const ok = await confirm({
+        title: `Ligar "${flow.name}"?`,
+        description: `A partir de agora o sistema envia as mensagens deste fluxo pelo WhatsApp automaticamente${typeof count === "number" ? `, hoje para cerca de ${count} paciente(s) elegível(eis)` : ""}, dentro do horário de envio configurado. Você pode desligar a qualquer momento.`,
+        confirmLabel: "Ligar envios",
+      });
+      if (!ok) return;
+    }
+    togglingRef.current.add(id);
+    // Só muda na tela depois que o servidor confirmou
+    const { error } = await automationsApi.toggleFlow(id);
+    togglingRef.current.delete(id);
+    if (error) { toast.error("Não foi possível alterar o fluxo: " + error); return; }
+    setFlows((prev) => prev.map((f) => f.id === id ? { ...f, active: !flow.active } : f));
+    setSelectedFlow((prev) => prev && prev.id === id ? { ...prev, active: !flow.active } : prev);
+    toast.success(flow.active ? `"${flow.name}" desligado` : `"${flow.name}" ligado`);
   };
 
+  // A confirmação é o AlertDialog do card/detalhe (antes havia também um confirm() nativo em seguida).
   const deleteFlow = (id: string) => {
     const flow = flows.find(f => f.id === id);
-    if (!confirm(`Excluir o fluxo "${flow?.name ?? ""}"? Os envios automáticos dele param e não dá para desfazer.`)) return;
     setFlows((prev) => prev.filter((f) => f.id !== id));
     if (selectedFlow?.id === id) setSelectedFlow(null);
     if (editingFlow?.id === id) setEditingFlow(null);
@@ -146,6 +163,7 @@ function AutomacoesPage() {
   };
 
   const createNewFlow = () => {
+    if (flowsError) { toast.error("Carregue os fluxos antes de criar um novo."); return; }
     if (!beginCreate()) return;
     const newFlow: AutomationFlow = {
       id: `af${Date.now()}`,
@@ -171,6 +189,7 @@ function AutomacoesPage() {
   };
 
   const activateSolution = (solution: PreConfiguredSolution) => {
+    if (flowsError) { toast.error("Não foi possível conferir os fluxos existentes. Use \"Tentar de novo\" antes de ativar."); return; }
     // Check if a flow for this solution type already exists
     const existing = flows.find(f => f.type === solution.type);
     if (existing) {
@@ -203,22 +222,28 @@ function AutomacoesPage() {
     });
   };
 
-  const saveEditedFlow = (updated: AutomationFlow) => {
-    const withUpdate = { ...updated, updatedAt: new Date().toLocaleDateString("pt-BR") };
-    setFlows((prev) => prev.map((f) => f.id === updated.id ? withUpdate : f));
-    setSelectedFlow(withUpdate);
-    setEditingFlow(null);
-    automationsApi.updateFlow(updated.id, {
+  // Só atualiza a lista e fecha o editor depois que o servidor salvou; com erro o rascunho fica aberto.
+  const saveEditedFlow = async (updated: AutomationFlow) => {
+    if (savingFlow) return;
+    setSavingFlow(true);
+    const { error } = await automationsApi.updateFlow(updated.id, {
       name: updated.name,
       description: updated.description,
       type: updated.type,
       trigger: updated.trigger,
       steps: updated.steps,
       active: updated.active,
-    }).then(({ error }) => {
-      if (error) toast.error(`O fluxo "${updated.name}" não foi salvo no servidor: ` + error);
-      else toast.success(`Fluxo "${updated.name}" salvo`);
     });
+    setSavingFlow(false);
+    if (error) {
+      toast.error(`O fluxo "${updated.name}" não foi salvo: ${error}. Suas alterações continuam no editor.`);
+      return;
+    }
+    const withUpdate = { ...updated, updatedAt: new Date().toLocaleDateString("pt-BR") };
+    setFlows((prev) => prev.map((f) => f.id === updated.id ? withUpdate : f));
+    setSelectedFlow(withUpdate);
+    setEditingFlow(null);
+    toast.success(`Fluxo "${updated.name}" salvo`);
   };
 
   const totalSent = flows.reduce((a, f) => a + f.stats.sent, 0);
@@ -229,6 +254,7 @@ function AutomacoesPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Automação de Relacionamento" />
+      {confirmDialog}
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         {/* Hero header with gradient */}
         <div className="relative overflow-hidden rounded-2xl gradient-primary p-6 shadow-glow-primary">
@@ -287,6 +313,15 @@ function AutomacoesPage() {
 
         {/* Tab content with transition */}
         <div key={activeTab} className="animate-tab-content">
+          {flowsError && activeTab !== "report" ? (
+            <div role="alert" className="mb-6 rounded-xl border border-destructive/30 bg-destructive/5 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+              <AlertTriangle className="h-5 w-5 text-destructive shrink-0" />
+              <p className="text-sm text-foreground flex-1">
+                Não foi possível carregar os fluxos de automação. {flowsError} Os fluxos não foram apagados; criar e ligar ficam bloqueados até carregar.
+              </p>
+              <Button size="sm" variant="outline" onClick={loadFlows}>Tentar de novo</Button>
+            </div>
+          ) : null}
           {activeTab === "solutions" ? (
             <SolutionsGrid
               solutions={preConfiguredSolutions}
@@ -324,6 +359,13 @@ function AutomacoesPage() {
         </div>
 
         {/* Follow-up CRM Automation Card */}
+        {followupError && !loadingConfig ? (
+          <div role="alert" className="bg-card rounded-xl border border-destructive/30 p-5 flex flex-col sm:flex-row sm:items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-destructive shrink-0" />
+            <p className="text-sm text-foreground flex-1">Não foi possível carregar a automação de follow-up do CRM. {followupError}</p>
+            <Button size="sm" variant="outline" onClick={loadFollowup}>Tentar de novo</Button>
+          </div>
+        ) : (
         <FollowupAutomationCard
           config={followupConfig}
           loading={loadingConfig}
@@ -331,6 +373,7 @@ function AutomacoesPage() {
           onToggleOpen={() => setShowFollowupConfig(!showFollowupConfig)}
           onUpdate={setFollowupConfig}
         />
+        )}
 
         {/* Header + filter */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -375,7 +418,7 @@ function AutomacoesPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Flow list */}
           <div className="lg:col-span-1 space-y-3">
-            {filtered.length === 0 && (
+            {filtered.length === 0 && !flowsError && !loadingFlows && (
               <div className="bg-card rounded-2xl border-2 border-dashed border-border p-8 text-center">
                 <div className="h-14 w-14 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-4 animate-float">
                   <Zap className="h-7 w-7 text-muted-foreground/40" />
@@ -408,6 +451,7 @@ function AutomacoesPage() {
                 flow={editingFlow}
                 onChange={setEditingFlow}
                 onSave={saveEditedFlow}
+                saving={savingFlow}
                 onCancel={() => setEditingFlow(null)}
               />
             ) : selectedFlow ? (
@@ -452,6 +496,7 @@ function FollowupAutomationCard({
   onUpdate: (c: FollowupAutomationConfig) => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const [confirmFollowup, confirmFollowupDialog] = useConfirm();
   const [editMessages, setEditMessages] = useState<Record<string, string>>({});
   const [editDelay, setEditDelay] = useState<number>(30);
   const [editDelayDays, setEditDelayDays] = useState<Record<string, number>>({});
@@ -468,6 +513,14 @@ function FollowupAutomationCard({
 
   const handleToggle = async () => {
     if (!config) return;
+    if (!config.enabled) {
+      const ok = await confirmFollowup({
+        title: "Ligar o follow-up automático do CRM?",
+        description: "A partir de agora, os leads que ficarem parados nas etapas do funil recebem as mensagens configuradas pelo WhatsApp automaticamente, depois do tempo de cada etapa. Você pode desligar a qualquer momento.",
+        confirmLabel: "Ligar follow-up",
+      });
+      if (!ok) return;
+    }
     setSaving(true);
     try {
       const res = await automationsApi.updateFollowup({ enabled: !config.enabled });
@@ -525,6 +578,7 @@ function FollowupAutomationCard({
 
   return (
     <div className="bg-card rounded-xl border border-primary/30 overflow-hidden">
+      {confirmFollowupDialog}
       <div className="p-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -560,11 +614,11 @@ function FollowupAutomationCard({
       {isOpen && (
         <div className="border-t border-border p-5 space-y-5 bg-muted/30">
           <div className="space-y-1">
-            <label className="text-xs font-medium text-foreground">Delay antes de enviar (segundos)</label>
+            <label className="text-xs font-medium text-foreground">Espera antes de enviar (segundos)</label>
             <Input
               type="number"
               value={editDelay}
-              onChange={(e) => setEditDelay(Number(e.target.value))}
+              onChange={(e) => setEditDelay(Math.min(3600, Math.max(0, Number(e.target.value) || 0)))}
               className="max-w-[200px] h-8 text-sm"
               min={0}
               max={3600}
@@ -579,7 +633,7 @@ function FollowupAutomationCard({
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-medium text-foreground">{stageLabels[stage] || stage}</label>
                   <div className="flex items-center gap-2">
-                    <label className="text-[10px] text-muted-foreground">Dias após setagem:</label>
+                    <label className="text-[10px] text-muted-foreground">Dias após entrar na etapa:</label>
                     <Input
                       type="number"
                       value={editDelayDays[stage] ?? 0}
@@ -697,24 +751,25 @@ function FlowCard({
           </div>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          {showActions && (
+          {/* Antes as ações só existiam no hover do mouse: no tablet/celular não dava para duplicar. */}
+          <div className={`flex items-center gap-0.5 ${showActions ? "" : "md:opacity-0 md:focus-within:opacity-100"}`}>
             <>
-              <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" title="Editar">
+              <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" title="Editar" aria-label={`Editar ${flow.name}`}>
                 <Edit2 className="h-3.5 w-3.5" />
               </button>
-              <button onClick={(e) => { e.stopPropagation(); onDuplicate(); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" title="Duplicar">
+              <button onClick={(e) => { e.stopPropagation(); onDuplicate(); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" title="Duplicar" aria-label={`Duplicar ${flow.name}`}>
                 <Copy className="h-3.5 w-3.5" />
               </button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <button onClick={(e) => e.stopPropagation()} className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors" title="Excluir">
+                  <button onClick={(e) => e.stopPropagation()} className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors" title="Excluir" aria-label={`Excluir ${flow.name}`}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
                     <AlertDialogTitle>Excluir fluxo</AlertDialogTitle>
-                    <AlertDialogDescription>Tem certeza que deseja excluir "{flow.name}"? Esta ação não pode ser desfeita.</AlertDialogDescription>
+                    <AlertDialogDescription>Excluir "{flow.name}"? Os envios automáticos dele param. Esta ação não pode ser desfeita.</AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancelar</AlertDialogCancel>
@@ -723,9 +778,10 @@ function FlowCard({
                 </AlertDialogContent>
               </AlertDialog>
             </>
-          )}
+          </div>
           <button
             onClick={(e) => { e.stopPropagation(); onToggle(); }}
+            aria-label={flow.active ? `Desligar ${flow.name}` : `Ligar ${flow.name}`}
             className={`p-1.5 rounded-xl transition-colors ${flow.active ? "bg-success/15 text-success hover:bg-success/25" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
             title={flow.active ? "Pausar" : "Ativar"}
           >
@@ -772,14 +828,14 @@ function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: 
             </button>
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <button className="flex items-center gap-1.5 h-8 px-3 rounded-xl bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors">
+                <button aria-label={`Excluir ${flow.name}`} title="Excluir" className="flex items-center gap-1.5 h-8 px-3 rounded-xl bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Excluir fluxo</AlertDialogTitle>
-                  <AlertDialogDescription>Tem certeza que deseja excluir "{flow.name}"?</AlertDialogDescription>
+                  <AlertDialogDescription>Excluir "{flow.name}"? Os envios automáticos dele param. Esta ação não pode ser desfeita.</AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancelar</AlertDialogCancel>
@@ -789,7 +845,7 @@ function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: 
             </AlertDialog>
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-muted/50 rounded-xl p-3 text-center">
             <Send className="h-3.5 w-3.5 text-muted-foreground mx-auto mb-1" />
             <p className="text-lg font-bold text-foreground font-heading">{flow.stats.sent}</p>
@@ -850,11 +906,12 @@ function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: 
 // ─── Flow Editor ────────────────────────────────────────────
 
 function FlowEditor({
-  flow, onChange, onSave, onCancel,
+  flow, onChange, onSave, onCancel, saving = false,
 }: {
   flow: AutomationFlow;
   onChange: (f: AutomationFlow) => void;
   onSave: (f: AutomationFlow) => void;
+  saving?: boolean;
   onCancel: () => void;
 }) {
   const [showTemplates, setShowTemplates] = useState(false);
@@ -930,7 +987,7 @@ function FlowEditor({
             <Button variant="outline" size="sm" onClick={onCancel}>
               <X className="h-3.5 w-3.5 mr-1.5" /> Cancelar
             </Button>
-            <Button size="sm" onClick={() => onSave(flow)} disabled={!isValid}>
+            <Button size="sm" onClick={() => onSave(flow)} disabled={!isValid || saving}>
               <Save className="h-3.5 w-3.5 mr-1.5" /> Salvar
             </Button>
           </div>
@@ -1181,7 +1238,7 @@ function FlowEditor({
         </p>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onCancel}>Cancelar</Button>
-          <Button size="sm" onClick={() => onSave(flow)} disabled={!isValid}>
+          <Button size="sm" onClick={() => onSave(flow)} disabled={!isValid || saving}>
             <Save className="h-3.5 w-3.5 mr-1.5" /> Salvar Fluxo
           </Button>
         </div>
@@ -1260,19 +1317,30 @@ function SolutionsGrid({
   const [hoursConfig, setHoursConfig] = useState({ inicio: '08:00', fim: '18:00', diasSemana: ['SEG','TER','QUA','QUI','SEX'] });
   const [savingHours, setSavingHours] = useState(false);
   const [showHoursConfig, setShowHoursConfig] = useState(false);
+  // Sem a configuração real carregada, "Salvar" gravaria o padrão 08–18 por cima do horário da clínica.
+  const [hoursError, setHoursError] = useState<string | null>(null);
+  const [hoursLoaded, setHoursLoaded] = useState(false);
 
   const allDays = ['SEG','TER','QUA','QUI','SEX','SAB','DOM'];
   const dayLabels: Record<string, string> = { SEG: 'Seg', TER: 'Ter', QUA: 'Qua', QUI: 'Qui', SEX: 'Sex', SAB: 'Sáb', DOM: 'Dom' };
 
-  useEffect(() => {
-    automationsApi.getSolutionHours()
-      .then(res => {
-        if (res.error) toast.error("Não foi possível carregar o horário de envio: " + res.error);
-        else if (res.data) setHoursConfig(res.data);
-      });
+  const loadHours = useCallback(() => {
+    automationsApi.getSolutionHours().then(res => {
+      setHoursError(res.error);
+      if (!res.error) {
+        if (res.data) setHoursConfig(res.data);
+        setHoursLoaded(true);
+      }
+    });
   }, []);
+  useEffect(() => { loadHours(); }, [loadHours]);
+
+  const hoursInvalid = hoursConfig.fim <= hoursConfig.inicio
+    ? "O fim do horário deve ser depois do início."
+    : hoursConfig.diasSemana.length === 0 ? "Escolha pelo menos um dia." : null;
 
   const saveHours = async () => {
+    if (!hoursLoaded || hoursInvalid) return;
     setSavingHours(true);
     try {
       const res = await automationsApi.updateSolutionHours(hoursConfig);
@@ -1364,9 +1432,18 @@ function SolutionsGrid({
             </div>
           </div>
 
+          {hoursError ? (
+            <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive">
+              Não foi possível carregar o horário salvo ({hoursError}). Os valores acima são o padrão, não o da clínica.
+              <button type="button" onClick={loadHours} className="underline font-medium">Tentar de novo</button>
+            </div>
+          ) : hoursInvalid ? (
+            <p role="alert" className="text-xs text-destructive">{hoursInvalid}</p>
+          ) : null}
+
           <div className="flex items-center justify-between pt-2 border-t border-border">
             <p className="text-[11px] text-muted-foreground">Fuso: América/São Paulo (BRT)</p>
-            <Button size="sm" onClick={saveHours} disabled={savingHours}>
+            <Button size="sm" onClick={saveHours} disabled={savingHours || !hoursLoaded || !!hoursInvalid}>
               {savingHours ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
               Salvar
             </Button>
@@ -1411,7 +1488,7 @@ function SolutionsGrid({
                   onCheckedChange={handleToggle}
                   // Solução sem base real fica travada; se já estava ligada, ainda dá para desligar
                   disabled={!!sol.indisponivel && !isActive}
-                  aria-label={sol.indisponivel && !isActive ? `${sol.name}: indisponível` : `Ligar ou desligar ${sol.name}`}
+                  aria-label={sol.indisponivel && !isActive ? `${sol.name}: indisponível` : isActive ? `Desligar ${sol.name}` : `Ligar ${sol.name}`}
                   className="data-[state=checked]:bg-primary"
                 />
                 {isActive && (

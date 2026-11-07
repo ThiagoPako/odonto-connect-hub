@@ -16,6 +16,7 @@ import {
   type ReactivationKpis,
 } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 
 export const Route = createFileRoute("/reativacao")({
   ssr: false,
@@ -55,6 +56,11 @@ function ReativacaoPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState("");
   const [sending, setSending] = useState(false);
+  const [patientsError, setPatientsError] = useState<string | null>(null);
+  const [patientsReload, setPatientsReload] = useState(0);
+  const [savingRule, setSavingRule] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
 
   // New rule form state
   const [newName, setNewName] = useState("");
@@ -92,13 +98,14 @@ function ReativacaoPage() {
     setLoadingPatients(true);
     reativacaoApi.patients(selectedRule.id).then((res) => {
       if (cancelled) return;
-      setPatients(res.data || []);
+      // Erro não vira "nenhum paciente corresponde": a clínica concluiria que não há inativos.
+      setPatientsError(res.error);
+      setPatients(res.error ? [] : res.data || []);
       setSelectedIds(new Set());
       setLoadingPatients(false);
-      if (res.error) toast.error(res.error);
     });
     return () => { cancelled = true; };
-  }, [selectedRule?.id]);
+  }, [selectedRule?.id, patientsReload]);
 
   const filteredPatients = useMemo(() => {
     if (!searchTerm) return patients;
@@ -128,11 +135,16 @@ function ReativacaoPage() {
     });
   };
 
+  const newDaysError = !Number.isFinite(newDays) || newDays < 30 ? "Use pelo menos 30 dias de inatividade." : null;
+  const newMessageError = !newMessage.trim() ? "Escreva a mensagem." : null;
+
   const handleCreateRule = async () => {
-    if (!newName.trim() || !newMessage.trim()) {
-      toast.error("Preencha nome e mensagem");
+    if (savingRule) return;
+    if (!newName.trim() || newMessageError || newDaysError) {
+      toast.error(newDaysError || newMessageError || "Dê um nome à regra.");
       return;
     }
+    setSavingRule(true);
     const { data, error: err } = await reativacaoApi.createRule({
       name: newName.trim(),
       inactiveDays: newDays,
@@ -140,6 +152,7 @@ function ReativacaoPage() {
       messageTemplate: newMessage,
       status: "rascunho",
     });
+    setSavingRule(false);
     if (err || !data) {
       toast.error(err || "Falha ao criar regra");
       return;
@@ -154,8 +167,11 @@ function ReativacaoPage() {
   };
 
   const handleToggleStatus = async (rule: ReactivationRule) => {
+    if (togglingId) return;
     const next: ReactivationStatus = rule.status === "ativo" ? "pausado" : "ativo";
+    setTogglingId(rule.id);
     const { error: err } = await reativacaoApi.updateRule(rule.id, { status: next });
+    setTogglingId(null);
     if (err) { toast.error(err); return; }
     toast.success(next === "ativo" ? "Regra ativada" : "Regra pausada");
     await loadAll();
@@ -165,7 +181,13 @@ function ReativacaoPage() {
   };
 
   const handleDeleteRule = async (rule: ReactivationRule) => {
-    if (!window.confirm(`Excluir regra "${rule.name}"?`)) return;
+    const ok = await confirm({
+      title: `Excluir a regra "${rule.name}"?`,
+      description: "A regra sai da lista e não gera novos envios. Atenção: as mensagens desta regra que já estão na fila de envio continuam saindo normalmente. Esta ação não pode ser desfeita.",
+      confirmLabel: "Excluir",
+      destructive: true,
+    });
+    if (!ok) return;
     const { error: err } = await reativacaoApi.deleteRule(rule.id);
     if (err) { toast.error(err); return; }
     toast.success("Regra excluída");
@@ -180,7 +202,13 @@ function ReativacaoPage() {
       toast.error("Selecione ao menos um paciente");
       return;
     }
-    if (!window.confirm(`Enviar mensagem para ${ids.length} paciente(s)?`)) return;
+    const ok = await confirm({
+      title: `Enviar para ${ids.length} paciente(s)?`,
+      description: "As mensagens entram na fila do WhatsApp da clínica e saem aos poucos, em horário comercial. Quem pediu para sair não recebe.",
+      confirmLabel: "Enviar",
+      destructive: true,
+    });
+    if (!ok) return;
     setSending(true);
     const { data, error: err } = await reativacaoApi.send(selectedRule.id, ids);
     setSending(false);
@@ -203,7 +231,8 @@ function ReativacaoPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Reativação Inteligente" />
-      <div className="flex-1 p-6 overflow-auto space-y-5">
+      {confirmDialog}
+      <div className="flex-1 p-4 sm:p-6 overflow-auto space-y-5">
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <KpiBox icon={RefreshCcw} label="Regras Ativas" value={totalActive} color="text-primary" />
@@ -299,7 +328,8 @@ function ReativacaoPage() {
                     <div className="flex items-center gap-1.5 mt-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity">
                       <button
                         onClick={(e) => { e.stopPropagation(); handleToggleStatus(rule); }}
-                        className="h-8 text-xs px-2.5 rounded-md bg-muted hover:bg-muted/70 text-muted-foreground flex items-center gap-1"
+                        disabled={togglingId === rule.id}
+                        className="disabled:opacity-50 h-8 text-xs px-2.5 rounded-md bg-muted hover:bg-muted/70 text-muted-foreground flex items-center gap-1"
                         title={rule.status === "ativo" ? "Pausar" : "Ativar"}
                       >
                         {rule.status === "ativo" ? <PauseCircle className="h-3 w-3" /> : <PlayCircle className="h-3 w-3" />}
@@ -324,15 +354,16 @@ function ReativacaoPage() {
               <div className="bg-card rounded-xl border border-border p-5 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-foreground">Nova Regra de Reativação</h3>
-                  <button onClick={() => setShowNewForm(false)} className="p-1 rounded-md hover:bg-muted">
+                  <button onClick={() => setShowNewForm(false)} aria-label="Fechar formulário" className="p-1 rounded-md hover:bg-muted">
                     <X className="h-4 w-4 text-muted-foreground" />
                   </button>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Nome da Regra</label>
+                    <label htmlFor="reat-nome" className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Nome da Regra</label>
                     <input
+                      id="reat-nome"
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
                       placeholder="Ex: Inativos 6m — Instagram"
@@ -340,14 +371,18 @@ function ReativacaoPage() {
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Dias de Inatividade (mínimo)</label>
+                    <label htmlFor="reat-dias" className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Dias de Inatividade (mínimo)</label>
                     <input
+                      id="reat-dias"
                       type="number"
                       value={newDays}
                       onChange={(e) => setNewDays(Number(e.target.value))}
                       min={30}
-                      className="mt-1 w-full h-9 px-3 rounded-lg bg-muted border-0 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      aria-invalid={!!newDaysError}
+                      aria-describedby={newDaysError ? "reat-dias-erro" : undefined}
+                      className={`mt-1 w-full h-9 px-3 rounded-lg bg-muted border-0 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary ${newDaysError ? "ring-1 ring-destructive" : ""}`}
                     />
+                    {newDaysError && <p id="reat-dias-erro" className="mt-1 text-[11px] text-destructive">{newDaysError}</p>}
                   </div>
                 </div>
 
@@ -374,8 +409,9 @@ function ReativacaoPage() {
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Modelo de Mensagem</label>
+                  <label htmlFor="reat-msg" className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Modelo de Mensagem</label>
                   <textarea
+                    id="reat-msg"
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
                     rows={3}
@@ -388,10 +424,10 @@ function ReativacaoPage() {
                 <div className="flex items-center justify-end pt-2 border-t border-border">
                   <button
                     onClick={handleCreateRule}
-                    disabled={!newName.trim()}
+                    disabled={!newName.trim() || !!newDaysError || !!newMessageError || savingRule}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Plus className="h-3.5 w-3.5" /> Criar Regra
+                    {savingRule ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} {savingRule ? "Criando..." : "Criar regra"}
                   </button>
                 </div>
               </div>
@@ -505,7 +541,12 @@ function ReativacaoPage() {
                           </div>
                         );
                       })}
-                      {filteredPatients.length === 0 && (
+                      {patientsError ? (
+                        <div role="alert" className="py-8 text-center text-xs text-destructive space-y-2">
+                          <p>Não foi possível carregar os pacientes desta regra. {patientsError}</p>
+                          <button type="button" onClick={() => setPatientsReload((n) => n + 1)} className="underline font-medium">Tentar de novo</button>
+                        </div>
+                      ) : filteredPatients.length === 0 && (
                         <div className="py-8 text-center text-xs text-muted-foreground">
                           Nenhum paciente corresponde aos critérios desta regra.
                         </div>
