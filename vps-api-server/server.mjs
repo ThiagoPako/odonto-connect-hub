@@ -36,6 +36,7 @@ import {
   extractEvolutionMessages, normalizeEvolutionAckStatus, maskWaIdentifiers,
 } from './whatsapp/adapters/evolution.mjs';
 import { createOpenWaAdapter } from './whatsapp/adapters/openwa.mjs';
+import { validarPaciente, CAMPOS_PACIENTE, quantidadeEstoque, TIPOS_MOVIMENTO_ESTOQUE } from './cadastros-validacao.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
 // crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
@@ -1036,6 +1037,37 @@ function looksLikeSupabaseAccessToken(decoded) {
     || !!decoded.user_metadata;
 }
 
+// Cache curto do estado do usuário no banco (ativo, papel, super-admin) para não consultar a cada
+// requisição. O token legado vale 7 dias: sem isso, quem foi desativado ou rebaixado seguia com o
+// acesso antigo. Falha aberta: erro de consulta não derruba o login (registra e segue como antes).
+const USUARIO_ATIVO_TTL_MS = 30_000;
+const cacheUsuarioAtivo = new Map();
+function esquecerUsuarioAtivo(userId) { if (userId) cacheUsuarioAtivo.delete(String(userId)); }
+// { inativo, role, is_super_admin } ou null (sem perfil / falha na consulta)
+async function estadoDoUsuario(userId) {
+  if (!userId) return null;
+  const chave = String(userId);
+  const c = cacheUsuarioAtivo.get(chave);
+  if (c && c.ate > Date.now()) return c.estado;
+  let estado = null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT COALESCE(p.active, true) AS active, COALESCE(p.is_super_admin, false) AS is_super_admin,
+              COALESCE((SELECT ur.role::text FROM user_roles ur WHERE ur.user_id = p.id LIMIT 1), p.role::text) AS role
+         FROM profiles p WHERE p.id = $1 LIMIT 1`, [chave]);
+    if (rows[0]) estado = { inativo: rows[0].active === false, role: rows[0].role || null, is_super_admin: !!rows[0].is_super_admin };
+  } catch (err) {
+    if (err?.code !== '42703' && err?.code !== '22P02') console.warn('[auth] checagem de usuário ativo falhou:', err?.code || err?.message);
+    return null;
+  }
+  if (cacheUsuarioAtivo.size > 5000) cacheUsuarioAtivo.clear();
+  cacheUsuarioAtivo.set(chave, { estado, ate: Date.now() + USUARIO_ATIVO_TTL_MS });
+  return estado;
+}
+async function usuarioDesativado(userId) {
+  return (await estadoDoUsuario(userId))?.inativo === true;
+}
+
 async function verifyUser(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
@@ -1091,7 +1123,13 @@ async function verifyUser(req) {
   // endpoints run with "sem tenant" and return empty messages.
   if (isValidTenantId(requestedTenantId)) {
     const validatedTenant = await validateRequestedTenantForUser(user, requestedTenantId);
-    if (validatedTenant) user.tenant_id = validatedTenant;
+    if (validatedTenant) {
+      // Super-admin entra em qualquer clínica pelo X-Tenant-Id: deixa rastro (sem query string).
+      if (user.is_super_admin && String(user.tenant_id || '') !== String(validatedTenant) && auditoriaSuperAdminNova(user.id, validatedTenant)) {
+        console.warn(`[AUDIT super-admin] user=${user.id} clinica=${validatedTenant} ${req.method} ${String(req.originalUrl || req.path || '').split('?')[0]}`);
+      }
+      user.tenant_id = validatedTenant;
+    }
   }
 
   // Set tenant context for RLS-backed queries. This must be session-level; the
@@ -1102,7 +1140,30 @@ async function verifyUser(req) {
     payload: decoded,
   });
 
+  // Estado atual do banco vale mais que o token (que dura 7 dias), com até 30 s de atraso:
+  // desativado perde o acesso; rebaixado perde o papel; super-admin revogado precisa entrar de novo.
+  const estado = await estadoDoUsuario(user.id);
+  if (estado) {
+    if (estado.inativo) throw new Error('Unauthorized');
+    if (estado.role) user.role = estado.role;
+    if (user.is_super_admin && !estado.is_super_admin) throw new Error('Unauthorized');
+  }
+
   return { user };
+}
+
+// Um registro por super-admin + clínica a cada 10 min: com polling/SSE, registrar toda requisição
+// afogava o log de auditoria.
+const AUDITORIA_SUPER_ADMIN_JANELA_MS = 10 * 60_000;
+const auditoriaSuperAdminVista = new Map();
+function auditoriaSuperAdminNova(userId, tenantId) {
+  const chave = `${userId}:${tenantId}`;
+  const agora = Date.now();
+  const ultima = auditoriaSuperAdminVista.get(chave);
+  if (ultima && agora - ultima < AUDITORIA_SUPER_ADMIN_JANELA_MS) return false;
+  if (auditoriaSuperAdminVista.size > 2000) auditoriaSuperAdminVista.clear();
+  auditoriaSuperAdminVista.set(chave, agora);
+  return true;
 }
 
 async function getProfileDisplayName(userId, fallback = 'Atendente') {
@@ -1187,6 +1248,40 @@ async function assertCanManageUser(actor, targetUserId) {
     const e = new Error('Usuário não encontrado'); e.status = 404; throw e;
   }
   return target;
+}
+
+// true se `userId` é o único admin ativo da clínica: rebaixar ou desativar deixaria a clínica sem
+// ninguém para gerir usuários (só o suporte destravaria).
+async function eUltimoAdminAtivo(tenantId, userId) {
+  const { rows } = await pool.query(
+    `SELECT p.id FROM profiles p
+       LEFT JOIN user_roles ur ON ur.user_id = p.id
+      WHERE p.tenant_id = $1 AND COALESCE(p.active, true) = true AND COALESCE(p.is_super_admin, false) = false
+        AND COALESCE(ur.role::text, p.role::text) = 'admin'`,
+    [tenantId]
+  );
+  const ids = new Set(rows.map(r => String(r.id)));
+  return ids.has(String(userId)) && ids.size === 1;
+}
+
+// Regras comuns de PUT /api/auth/users/:id e PATCH /api/my-tenant/users/:id. Devolve { status, error } ou null.
+async function checarMudancaDeUsuario(actor, target, { role, active }) {
+  const tenantId = target.tenant_id;
+  if (String(target.id) === String(actor.id) && active === false) {
+    return { status: 400, error: 'Você não pode desativar o próprio usuário' };
+  }
+  const rebaixa = role !== undefined && role !== 'admin';
+  if ((rebaixa || active === false) && tenantId && await eUltimoAdminAtivo(tenantId, target.id)) {
+    return { status: 409, error: 'A clínica precisa de pelo menos um administrador ativo. Promova outro usuário antes.' };
+  }
+  if (active === true && tenantId) {
+    const { rows } = await pool.query('SELECT COALESCE(active, true) AS active FROM profiles WHERE id = $1', [target.id]);
+    if (rows[0] && rows[0].active === false) {
+      const limite = await limiteUsuariosAtingido(tenantId);
+      if (limite) return { status: 403, error: limite };
+    }
+  }
+  return null;
 }
 
 function httpStatusOf(error, fallback = 500) {
@@ -1312,6 +1407,41 @@ function slugify(s) {
     .slice(0, 60);
 }
 
+const TENANT_STATUS_VALIDOS = ['trial', 'active', 'past_due', 'suspended', 'canceled'];
+const SAAS_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Usuários ativos (sem super-admin) da clínica.
+async function contarUsuariosAtivos(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM profiles
+      WHERE tenant_id = $1 AND COALESCE(active, true) = true AND COALESCE(is_super_admin, false) = false`,
+    [tenantId]
+  );
+  return rows[0]?.c ?? 0;
+}
+
+// Limite de usuários do plano, aplicado no backend em toda rota que cria ou reativa usuário.
+// Devolve a mensagem de erro, ou null se cabe mais um.
+async function limiteUsuariosAtingido(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT pl.max_usuarios FROM tenants t LEFT JOIN plans pl ON pl.id = t.plan_id WHERE t.id = $1`,
+    [tenantId]
+  );
+  const max = rows[0]?.max_usuarios;
+  if (max == null) return null;
+  return (await contarUsuariosAtivos(tenantId)) >= max ? `Limite de ${max} usuários do plano atingido` : null;
+}
+
+// Erro das rotas SaaS: 401/403 corretos, 400 para dado inválido, 500 sem texto do banco.
+function responderErroSaas(res, e, ctx) {
+  const status = httpStatusOf(e);
+  if (status !== 500) return res.status(status).json({ error: e.message });
+  if (e?.code === '22P02' || e?.code === '23514' || e?.code === '22007' || e?.code === '22008') return res.status(400).json({ error: 'Dados inválidos' });
+  if (e?.code === '23505') return res.status(409).json({ error: 'Já existe um registro com esse identificador' });
+  console.error(`[${ctx}]`, e?.message);
+  return res.status(500).json({ error: 'Erro interno' });
+}
+
 app.get('/api/plans', async (_req, res) => {
   try {
     const { rows } = await pool.query(
@@ -1435,7 +1565,7 @@ app.get('/api/my-tenant', async (req, res) => {
 
     res.json({ tenant: rows[0], subscription: subs[0] || null, invoices: invs });
   } catch (e) {
-    res.status(401).json({ error: e.message });
+    responderErroSaas(res, e, 'my-tenant');
   }
 });
 
@@ -1477,21 +1607,8 @@ app.post('/api/my-tenant/users', async (req, res) => {
     const { rows: existing } = await pool.query('SELECT id FROM profiles WHERE email = $1', [normalizedEmail]);
     if (existing.length > 0) return res.status(409).json({ error: 'Email já cadastrado' });
 
-    // Plan limit check
-    const { rows: planRows } = await pool.query(
-      `SELECT pl.max_usuarios FROM tenants t LEFT JOIN plans pl ON pl.id = t.plan_id WHERE t.id = $1`,
-      [user.tenant_id]
-    );
-    const maxUsers = planRows[0]?.max_usuarios;
-    if (maxUsers != null) {
-      const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*)::int as c FROM profiles WHERE tenant_id = $1 AND COALESCE(active, true) = true`,
-        [user.tenant_id]
-      );
-      if (countRows[0].c >= maxUsers) {
-        return res.status(403).json({ error: `Limite de ${maxUsers} usuários do plano atingido` });
-      }
-    }
+    const limite = await limiteUsuariosAtingido(user.tenant_id);
+    if (limite) return res.status(403).json({ error: limite });
 
     const id = crypto.randomUUID();
     const hash = await bcrypt.hash(password, 12);
@@ -1516,6 +1633,8 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
     if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { id } = req.params;
     const { name, email, role, active } = req.body || {};
+    // Só booleano de verdade: "false"/0 escapariam das travas (último admin, limite do plano)
+    if (active !== undefined && typeof active !== 'boolean') return res.status(400).json({ error: 'Campo "active" precisa ser true ou false' });
 
     // Mesma clínica e nunca um super-admin (assertCanManageUser), mesmo quando o ator é super-admin
     let target;
@@ -1530,9 +1649,9 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
       );
       if (taken.length) return res.status(409).json({ error: 'Email já em uso por outro usuário' });
     }
-    if (id === user.id && active === false) {
-      return res.status(400).json({ error: 'Você não pode desativar o próprio usuário' });
-    }
+    if (role !== undefined && !TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
+    const bloqueio = await checarMudancaDeUsuario(user, target, { role, active });
+    if (bloqueio) return res.status(bloqueio.status).json({ error: bloqueio.error });
 
     const updates = [];
     const values = [];
@@ -1544,12 +1663,14 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
       updates.push(`updated_at = NOW()`);
       values.push(id);
       await pool.query(`UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`, values);
+      esquecerUsuarioAtivo(id);
     }
     if (role !== undefined) {
       if (!TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
       await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
       await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
       await pool.query('UPDATE profiles SET role = $1, updated_at = NOW() WHERE id = $2', [role, id]);
+      esquecerUsuarioAtivo(id);
     }
     res.json({ success: true });
   } catch (e) {
@@ -1589,13 +1710,22 @@ app.post('/api/my-tenant/change-plan', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { plan_slug } = req.body || {};
     const { rows } = await pool.query('SELECT * FROM plans WHERE slug = $1 AND ativo = true', [plan_slug]);
     if (!rows[0]) return res.status(400).json({ error: 'Plano inválido' });
+    // Plano menor não pode ficar com mais usuários ativos do que permite.
+    if (rows[0].max_usuarios != null) {
+      const ativos = await contarUsuariosAtivos(user.tenant_id);
+      if (ativos > rows[0].max_usuarios) {
+        return res.status(409).json({ error: `O plano ${rows[0].nome} permite até ${rows[0].max_usuarios} usuários ativos e a clínica tem ${ativos}. Desative usuários antes de trocar.` });
+      }
+    }
     await pool.query('UPDATE tenants SET plan_id = $1, updated_at = NOW() WHERE id = $2', [rows[0].id, user.tenant_id]);
+    console.log(`[AUDIT saas] troca de plano clinica=${user.tenant_id} user=${user.id} plano=${rows[0].slug}`);
     res.json({ ok: true, plan: rows[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'my-tenant:change-plan');
   }
 });
 
@@ -1610,15 +1740,17 @@ app.get('/api/super-admin/tenants', async (req, res) => {
     `);
     res.json({ data: rows });
   } catch (e) {
-    res.status(403).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:tenants');
   }
 });
 
 app.patch('/api/super-admin/tenants/:id', async (req, res) => {
   try {
-    await verifySuperAdmin(req);
+    const { user: actor } = await verifySuperAdmin(req);
     const { id } = req.params;
+    if (!SAAS_UUID_RE.test(String(id))) return res.status(404).json({ error: 'Clínica não encontrada' });
     const { status, plan_slug, trial_ends_at, current_period_end } = req.body || {};
+    if (status && !TENANT_STATUS_VALIDOS.includes(status)) return res.status(400).json({ error: 'Status inválido' });
     const sets = [], vals = [];
     let i = 1;
     if (status) { sets.push(`status = $${i++}`); vals.push(status); }
@@ -1636,9 +1768,13 @@ app.patch('/api/super-admin/tenants/:id', async (req, res) => {
       `UPDATE tenants SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
       vals
     );
+    if (!rows[0]) return res.status(404).json({ error: 'Clínica não encontrada' });
+    const campos = Object.entries({ status, plan_slug, trial_ends_at, current_period_end })
+      .filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => `${k}=${v}`).join(' ');
+    console.log(`[AUDIT super-admin] alterou clinica=${id} actor=${actor.id} ${campos}`);
     res.json({ data: rows[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:tenant-update');
   }
 });
 
@@ -1648,7 +1784,7 @@ app.get('/api/super-admin/plans', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM plans ORDER BY display_order, preco_mensal');
     res.json({ data: rows });
   } catch (e) {
-    res.status(403).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:plans');
   }
 });
 
@@ -1667,7 +1803,7 @@ app.post('/api/super-admin/plans', async (req, res) => {
     );
     res.json({ data: rows[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:plan-create');
   }
 });
 
@@ -1772,7 +1908,7 @@ app.get('/api/super-admin/stats', async (req, res) => {
       pix_total AS (
         SELECT COALESCE(SUM(amount), 0) as total
         FROM invoices
-        WHERE status = 'paid' AND (payment_url LIKE '%pix%' OR id IN (SELECT id FROM invoices WHERE status = 'paid'))
+        WHERE status = 'paid' AND payment_url ILIKE '%pix%'
       )
       SELECT 
         (SELECT COALESCE(mrr, 0) FROM mrr_calc) as mrr,
@@ -1786,7 +1922,7 @@ app.get('/api/super-admin/stats', async (req, res) => {
 
     res.json({ data: stats[0] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErroSaas(res, e, 'super-admin:stats');
   }
 });
 
@@ -2295,6 +2431,8 @@ app.post('/api/auth/create-user', async (req, res) => {
       return res.status(400).json({ error: 'Perfil inválido' });
     }
     const userRole = role || 'user';
+    const limite = await limiteUsuariosAtingido(actor.tenant_id);
+    if (limite) return res.status(403).json({ error: limite });
 
     await pool.query('INSERT INTO profiles (id, name, email, role, password_hash, tenant_id) VALUES ($1, $2, $3, $4, $5, $6)', [id, name, email.toLowerCase().trim(), userRole, hash, actor.tenant_id]);
     await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, userRole]);
@@ -2523,11 +2661,14 @@ app.put('/api/auth/users/:id', async (req, res) => {
   try {
     const { user: actor } = await verifyAdmin(req);
     const { id } = req.params;
-    const { name, email, role, active } = req.body;
-    await assertCanManageUser(actor, id);
+    const { name, email, role, active } = req.body || {};
+    if (active !== undefined && typeof active !== 'boolean') return res.status(400).json({ error: 'Campo "active" precisa ser true ou false' });
+    const target = await assertCanManageUser(actor, id);
     if (role !== undefined && !TENANT_ASSIGNABLE_ROLES.includes(role)) {
       return res.status(400).json({ error: 'Perfil inválido' });
     }
+    const bloqueio = await checarMudancaDeUsuario(actor, target, { role, active });
+    if (bloqueio) return res.status(bloqueio.status).json({ error: bloqueio.error });
     if (email !== undefined) {
       const { rows: taken } = await pool.query(
         'SELECT 1 FROM profiles WHERE email = $1 AND id <> $2 LIMIT 1', [String(email).toLowerCase().trim(), id]
@@ -2546,11 +2687,13 @@ app.put('/api/auth/users/:id', async (req, res) => {
 
     values.push(id);
     await pool.query(`UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`, values);
+    esquecerUsuarioAtivo(id);
 
     if (role !== undefined) {
       await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
       await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
       await pool.query('UPDATE profiles SET role = $1 WHERE id = $2', [role, id]);
+      esquecerUsuarioAtivo(id);
     }
 
     res.json({ success: true });
@@ -5320,7 +5463,9 @@ app.get('/api/pacientes', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM pacientes WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[pacientes:list]', error.code || error.message);
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 
@@ -5381,8 +5526,9 @@ app.post('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
-    const cpf = normalizarCpf(req.body.cpf);
+    const validacao = validarPaciente(req.body);
+    if (validacao.erro) return res.status(400).json({ error: validacao.erro });
+    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = validacao.campos;
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO pacientes (id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
@@ -5400,11 +5546,21 @@ app.put('/api/pacientes/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
-    const cpf = normalizarCpf(req.body.cpf);
+    const { rows: atual } = await pool.query(
+      'SELECT cpf, telefone, email, data_nascimento FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (!atual.length) return res.status(404).json({ error: 'Paciente não encontrado' });
+    // Só grava os campos enviados (campo omitido não vira NULL); valida só o que mudou.
+    const validacao = validarPaciente(req.body, { original: atual[0], parcial: true });
+    if (validacao.erro) return res.status(400).json({ error: validacao.erro });
+    const sets = []; const params = [];
+    for (const k of CAMPOS_PACIENTE) {
+      if (k in validacao.campos) { params.push(validacao.campos[k]); sets.push(`${k}=$${params.length}`); }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id, user.tenant_id);
     const { rowCount } = await pool.query(
-      'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, sexo=$6, convenio=$7, endereco=$8, observacoes=$9, updated_at=NOW() WHERE id=$10 AND tenant_id=$11',
-      [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id, user.tenant_id]
+      `UPDATE pacientes SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`,
+      params
     );
     if (rowCount === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     res.json({ success: true });
@@ -5423,7 +5579,10 @@ app.delete('/api/pacientes/:id', async (req, res) => {
     if (rowCount === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    // Antes: 500 para quem não é admin (o 403 de verifyAdmin caía aqui).
+    const status = httpStatusOf(error);
+    if (status === 500) console.error('[pacientes:delete]', error.code || error.message);
+    res.status(status).json({ error: status === 500 ? 'Erro interno' : error.message });
   }
 });
 
@@ -5581,6 +5740,10 @@ app.get('/api/agenda', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json([]);
     const { data_inicio, data_fim, dentista_id } = req.query;
+    if ((data_inicio && !agendaDataValida(data_inicio)) || (data_fim && !agendaDataValida(data_fim))) {
+      return res.status(400).json({ error: 'Data inválida (use AAAA-MM-DD)' });
+    }
+    if (dentista_id && !PACIENTE_UUID_RE.test(String(dentista_id))) return res.status(400).json({ error: 'Profissional inválido' });
     // lembrete_status: 'na_fila' | 'aguardando' (enviado, sem resposta) | 'confirmado' | 'remarcar' | 'falhou' | null
     let query = `SELECT a.*,
       COALESCE(NULLIF(TRIM(p.nome), ''), a.paciente_nome) AS paciente_nome,
@@ -5641,6 +5804,17 @@ app.delete('/api/agenda/marcadores/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// Data AAAA-MM-DD que existe no calendário e hora HH:MM(:SS). Sem isso "07/11/2026"
+// era gravado como 11 de julho (DateStyle MDY) e "25:99" virava erro 500.
+function agendaDataValida(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(`${v}T12:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+}
+function agendaHoraValida(v) {
+  return typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(v);
+}
+
 // Nomes do paciente e do profissional lidos do cadastro da própria clínica (nunca do
 // corpo da requisição). Chamar depois de validarReferenciasDoTenant: aqui id ausente
 // ou não encontrado na clínica vira nome null.
@@ -5663,6 +5837,8 @@ app.post('/api/agenda', async (req, res) => {
       confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
       evento_titulo, sala, serie_id, marcadores, como_conheceu,
     } = req.body;
+    if (!agendaDataValida(data)) return res.status(400).json({ error: 'Data inválida (use AAAA-MM-DD)' });
+    if (!agendaHoraValida(hora)) return res.status(400).json({ error: 'Horário inválido (use HH:MM)' });
     const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
     if (refErro) return res.status(400).json({ error: refErro });
     const nomes = await resolverNomesAgenda(user.tenant_id, paciente_id, dentista_id);
@@ -5779,14 +5955,22 @@ app.delete('/api/agenda/:id', async (req, res) => {
     const { serie } = req.query; // ?serie=true → exclui toda a série
     const changed = () => broadcastSSE('agendamento_changed', { action: 'deleted', id: req.params.id }, tId);
     if (serie === 'true') {
-      const { rows } = await pool.query('SELECT serie_id FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
-      const sid = rows[0]?.serie_id;
+      if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Agendamento não encontrado' });
+      const { rows } = await pool.query('SELECT serie_id, data FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
+      if (!rows.length) return res.status(404).json({ error: 'Agendamento não encontrado' });
+      const sid = rows[0].serie_id;
       if (!sid) {
         const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
         changed();
         return res.json({ success: true, deleted: rowCount });
       }
-      const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE serie_id=$1 AND tenant_id=$2', [sid, tId]);
+      // "Este e os próximos": sessões anteriores e as já atendidas ficam (histórico do paciente).
+      // Antes apagava a série inteira, inclusive sessões finalizadas no passado.
+      const { rowCount } = await pool.query(
+        `DELETE FROM agendamentos WHERE serie_id=$1 AND tenant_id=$2 AND data >= $3
+            AND COALESCE(status, '') NOT IN ('finalizado', 'realizado', 'em_atendimento', 'faltou')`,
+        [sid, tId, agendaYmd(rows[0].data)]
+      );
       changed();
       return res.json({ success: true, deleted: rowCount });
     }
@@ -5861,7 +6045,9 @@ app.put('/api/agenda/:id', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const { id } = req.params;
-    const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, marcadores, como_conheceu } = req.body;
+    const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, marcadores, como_conheceu, categoria, categoria_cor } = req.body;
+    if (data && !agendaDataValida(data)) return res.status(400).json({ error: 'Data inválida (use AAAA-MM-DD)' });
+    if (hora && !agendaHoraValida(hora)) return res.status(400).json({ error: 'Horário inválido (use HH:MM)' });
     const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
     if (refErro) return res.status(400).json({ error: refErro });
     // dentista_nome vem do cadastro da clínica, não do corpo da requisição.
@@ -5881,6 +6067,9 @@ app.put('/api/agenda/:id', async (req, res) => {
     }
     if (Array.isArray(marcadores)) { params.push(JSON.stringify(marcadores)); sets.push(`marcadores = $${params.length}::jsonb`); }
     if (como_conheceu !== undefined) { params.push(como_conheceu || null); sets.push(`como_conheceu = $${params.length}`); }
+    // Editar agendamento troca o procedimento pelo catálogo: categoria e cor vinham e eram ignoradas.
+    if (categoria !== undefined) { params.push(categoria || null); sets.push(`categoria = $${params.length}`); }
+    if (categoria_cor !== undefined) { params.push(categoria_cor || null); sets.push(`categoria_cor = $${params.length}`); }
     // Horário liberado pela recepção (cancelado/desmarcado): registra quem e quando.
     if (status === 'cancelado' || status === 'desmarcado') {
       params.push(PACIENTE_UUID_RE.test(String(user.id || '')) ? user.id : null);
@@ -6380,6 +6569,28 @@ async function handleWaitlistOfferReply({ tenantId, phone, msgType, msgContent, 
 // FINANCEIRO
 // ═══════════════════════════════════════════════════════════════
 
+// Financeiro (bancos, salários, CPF de funcionários, movimentações) e comissões são só do
+// administrador — as telas /financeiro e /comissoes já são só de admin (routeAccess.ts), mas a
+// API aceitava qualquer usuário logado (recepção lia salários e lançava saídas no banco).
+app.use(['/api/fin', '/api/financeiro', '/api/comissoes'], async (req, res, next) => {
+  try {
+    await verifyAdmin(req);
+    next();
+  } catch (err) {
+    if (err.message === 'Admin access required') return res.status(403).json({ error: 'Apenas o administrador da clínica acessa o financeiro.' });
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[financeiro:acesso]', err.message);
+    return res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+/** Valor em reais positivo, arredondado a centavos; null se inválido. */
+function valorPositivoEmReais(v) {
+  const n = typeof v === 'string' ? Number(v.trim()) : Number(v);
+  if (v === null || v === undefined || v === '' || !Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
 app.get('/api/financeiro', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -6496,7 +6707,7 @@ app.delete('/api/dentistas/:id', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
+    if (error.message === 'Admin access required') return res.status(403).json({ error: 'Admin access required' });
     res.status(500).json({ error: error.message });
   }
 });
@@ -6642,7 +6853,7 @@ app.put('/api/dentistas/:id/horarios', async (req, res) => {
     res.json(rows[0]);
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
+    if (error.message === 'Admin access required') return res.status(403).json({ error: 'Admin access required' });
     res.status(500).json({ error: error.message });
   }
 });
@@ -6900,24 +7111,54 @@ app.post('/api/fin/movements', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { type, description, category, value, date, bank_account_id, bank_name, patient, bill_id, payroll_id } = req.body;
+    const { type, description, category, date, bank_account_id, bank_name, patient, bill_id, payroll_id } = req.body;
+    // Valor negativo invertia o sinal do saldo ("+-R$ 50,00"); tipo desconhecido virava saída.
+    if (type !== 'entrada' && type !== 'saida') return res.status(400).json({ error: 'Tipo inválido: use entrada ou saida.' });
+    const value = valorPositivoEmReais(req.body.value);
+    if (value === null) return res.status(400).json({ error: 'O valor precisa ser maior que zero.' });
     if (bank_account_id) {
       const { rows: bank } = await pool.query('SELECT 1 FROM fin_bank_accounts WHERE id=$1 AND tenant_id=$2', [bank_account_id, user.tenant_id]);
       if (bank.length === 0) return res.status(404).json({ error: 'Conta não encontrada' });
     }
+    // Lançamento, saldo e checagem de duplicidade na mesma transação. A linha da conta a pagar /
+    // folha fica travada (FOR UPDATE): dois cliques ou duas abas pagando a mesma conta não
+    // debitam duas vezes — o segundo recebe 409.
     const id = randomUUID();
-    await pool.query(
-      'INSERT INTO fin_movements (id,type,description,category,value,date,bank_account_id,bank_name,patient,bill_id,payroll_id,tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
-      [id, type, description, category, value, date, bank_account_id || null, bank_name || '', patient || null, bill_id || null, payroll_id || null, user.tenant_id]
-    );
-    // Update bank balance
-    if (bank_account_id) {
-      const op = type === 'entrada' ? '+' : '-';
-      await pool.query(`UPDATE fin_bank_accounts SET balance = balance ${op} $1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`, [value, bank_account_id, user.tenant_id]);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const origens = [
+        ['fin_bills', 'bill_id', bill_id, 'Conta a pagar não encontrada', 'Esta conta já foi paga.'],
+        ['fin_payrolls', 'payroll_id', payroll_id, 'Folha não encontrada', 'Esta folha já foi paga.'],
+      ];
+      for (const [tabela, coluna, origemId, naoAchou, jaPaga] of origens) {
+        if (!origemId) continue;
+        const { rows: dono } = await client.query(`SELECT id FROM ${tabela} WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, [origemId, user.tenant_id]);
+        if (dono.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: naoAchou }); }
+        const { rows: ja } = await client.query(`SELECT 1 FROM fin_movements WHERE ${coluna}=$1 AND tenant_id=$2 LIMIT 1`, [origemId, user.tenant_id]);
+        if (ja.length > 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: jaPaga }); }
+      }
+      await client.query(
+        'INSERT INTO fin_movements (id,type,description,category,value,date,bank_account_id,bank_name,patient,bill_id,payroll_id,tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+        [id, type, description, category, value, date, bank_account_id || null, bank_name || '', patient || null, bill_id || null, payroll_id || null, user.tenant_id]
+      );
+      if (bank_account_id) {
+        const op = type === 'entrada' ? '+' : '-';
+        await client.query(`UPDATE fin_bank_accounts SET balance = balance ${op} $1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`, [value, bank_account_id, user.tenant_id]);
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
     }
     const { rows } = await pool.query('SELECT * FROM fin_movements WHERE id=$1 AND tenant_id=$2', [id, user.tenant_id]);
     res.status(201).json(rows[0]);
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) {
+    console.error('[fin:movements:create]', error.message);
+    res.status(500).json({ error: 'Erro ao lançar a movimentação.' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -6974,7 +7215,13 @@ app.post('/api/estoque', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote } = req.body;
+    const { nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote } = req.body || {};
+    if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'Informe o nome do item' });
+    for (const [campo, v] of [['quantidade', quantidade], ['quantidade_minima', quantidade_minima]]) {
+      if (v !== undefined && v !== null && v !== '' && quantidadeEstoque(v) === null) {
+        return res.status(400).json({ error: `${campo === 'quantidade' ? 'Quantidade' : 'Estoque mínimo'} deve ser um número inteiro maior ou igual a zero` });
+      }
+    }
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO estoque (id, nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
@@ -6994,6 +7241,11 @@ app.put('/api/estoque/:id', async (req, res) => {
     const sets = []; const params = [];
     if (nome !== undefined) { params.push(nome); sets.push(`nome=$${params.length}`); }
     if (categoria !== undefined) { params.push(categoria); sets.push(`categoria=$${params.length}`); }
+    for (const [campo, v] of [['quantidade', quantidade], ['quantidade_minima', quantidade_minima]]) {
+      if (v !== undefined && quantidadeEstoque(v) === null) {
+        return res.status(400).json({ error: `${campo === 'quantidade' ? 'Quantidade' : 'Estoque mínimo'} deve ser um número inteiro maior ou igual a zero` });
+      }
+    }
     if (quantidade !== undefined) { params.push(quantidade); sets.push(`quantidade=$${params.length}`); }
     if (quantidade_minima !== undefined) { params.push(quantidade_minima); sets.push(`quantidade_minima=$${params.length}`); }
     if (unidade !== undefined) { params.push(unidade); sets.push(`unidade=$${params.length}`); }
@@ -7057,21 +7309,42 @@ app.post('/api/estoque/:id/movimentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { tipo, quantidade, motivo, usuario_nome } = req.body;
-    const { rows: item } = await pool.query('SELECT 1 FROM estoque WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
-    if (item.length === 0) return res.status(404).json({ error: 'Item não encontrado' });
-    const id = crypto.randomUUID();
-    await pool.query(
-      'INSERT INTO estoque_movimentos (id, item_id, tipo, quantidade, motivo, usuario_nome, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [id, req.params.id, tipo, quantidade, motivo, usuario_nome, user.tenant_id]
-    );
-    // Update stock quantity
-    const delta = tipo === 'entrada' ? quantidade : -quantidade;
-    await pool.query('UPDATE estoque SET quantidade = GREATEST(0, quantidade + $1), updated_at=NOW() WHERE id=$2 AND tenant_id=$3', [delta, req.params.id, user.tenant_id]);
+    const { tipo, motivo, usuario_nome } = req.body || {};
+    // Antes: quantidade negativa invertia a saída, tipo desconhecido subtraía, e a saída maior que o
+    // saldo gravava o movimento inteiro mas zerava o saldo (GREATEST) — histórico ≠ saldo.
+    if (!TIPOS_MOVIMENTO_ESTOQUE.includes(tipo)) return res.status(400).json({ error: 'Tipo deve ser entrada ou saida' });
+    const quantidade = quantidadeEstoque(req.body?.quantidade, { positivo: true });
+    if (quantidade === null) return res.status(400).json({ error: 'Quantidade deve ser um número inteiro maior que zero' });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: item } = await client.query('SELECT quantidade FROM estoque WHERE id=$1 AND tenant_id=$2 FOR UPDATE', [req.params.id, user.tenant_id]);
+      if (item.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Item não encontrado' }); }
+      const saldo = Number(item[0].quantidade) || 0;
+      if (tipo === 'saida' && quantidade > saldo) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: `Saldo insuficiente: há ${saldo} em estoque` });
+      }
+      const id = crypto.randomUUID();
+      await client.query(
+        'INSERT INTO estoque_movimentos (id, item_id, tipo, quantidade, motivo, usuario_nome, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [id, req.params.id, tipo, quantidade, motivo, usuario_nome, user.tenant_id]
+      );
+      const delta = tipo === 'entrada' ? quantidade : -quantidade;
+      await client.query('UPDATE estoque SET quantidade = quantidade + $1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3', [delta, req.params.id, user.tenant_id]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
     const { rows } = await pool.query('SELECT * FROM estoque WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json({ success: true, item: rows[0] });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    const status = httpStatusOf(error);
+    if (status === 500) console.error('[estoque:movimento]', error.code || error.message);
+    res.status(status).json({ error: status === 500 ? 'Erro interno' : error.message });
   }
 });
 
@@ -7218,6 +7491,8 @@ app.post('/api/tratamentos/:id/etapas', async (req, res) => {
     const { descricao, dente, valor, status, dentista_id, observacoes, ordem } = req.body;
     const { rows: trat } = await pool.query('SELECT 1 FROM tratamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     if (trat.length === 0) return res.status(404).json({ error: 'Tratamento não encontrado' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO tratamento_etapas (id, tratamento_id, descricao, dente, valor, status, dentista_id, observacoes, ordem, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
@@ -7234,6 +7509,8 @@ app.put('/api/tratamentos/etapas/:id', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { descricao, dente, valor, status, dentista_id, observacoes, ordem, data_realizada } = req.body;
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const sets = []; const params = [];
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
     if (dente !== undefined) { params.push(dente); sets.push(`dente=$${params.length}`); }
@@ -7295,11 +7572,23 @@ app.post('/api/comissoes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status } = req.body;
+    const { dentista_id, tratamento_id, paciente_id, percentual, data, procedimento, descricao, status } = req.body;
+    const valor = Number(req.body.valor);
+    if (!Number.isFinite(valor) || valor < 0) return res.status(400).json({ error: 'Valor da comissão inválido.' });
+    const perc = percentual === undefined || percentual === null || percentual === '' ? null : Number(percentual);
+    if (perc !== null && (!Number.isFinite(perc) || perc < 0 || perc > 100)) return res.status(400).json({ error: 'Percentual precisa estar entre 0 e 100.' });
+    if (status !== undefined && !['pendente', 'aprovado', 'pago'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
+    if (tratamento_id) {
+      const { rows: trat } = await pool.query('SELECT 1 FROM tratamentos WHERE id::text = $1 AND tenant_id = $2 LIMIT 1', [String(tratamento_id), user.tenant_id]);
+      if (!trat.length) return res.status(400).json({ error: 'Tratamento não encontrado nesta clínica.' });
+    }
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO comissoes (id, dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-      [id, dentista_id, tratamento_id, paciente_id, valor, percentual, data || new Date().toISOString().split('T')[0], procedimento, descricao, status || 'pendente', user.tenant_id]
+      // Data padrão no fuso da clínica (toISOString é UTC: depois das 21h gravava o dia seguinte)
+      [id, dentista_id, tratamento_id, paciente_id, Math.round(valor * 100) / 100, perc, data || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }), procedimento, descricao, status || 'pendente', user.tenant_id]
     );
     res.json({ id, success: true });
   } catch (error) {
@@ -7311,7 +7600,12 @@ app.put('/api/comissoes/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { valor, percentual, status, pago, descricao } = req.body;
+    const { valor, status, pago, descricao } = req.body || {};
+    // '' do campo vazio vira null (Number('') = 0 passava na validação e o '' cru dava 500 na coluna numérica)
+    const percentual = req.body?.percentual === '' ? null : req.body?.percentual;
+    if (status !== undefined && !['pendente', 'aprovado', 'pago'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+    if (valor !== undefined && !(Number.isFinite(Number(valor)) && Number(valor) >= 0)) return res.status(400).json({ error: 'Valor da comissão inválido.' });
+    if (percentual !== undefined && percentual !== null && !(Number.isFinite(Number(percentual)) && Number(percentual) >= 0 && Number(percentual) <= 100)) return res.status(400).json({ error: 'Percentual precisa estar entre 0 e 100.' });
     const sets = []; const params = [];
     if (valor !== undefined) { params.push(valor); sets.push(`valor=$${params.length}`); }
     if (percentual !== undefined) { params.push(percentual); sets.push(`percentual=$${params.length}`); }
@@ -7389,6 +7683,8 @@ app.post('/api/prontuarios', async (req, res) => {
       const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id=$1 AND tenant_id=$2', [paciente_id, user.tenant_id]);
       if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     }
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       `INSERT INTO prontuarios (id, paciente_id, dentista_id, descricao, tipo, titulo, odontograma, anexos, tenant_id, criado_por, criado_por_nome, versao)
@@ -7520,6 +7816,27 @@ async function congelarVersoesItens(itens, tenantId) {
   return out;
 }
 
+const ORCAMENTO_STATUS = ['pendente', 'aprovado', 'reprovado', 'em_tratamento', 'finalizado'];
+
+/**
+ * Confere os valores de um orçamento antes de gravar. `atual` = linha já gravada (no PUT),
+ * para validar desconto contra o subtotal que vai ficar. Devolve a mensagem de erro ou null.
+ */
+function erroValoresOrcamento(body, atual = null) {
+  const num = (v) => (v === undefined ? undefined : Number(v));
+  const total = num(body.valor_total) ?? Number(atual?.valor_total ?? 0);
+  const desc = num(body.desconto) ?? Number(atual?.desconto ?? 0);
+  if (!Number.isFinite(total) || total < 0) return 'Valor total inválido.';
+  if (!Number.isFinite(desc) || desc < 0) return 'O desconto não pode ser negativo.';
+  if (desc > total) return 'O desconto não pode passar do subtotal.';
+  if (body.parcelas !== undefined && body.parcelas !== null) {
+    const p = Number(body.parcelas);
+    if (!Number.isInteger(p) || p < 1 || p > 48) return 'Número de parcelas inválido (1 a 48).';
+  }
+  if (body.status !== undefined && !ORCAMENTO_STATUS.includes(body.status)) return 'Status inválido.';
+  return null;
+}
+
 app.post('/api/orcamentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -7528,6 +7845,10 @@ app.post('/api/orcamentos', async (req, res) => {
       paciente_id, dentista_id, itens, valor_total, desconto, status, validade,
       observacoes, forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
     } = req.body;
+    const erroValor = erroValoresOrcamento(req.body);
+    if (erroValor) return res.status(400).json({ error: erroValor });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const itensCongelados = await congelarVersoesItens(itens, user.tenant_id);
     const id = crypto.randomUUID();
     await pool.query(
@@ -7560,6 +7881,16 @@ app.put('/api/orcamentos/:id', async (req, res) => {
       itens, valor_total, desconto, status, validade, observacoes,
       forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
     } = req.body;
+    const { rows: atualRows } = await pool.query('SELECT status, valor_total, desconto FROM orcamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (atualRows.length === 0) return res.status(404).json({ error: 'Orçamento não encontrado' });
+    // Orçamento aprovado obriga as duas partes (CDC art. 40 §2º): preço, itens, desconto e
+    // condições só mudam enquanto está pendente. Status muda por PATCH /status.
+    const mexeEmValores = [itens, valor_total, desconto, forma_pagamento, parcelas].some((v) => v !== undefined);
+    if (mexeEmValores && atualRows[0].status !== 'pendente') {
+      return res.status(409).json({ error: 'Orçamento já aprovado ou encerrado: valores e condições não podem ser alterados. Crie um novo orçamento.' });
+    }
+    const erroValor = erroValoresOrcamento(req.body, atualRows[0]);
+    if (erroValor) return res.status(400).json({ error: erroValor });
     const sets = []; const params = [];
     if (itens !== undefined) {
       const itensCongelados = await congelarVersoesItens(itens, user.tenant_id);
@@ -8073,7 +8404,8 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
       // Recebimentos/pagamentos reais do mês: movimentações da tela Financeiro.
       safe(FIN_MES_SQL, ['entrada', user.tenant_id, mesIso, mesBr]),
       safe(FIN_MES_SQL, ['saida', user.tenant_id, mesIso, mesBr]),
-      safe(`SELECT status, COUNT(*)::int AS qtd, COALESCE(SUM(valor_total), 0)::numeric AS soma
+      // valor_total é o subtotal bruto; o que o paciente paga é valor_total − desconto.
+      safe(`SELECT status, COUNT(*)::int AS qtd, COALESCE(SUM(valor_total - COALESCE(desconto, 0)), 0)::numeric AS soma
             FROM orcamentos WHERE tenant_id = $1 GROUP BY status`, [user.tenant_id]),
       safe(`SELECT kanban_stage AS stage, COUNT(*)::int AS qtd FROM crm_leads WHERE tenant_id = $1 GROUP BY kanban_stage`, [user.tenant_id]),
       // pacientes não tem coluna status: ativo = teve agendamento nos últimos 12 meses.
@@ -8195,7 +8527,8 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
 app.get('/api/comercial/painel', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    const today = new Date().toISOString().split('T')[0];
+    // Dia de São Paulo (toISOString é UTC: depois das 21h o "hoje" virava amanhã).
+    const today = spClock().day;
     const requested = (req.query.attendantId || '').toString();
 
     // Admin pode passar attendantId arbitrário; caso contrário usa o próprio.
@@ -8224,7 +8557,7 @@ app.get('/api/comercial/painel', async (req, res) => {
         `SELECT COUNT(*)::int AS total
            FROM attendance_sessions
           WHERE attendant_id = $1
-            AND assigned_at::date = $2
+            AND (assigned_at AT TIME ZONE 'America/Sao_Paulo')::date = $2::date
             AND tenant_id = $3`,
         [attendantId, today, user.tenant_id]
       ),
@@ -8234,17 +8567,18 @@ app.get('/api/comercial/painel', async (req, res) => {
         `SELECT COUNT(DISTINCT a.id)::int AS total
            FROM agendamentos a
            JOIN crm_leads l ON l.paciente_id = a.paciente_id AND l.tenant_id = a.tenant_id
-          WHERE a.created_at::date = $1
+          WHERE (a.created_at AT TIME ZONE 'America/Sao_Paulo')::date = $1::date
             AND l.assigned_to::text = $2
             AND a.tenant_id = $3`,
         [today, attendantId, user.tenant_id]
       ),
-      // Leads pendentes do atendente: sem_resposta ou aguardando ação
+      // Leads pendentes do atendente: novos, em follow-up ou sem resposta.
+      // (Antes usava etapas que não existem no funil — primeiro_contato, em_negociacao.)
       safe(
         `SELECT COUNT(*)::int AS total
            FROM crm_leads
           WHERE assigned_to = $1
-            AND kanban_stage IN ('sem_resposta','primeiro_contato','em_negociacao')
+            AND kanban_stage IN ('lead','followup','followup_2','followup_3','sem_resposta')
             AND tenant_id = $2`,
         [attendantId, user.tenant_id]
       ),
@@ -8252,7 +8586,8 @@ app.get('/api/comercial/painel', async (req, res) => {
       safe(
         `SELECT COALESCE(NULLIF(origem,''), 'Outros') AS origin,
                 COUNT(*)::int AS leads,
-                COUNT(*) FILTER (WHERE kanban_stage IN ('paciente_agendado','em_atendimento','pos_consulta','finalizado'))::int AS convertidos
+                -- Convertido = virou paciente ou teve orçamento aprovado (as etapas antigas não existiam).
+                COUNT(*) FILTER (WHERE paciente_id IS NOT NULL OR status = 'paciente' OR kanban_stage = 'orcamento_aprovado')::int AS convertidos
            FROM crm_leads
           WHERE (assigned_to = $1 OR $1 IS NULL)
             AND tenant_id = $2
@@ -8271,7 +8606,7 @@ app.get('/api/comercial/painel', async (req, res) => {
            ) m ON true
           WHERE l.assigned_to::text = $1
             AND l.tenant_id = $2
-            AND l.kanban_stage IN ('sem_resposta','primeiro_contato')
+            AND l.kanban_stage IN ('followup','followup_2','followup_3','sem_resposta')
           ORDER BY l.updated_at ASC
           LIMIT 12`,
         [attendantId, user.tenant_id]
@@ -8296,8 +8631,9 @@ app.get('/api/comercial/painel', async (req, res) => {
 
     const stageToType = {
       sem_resposta: 'reativacao',
-      primeiro_contato: 'retorno',
-      em_negociacao: 'confirmacao',
+      followup: 'retorno',
+      followup_2: 'retorno',
+      followup_3: 'retorno',
     };
 
     const followUps = followUpsRows.rows.map(r => ({
@@ -8396,7 +8732,7 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       // Orçamentos do dentista
       safe(
         `SELECT o.id, o.paciente_id, p.nome as p_nome, o.itens,
-                o.valor_total, o.status, o.created_at
+                o.valor_total, o.desconto, o.status, o.created_at
            FROM orcamentos o
            LEFT JOIN pacientes p ON p.id = o.paciente_id AND p.tenant_id = o.tenant_id
           WHERE o.dentista_id = $1 AND o.tenant_id = $2
@@ -8489,7 +8825,8 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
         pacienteId: r.paciente_id || undefined,
         pacienteNome: r.p_nome || r.paciente_nome || 'Paciente',
         itens: norm,
-        total: Number(r.valor_total || norm.reduce((s, i) => s + i.valor * i.quantidade, 0)),
+        // Total que o paciente paga: subtotal − desconto (valor_total é o bruto)
+        total: Math.round((Number(r.valor_total || norm.reduce((s, i) => s + i.valor * i.quantidade, 0)) - (Number(r.desconto) || 0)) * 100) / 100,
         status: r.status || 'pendente',
         criadoEm: r.created_at,
       };
@@ -8711,6 +9048,7 @@ app.get('/api/reativacao/rules', async (req, res) => {
 app.post('/api/reativacao/rules', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     const { name, inactiveDays, origin, messageTemplate, status } = req.body || {};
     if (!name || !messageTemplate) {
       return res.status(400).json({ error: 'name e messageTemplate são obrigatórios' });
@@ -8737,6 +9075,7 @@ app.post('/api/reativacao/rules', async (req, res) => {
 app.put('/api/reativacao/rules/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     const { name, inactiveDays, origin, messageTemplate, status } = req.body || {};
     const sets = []; const params = [];
     if (name !== undefined) { params.push(String(name).slice(0, 200)); sets.push(`name=$${params.length}`); }
@@ -8780,6 +9119,7 @@ app.put('/api/reativacao/rules/:id', async (req, res) => {
 app.delete('/api/reativacao/rules/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     const r = await pool.query('DELETE FROM reactivation_rules WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id || null]);
     if (r.rowCount === 0) return res.status(404).json({ error: 'Regra não encontrada' });
     res.json({ success: true });
@@ -8821,6 +9161,7 @@ app.get('/api/reativacao/rules/:id/patients', async (req, res) => {
 app.post('/api/reativacao/rules/:id/send', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'reativacao')) return;
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const tenantId = String(user.tenant_id);
     const { rows: rulRows } = await pool.query(
@@ -9427,6 +9768,10 @@ app.get('/api/events', async (req, res) => {
   if (!authenticated || !isValidTenantId(tenantId)) {
     console.warn('📡 SSE connection rejected: authenticated tenant not resolved');
     return res.status(401).json({ error: 'Authenticated tenant not resolved' });
+  }
+  // Usuário desativado perde também o tempo real (o SSE não passa por verifyUser)
+  if (await usuarioDesativado(authenticatedUserId)) {
+    return res.status(401).json({ error: 'Usuário desativado' });
   }
 
   // Set headers for SSE
@@ -11546,6 +11891,7 @@ function marketingFlowHasHealthVars(trigger, steps) {
 app.post('/api/automations/flows', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id, name, description, type, active, trigger, steps, stats } = req.body;
     if (!name) return res.status(400).json({ error: 'name obrigatório' });
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -11568,6 +11914,7 @@ app.post('/api/automations/flows', async (req, res) => {
 app.put('/api/automations/flows/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id } = req.params;
     const { name, description, type, active, trigger, steps } = req.body;
     if (steps !== undefined || trigger !== undefined) {
@@ -11609,6 +11956,7 @@ app.put('/api/automations/flows/:id', async (req, res) => {
 app.delete('/api/automations/flows/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id } = req.params;
     const { rowCount } = await pool.query('DELETE FROM automation_flows WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]);
     if (!rowCount) return res.status(404).json({ error: 'Fluxo não encontrado' });
@@ -11622,6 +11970,7 @@ app.delete('/api/automations/flows/:id', async (req, res) => {
 app.patch('/api/automations/flows/:id/toggle', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { id } = req.params;
     const { rows } = await pool.query(
       `UPDATE automation_flows SET active = NOT active, updated_at = NOW() WHERE id = $1 AND tenant_id = $2 RETURNING active`,
@@ -11683,16 +12032,9 @@ app.get('/api/automations/solution-counts', async (req, res) => {
          AND NOT EXISTS (SELECT 1 FROM agendamentos b WHERE b.paciente_id = a.paciente_id AND b.tenant_id = a.tenant_id AND b.status IN ('realizado','confirmado','atendido'))`,
         [user.tenant_id]
       ),
-      // Inadimplência: financeiro com tipo receita e valor em parcelas vencidas (simplificado: orçamentos aprovados sem receita correspondente)
-      pool.query(
-        `SELECT COUNT(DISTINCT o.paciente_id) as total FROM orcamentos o
-         WHERE o.status = 'aprovado'
-         AND o.tenant_id = $1
-         AND NOT EXISTS (
-           SELECT 1 FROM financeiro f WHERE f.paciente_id = o.paciente_id AND f.tenant_id = o.tenant_id AND f.tipo = 'receita' AND f.valor >= o.valor_total
-         )`,
-        [user.tenant_id]
-      ),
+      // Inadimplência: sem contas a receber no sistema não há como saber quem está em atraso
+      // (a regra antiga contava todo orçamento aprovado). Fica 0 até existirem parcelas reais.
+      Promise.resolve({ rows: [{ total: 0 }] }),
       // Orçamentos em Aberto: orçamentos com status 'pendente'
       pool.query(
         `SELECT COUNT(DISTINCT paciente_id) as total FROM orcamentos WHERE status = 'pendente' AND tenant_id = $1`,
@@ -12916,6 +13258,7 @@ async function triggerAutomationFlows(triggerEvent, patientData) {
 app.post('/api/automations/enqueue', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { flowId, patientName, patientPhone, variables, instance } = req.body;
     if (!flowId || !patientPhone) return res.status(400).json({ error: 'flowId e patientPhone obrigatórios' });
 
@@ -12939,7 +13282,11 @@ app.post('/api/automations/enqueue', async (req, res) => {
     if (await isWhatsAppOptedOut(tenantId, phone)) {
       return res.status(409).json({ error: 'Este paciente pediu para não receber mensagens (SAIR).' });
     }
+    // Fluxo de marketing (inativos, aniversário, orçamento, lead novo) sai como marketing:
+    // rodapé SAIR e sem {{procedimento}}/{{valor}}, como no disparo automático do fluxo.
+    const isMarketing = AUTOMATION_MARKETING_TRIGGERS.has(flow.trigger_event);
     const vars = { nome: patientName || '', telefone: phone, ...stripWhatsAppControlVars(variables) };
+    if (isMarketing) { vars.procedimento = ''; vars.valor = ''; }
     const now = new Date();
     const jobIds = [];
 
@@ -12947,20 +13294,19 @@ app.post('/api/automations/enqueue', async (req, res) => {
       const step = steps[i];
       const delayMs = (step.delayMinutes || 0) * 60 * 1000;
       const scheduledAt = new Date(now.getTime() + delayMs);
-      const finalMessage = replaceVariables(step.message, vars);
+      const replaced = replaceVariables(step.message, vars);
+      const finalMessage = isMarketing ? withMarketingOptOutFooter(replaced) : replaced;
 
       const { rows } = await pool.query(
         `INSERT INTO automation_jobs (tenant_id, category, flow_id, flow_name, step_index, patient_name, patient_phone, instance, variables, message, channel, scheduled_at, trigger_event, expires_at)
-         VALUES ($1,'transactional',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'manual', $11::timestamptz + INTERVAL '7 days') RETURNING id`,
-        [tenantId, flow.id, flow.name, i, patientName || '', phone, instanceName, JSON.stringify(vars), finalMessage, step.channel || 'whatsapp', scheduledAt]
+         VALUES ($1,$12,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'manual', $11::timestamptz + INTERVAL '7 days') RETURNING id`,
+        [tenantId, flow.id, flow.name, i, patientName || '', phone, instanceName, JSON.stringify(vars), finalMessage, step.channel || 'whatsapp', scheduledAt,
+          isMarketing ? 'marketing' : 'transactional']
       );
       jobIds.push(rows[0].id);
     }
-
-    await pool.query(
-      `UPDATE automation_flows SET stats = jsonb_set(stats, '{sent}', to_jsonb(COALESCE((stats->>'sent')::int, 0) + $1)) WHERE id = $2`,
-      [steps.length, flow.id]
-    ).catch(() => {});
+    // stats.sent não é somado aqui: o gancho pós-envio já conta cada envio real
+    // (antes contava duas vezes: no enfileiramento e no envio).
 
     console.log(`🤖 Manual enqueue: ${steps.length} jobs for flow "${flow.name}" → ${maskPhone(phone)}`);
     res.json({ success: true, jobsCreated: jobIds.length, jobIds });
@@ -12994,11 +13340,13 @@ app.get('/api/automations/jobs', async (req, res) => {
 app.delete('/api/automations/jobs/cancel', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'automacoes')) return;
     const { flowId, patientPhone } = req.body || {};
     let sql = `UPDATE automation_jobs SET status = 'cancelled' WHERE status = 'pending'`;
     const vals = [];
+    // Sem filtro, cancelaria toda a fila da clínica (lembretes e confirmações inclusive).
+    if (!flowId && !patientPhone) return res.status(400).json({ error: 'Informe flowId ou patientPhone' });
     if (!user.is_super_admin) { vals.push(user.tenant_id || null); sql += ` AND tenant_id = $${vals.length}`; }
-    else if (!flowId && !patientPhone) return res.status(400).json({ error: 'Informe flowId ou patientPhone' });
     if (flowId) { vals.push(flowId); sql += ` AND flow_id = $${vals.length}`; }
     if (patientPhone) { vals.push(normalizeWhatsappNumber(patientPhone)); sql += ` AND patient_phone = $${vals.length}`; }
     const { rowCount } = await pool.query(sql, vals);
@@ -13092,6 +13440,28 @@ app.get('/api/automations/stats', async (req, res) => {
 // BROADCAST CAMPAIGNS (Disparos) CRUD
 // ═══════════════════════════════════════════════════════════════
 
+// Quem pode criar/alterar/disparar marketing — o mesmo de src/lib/routeAccess.ts.
+// Antes só a tela escondia: pela API qualquer perfil (ex.: dentista) disparava campanha.
+const COMERCIAL_WRITE_ROLES = {
+  campanhas: ['admin'],
+  automacoes: ['admin'],
+  reativacao: ['admin', 'recepcionista', 'comercial'],
+};
+async function userHasAnyRole(user, roles) {
+  if (user?.is_super_admin) return true;
+  if (roles.includes(user?.role)) return true;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM user_roles WHERE user_id = $1 AND role::text = ANY($2::text[]) LIMIT 1', [user?.id, roles]
+  ).catch(() => ({ rows: [] }));
+  return rows.length > 0;
+}
+// Responde 403 e devolve true quando o perfil não pode; uso: if (await denyComercial(res, user, 'campanhas')) return;
+async function denyComercial(res, user, area) {
+  if (await userHasAnyRole(user, COMERCIAL_WRITE_ROLES[area] || ['admin'])) return false;
+  res.status(403).json({ error: 'Seu perfil não tem permissão para esta ação.' });
+  return true;
+}
+
 // List all campaigns
 function mapCampaignRow(r) {
   return {
@@ -13135,6 +13505,7 @@ app.get('/api/campaigns', async (req, res) => {
 app.post('/api/campaigns', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, template, tipo, diasSemana, horarioInicio, horarioFim, dataInicio, dataFim,
       campanhaPerpetua, usarHorarioClinica, publico, filtroCustom, numeroEnvio,
@@ -13169,6 +13540,7 @@ app.post('/api/campaigns', async (req, res) => {
 app.put('/api/campaigns/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const fields = req.body;
     const sets = [];
@@ -13224,6 +13596,7 @@ app.put('/api/campaigns/:id', async (req, res) => {
 app.delete('/api/campaigns/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const { rowCount } = await pool.query(
       'DELETE FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]
@@ -13245,6 +13618,7 @@ app.delete('/api/campaigns/:id', async (req, res) => {
 app.patch('/api/campaigns/:id/toggle', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const { rows } = await pool.query(
       `UPDATE broadcast_campaigns SET ativo = NOT ativo, updated_at = NOW() WHERE id = $1 AND tenant_id = $2 RETURNING ativo`,
@@ -13268,6 +13642,7 @@ app.patch('/api/campaigns/:id/toggle', async (req, res) => {
 app.post('/api/campaigns/:id/duplicate', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     const { id } = req.params;
     const { rows } = await pool.query(
       'SELECT * FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]
@@ -13294,39 +13669,72 @@ app.post('/api/campaigns/:id/duplicate', async (req, res) => {
 });
 
 // Público da campanha — sempre só contatos da clínica dona da campanha.
+const CAMPAIGN_AUDIENCES = ['todos', 'ativos', 'inativos', 'aniversariantes'];
 async function resolveCampaignAudience(camp, tenantId) {
   const limit = Math.min(Number(camp.capacidade_diaria) || 232, 500);
   const publico = camp.publico || 'todos';
+  const spamDays = Math.max(1, Number(camp.intervalo_spam) || 7);
   const run = async (sql) => {
     try {
-      const { rows } = await pool.query(sql, [limit, tenantId]);
+      const { rows } = await pool.query(sql, [limit, tenantId, spamDays, String(camp.id || '')]);
       return rows;
     } catch (err) {
       console.error(`[campaign audience:${publico}]`, err.message);
       return [];
     }
   };
+  // Marketing só para quem já falou com a clínica no WhatsApp (mensagem recebida do
+  // contato, nesta clínica) — regra "opt-in registrado ou conversa prévia" de
+  // docs/whatsapp/diagnostico.md. Não existe registro de opt-in de marketing: sem
+  // conversa, o contato fica de fora (lead importado/cadastrado à mão, agenda do celular).
+  const conversou = (alias, { comLead = true, dias = null } = {}) => `EXISTS (
+       SELECT 1 FROM chat_messages cm
+        WHERE cm.tenant_id = $2 AND cm.sender = 'lead'
+          ${dias ? `AND cm.timestamp > NOW() - INTERVAL '${Number(dias)} days'` : ''}
+          AND (${comLead ? `cm.lead_id = ${alias}.id::text OR ` : ''}${sqlFoneIgual('cm.phone', `${alias}.telefone`)}))`;
+  // Quem já recebeu marketing no intervalo sai ANTES do LIMIT: senão a campanha recorrente pega
+  // sempre os mesmos primeiros contatos, descarta todos no dedupe e o resto da base nunca recebe.
+  const semMarketingRecente = (alias) => `NOT EXISTS (
+       SELECT 1 FROM automation_jobs aj
+        WHERE aj.tenant_id = $2 AND aj.status IN ('sent', 'pending')
+          AND COALESCE(aj.sent_at, aj.created_at) > NOW() - INTERVAL '1 day' * $3
+          AND ((aj.trigger_event = 'campaign' AND aj.flow_id = $4) OR aj.category = 'marketing')
+          AND ${sqlFoneIgual('aj.patient_phone', `${alias}.telefone`)})`;
   if (publico === 'ativos') {
     return run(`SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
-       INNER JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.tenant_id = cl.tenant_id
-       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.timestamp > NOW() - INTERVAL '180 days'
+       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != ''
+         AND ${conversou('cl', { dias: 180 })}
+         AND ${semMarketingRecente('cl')}
        LIMIT $1`);
   }
   if (publico === 'inativos') {
+    // Já conversou alguma vez, mas não nos últimos 90 dias (mesmo casamento por lead/telefone do
+    // conversou(); o JOIN por telefone exato tratava como inativo quem falou ontem).
     return run(`SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
-       LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.tenant_id = cl.tenant_id AND cm.timestamp > NOW() - INTERVAL '90 days'
-       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL
+       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != ''
+         AND ${conversou('cl')}
+         AND NOT ${conversou('cl', { dias: 90 })}
+         AND ${semMarketingRecente('cl')}
        LIMIT $1`);
   }
   if (publico === 'aniversariantes') {
-    return run(`SELECT nome, telefone FROM contatos
-       WHERE tenant_id = $2 AND telefone IS NOT NULL AND telefone != ''
-         AND EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM NOW())
+    return run(`SELECT nome, telefone FROM contatos c
+       WHERE c.tenant_id = $2 AND c.telefone IS NOT NULL AND c.telefone != ''
+         AND EXTRACT(MONTH FROM c.data_nascimento) = EXTRACT(MONTH FROM NOW())
+         AND ${conversou('c', { comLead: false })}
+         AND ${semMarketingRecente('c')}
        LIMIT $1`);
+  }
+  // 'custom' nunca teve filtro no servidor e caía em "todos": público desconhecido não envia.
+  if (publico !== 'todos') {
+    console.warn(`[campaign audience] público "${publico}" sem filtro no servidor: nenhum contato`);
+    return [];
   }
   return run(`SELECT DISTINCT COALESCE(c.nome, cl.nome) AS nome, COALESCE(c.telefone, cl.telefone) AS telefone
      FROM crm_leads cl LEFT JOIN contatos c ON c.telefone = cl.telefone AND c.tenant_id = cl.tenant_id
      WHERE cl.tenant_id = $2 AND COALESCE(c.telefone, cl.telefone) IS NOT NULL AND COALESCE(c.telefone, cl.telefone) != ''
+       AND ${conversou('cl')}
+       AND ${semMarketingRecente('cl')}
      LIMIT $1`);
 }
 
@@ -13453,9 +13861,12 @@ async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, ex
 
   const spamDays = camp.intervalo_spam || 7;
   const { rows: recentlySent } = await pool.query(
+    // Qualquer marketing (outra campanha, reativação, follow-up) no intervalo conta: o
+    // contato recebe no máximo 1 marketing por intervalo, não 1 por campanha.
     `SELECT DISTINCT patient_phone FROM automation_jobs
-      WHERE trigger_event = 'campaign' AND status IN ('sent', 'pending') AND tenant_id = $3
-        AND COALESCE(sent_at, created_at) > NOW() - INTERVAL '1 day' * $1 AND flow_id = $2`,
+      WHERE status IN ('sent', 'pending') AND tenant_id = $3
+        AND COALESCE(sent_at, created_at) > NOW() - INTERVAL '1 day' * $1
+        AND ((trigger_event = 'campaign' AND flow_id = $2) OR category = 'marketing')`,
     [spamDays, camp.id, tenantId]
   );
   const recentKeys = new Set(recentlySent.map(r => waPhoneKey(r.patient_phone)));
@@ -13527,12 +13938,16 @@ async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, ex
 app.post('/api/campaigns/:id/execute', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (await denyComercial(res, user, 'campanhas')) return;
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows: campRows } = await pool.query(
       'SELECT * FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]
     );
     if (campRows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
     const camp = campRows[0];
+    if (!CAMPAIGN_AUDIENCES.includes(camp.publico || 'todos')) {
+      return res.status(400).json({ error: 'O filtro personalizado ainda não está disponível. Escolha outro público.' });
+    }
     const tenantId = String(user.tenant_id);
     const today = spClock().day;
     let opts = {};
@@ -14012,21 +14427,11 @@ async function processSolutionTriggers() {
                 LIMIT 100`,
         params: [],
       },
-      {
-        trigger: 'Parcela ou pagamento em atraso',
-        query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, o.valor_total::text as valor
-                FROM orcamentos o
-                JOIN pacientes p ON o.paciente_id = p.id
-                WHERE p.tenant_id = $1
-                AND o.status = 'aprovado'
-                AND p.telefone IS NOT NULL AND p.telefone != ''
-                AND NOT EXISTS (
-                  SELECT 1 FROM financeiro f
-                  WHERE f.paciente_id = o.paciente_id AND f.tipo = 'receita' AND f.valor >= o.valor_total
-                )
-                LIMIT 100`,
-        params: [],
-      },
+      // 'Parcela ou pagamento em atraso' DESLIGADO: não existe contas a receber/parcelas no sistema.
+      // A regra antiga ("orçamento aprovado sem linha na tabela financeiro") marcava como
+      // inadimplente TODO paciente com orçamento aprovado — a tela Financeiro grava em
+      // fin_movements, nunca em financeiro — e mandava cobrança por WhatsApp todo dia a quem já
+      // tinha pago (CDC art. 42). Só religar com parcelas reais (vencimento + baixa por paciente).
       {
         trigger: 'Orçamento criado e não aprovado',
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone,
@@ -16854,13 +17259,11 @@ app.get('/api/ai/reports', async (req, res) => {
 });
 
 // ─── Export clinical reports as CSV ─────────────────────────
-// GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=&token=<JWT>
+// GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=
+// Só com Authorization: Bearer (a tela baixa por fetch). O JWT na URL (?token=) não vale mais:
+// ficava no histórico do navegador e no log de acesso do nginx por 7 dias.
 app.get('/api/ai/reports/export.csv', async (req, res) => {
   try {
-    // Allow token via query string for direct browser download links
-    if (req.query.token && !req.headers.authorization) {
-      req.headers.authorization = `Bearer ${req.query.token}`;
-    }
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { from, to, status, patientId, attendantId, q } = req.query;
@@ -16895,7 +17298,9 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
 
     const esc = (v) => {
       if (v === null || v === undefined) return '';
-      const s = String(v).replace(/"/g, '""').replace(/\r?\n/g, ' ');
+      let s = String(v).replace(/"/g, '""').replace(/\r?\n/g, ' ');
+      // Neutraliza fórmula no Excel/Sheets (nome do paciente pode vir do WhatsApp)
+      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
       return `"${s}"`;
     };
     const header = ['Data', 'Hora', 'Paciente', 'Dentista', 'Queixa', 'Procedimento', 'Dente/Região', 'Duração (min)', 'Nº Prescrições'].map(esc).join(',');
@@ -16942,6 +17347,30 @@ app.post('/api/consultations', async (req, res) => {
 
     if (!patient_id) return res.status(400).json({ error: 'patient_id é obrigatório' });
 
+    // Tudo precisa ser desta clínica. A tela manda o id do agendamento quando ele não tem
+    // paciente vinculado; se o agendamento tiver paciente, grava no paciente real (antes a
+    // consulta ficava fora do histórico dele).
+    let pacienteId = String(patient_id);
+    let agendamentoId = appointment_id ? String(appointment_id) : null;
+    if (await validarReferenciasDoTenant(user.tenant_id, { pacienteId })) {
+      const ag = PACIENTE_UUID_RE.test(pacienteId)
+        ? (await pool.query('SELECT paciente_id FROM agendamentos WHERE id = $1 AND tenant_id = $2 LIMIT 1', [pacienteId, user.tenant_id])).rows[0]
+        : null;
+      if (!ag) return res.status(404).json({ error: 'Paciente não encontrado' });
+      agendamentoId = agendamentoId || pacienteId;
+      if (ag.paciente_id) pacienteId = String(ag.paciente_id);
+    }
+    if (agendamentoId && agendamentoId !== String(patient_id)) {
+      const okAg = PACIENTE_UUID_RE.test(agendamentoId)
+        && (await pool.query('SELECT paciente_id FROM agendamentos WHERE id = $1 AND tenant_id = $2 LIMIT 1', [agendamentoId, user.tenant_id])).rows.length > 0;
+      if (!okAg) return res.status(400).json({ error: 'Agendamento não encontrado' });
+    }
+    if (clinical_report_id) {
+      const okRel = PACIENTE_UUID_RE.test(String(clinical_report_id))
+        && (await pool.query('SELECT 1 FROM clinical_reports WHERE id = $1 AND tenant_id = $2 LIMIT 1', [clinical_report_id, user.tenant_id])).rows.length > 0;
+      if (!okRel) return res.status(400).json({ error: 'Relatório clínico não encontrado' });
+    }
+
     const { rows } = await pool.query(
       `INSERT INTO consultations
         (patient_id, patient_name, appointment_id, dentist_id, dentist_name,
@@ -16951,7 +17380,7 @@ app.post('/api/consultations', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),$15)
        RETURNING id, finished_at`,
       [
-        patient_id, patient_name || null, appointment_id || null,
+        pacienteId, patient_name || null, agendamentoId,
         user.id, user.name,
         queixa_principal || null, procedimento || null, dente_regiao || null, observacoes || null,
         JSON.stringify(prescricoes || []), duration_seconds || 0, gravacoes_count || 0,
@@ -17501,7 +17930,7 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
-import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
+import { registerClinicorp, reconciliationTick, clinicorpBaseUrlPermitida, clinicorpBaseUrlSegura } from './clinicorp.mjs';
 registerClinicorp(app, pool, { verifyUser });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
@@ -17566,7 +17995,7 @@ app.put('/api/clinicorp/my-settings', async (req, res) => {
       }
     }
     if (base_url !== undefined && base_url !== null && base_url !== '') {
-      try { new URL(base_url); } catch { return res.status(400).json({ error: 'base_url inválida' }); }
+      if (!clinicorpBaseUrlPermitida(base_url)) return res.status(400).json({ error: 'base_url inválida: use o endereço da API da Clinicorp (https://api.clinicorp.com/...)' });
     }
     if (api_token !== undefined && api_token !== '' && api_token !== null) {
       if (typeof api_token !== 'string' || api_token.length < 8 || api_token.length > 2048) {
@@ -17652,14 +18081,15 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       const saved = rows[0] || {};
       api_token = api_token || saved.api_token;
       subscriber_id = subscriber_id || saved.subscriber_id;
-      base_url = base_url || saved.base_url;
+      // URL antiga salva fora da lista: usa o padrão, como o sync (só a URL enviada agora é recusada)
+      if (!base_url && saved.base_url) base_url = clinicorpBaseUrlSegura(saved.base_url);
     }
     base_url = base_url || CLINICORP_DEFAULT_BASE_URL;
     const emptyResult = { total_latency_ms: 0, base_url, subscriber_id: subscriber_id || '', results: [] };
 
     if (!api_token) return res.json({ ok: false, auth: 'invalid_token', error: 'Informe o API Token', ...emptyResult });
     if (!subscriber_id) return res.json({ ok: false, auth: 'invalid_token', error: 'Informe o Subscriber ID', ...emptyResult });
-    try { new URL(base_url); } catch { return res.status(400).json({ ok: false, error: 'URL base inválida' }); }
+    if (!clinicorpBaseUrlPermitida(base_url)) return res.status(400).json({ ok: false, error: 'URL base inválida: use o endereço da API da Clinicorp (https://api.clinicorp.com/...)' });
 
     const settings = { api_token, subscriber_id, base_url };
 
@@ -17813,7 +18243,7 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
 // A Clinicorp só aceita HTTP Basic (Usuário API : Token API); o token nunca
 // vai na URL.
 async function clinicorpFetchProbe(settings, pathName, opts = {}) {
-  const base = (settings.base_url || CLINICORP_DEFAULT_BASE_URL).replace(/\/$/, '');
+  const base = clinicorpBaseUrlSegura(settings.base_url).replace(/\/$/, '');
   const url = new URL(base + pathName);
   const apiUser = String(settings.subscriber_id || '').trim();
   const apiToken = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
@@ -18423,8 +18853,8 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS clinicorp_patient_id TEXT`,
       `ALTER TABLE clinicorp_financial_entries ADD COLUMN IF NOT EXISTS tenant_id UUID`,
       `ALTER TABLE clinicorp_monthly_summary ADD COLUMN IF NOT EXISTS tenant_id UUID`,
-      `UPDATE clinicorp_financial_entries SET tenant_id = (SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1) WHERE tenant_id IS NULL`,
-      `UPDATE clinicorp_monthly_summary SET tenant_id = (SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1) WHERE tenant_id IS NULL`,
+      // (Removido 2026-11-07) UPDATE ... SET tenant_id = <clínica do admin mais antigo> WHERE tenant_id IS NULL:
+      // a cada boot dava o financeiro sem dono para uma clínica qualquer.
       `ALTER TABLE clinicorp_monthly_summary DROP CONSTRAINT IF EXISTS clinicorp_monthly_summary_source_period_month_business_id_key`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_clinicorp_monthly_summary_tenant_period ON clinicorp_monthly_summary(source, period_month, business_id, tenant_id)`,
 

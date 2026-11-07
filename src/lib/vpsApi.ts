@@ -1378,10 +1378,11 @@ export const aiApi = {
     }>('/ai/reports', { params });
   },
 
-  exportReportsCsvUrl: (filters?: {
+  /** Baixa o CSV com o JWT no cabeçalho (nunca na URL: ficaria no histórico e no log do servidor). */
+  downloadReportsCsv: async (filters?: {
     from?: string; to?: string; status?: 'todos' | 'com_prescricao' | 'sem_prescricao';
     patientId?: string; attendantId?: string; q?: string;
-  }) => {
+  }): Promise<{ error: string | null }> => {
     const params = new URLSearchParams();
     if (filters?.from) params.set('from', filters.from);
     if (filters?.to) params.set('to', filters.to);
@@ -1389,9 +1390,26 @@ export const aiApi = {
     if (filters?.patientId) params.set('patientId', filters.patientId);
     if (filters?.attendantId) params.set('attendantId', filters.attendantId);
     if (filters?.q) params.set('q', filters.q);
-    const token = getToken();
-    if (token) params.set('token', token);
-    return `${VPS_API_BASE}/ai/reports/export.csv?${params.toString()}`;
+    try {
+      const headers = await getAuthHeaders();
+      delete headers['Content-Type'];
+      const res = await fetch(`${VPS_API_BASE}/ai/reports/export.csv?${params.toString()}`, { headers });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({} as { error?: string }));
+        return { error: body?.error || `HTTP ${res.status}` };
+      }
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `relatorios-clinicos-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      return { error: null };
+    } catch (error: unknown) {
+      return { error: error instanceof Error ? error.message : 'Erro de rede' };
+    }
   },
 
   generateFollowupMessages: (body: { reportId: string; patientName?: string; patientPhone?: string }) =>
