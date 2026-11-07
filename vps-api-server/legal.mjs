@@ -14,6 +14,7 @@
 //   GET  /api/legal/aceites        admin da clínica: histórico de aceites da própria clínica
 //   POST /api/legal/documentos     super-admin: publica versão { documento, versao, texto, dias_aviso? }
 import crypto from 'crypto';
+import { clientIp } from './rate-limit.mjs';
 
 export const DOCUMENTOS = ['termos', 'politica', 'modelo_clinica'];
 // Documentos que todo admin de clínica precisa ter aceitado na versão vigente.
@@ -22,7 +23,9 @@ export const DIAS_AVISO_PADRAO = 30;
 const VERSAO_RE = /^[0-9A-Za-z.\-]{1,20}$/;
 
 export const hashTexto = (texto) => crypto.createHash('sha256').update(String(texto), 'utf8').digest('hex');
-const ipDe = (req) => String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().slice(0, 64) || null;
+// IP do aceite: req.ip (trust proxy só do loopback) ou o X-Real-IP do nginx. Nunca o 1º valor do
+// X-Forwarded-For, que o próprio cliente escreve.
+export const ipDe = (req) => String(clientIp(req) || '').slice(0, 64) || null;
 
 // Grava um aceite. `db` pode ser um client em transação. Devolve a linha ou null se a versão não existe.
 export async function registrarAceite(db, { tenantId, usuarioId, documento, versao, ip, userAgent }) {
@@ -49,6 +52,39 @@ export async function registrarAceite(db, { tenantId, usuarioId, documento, vers
     }
   }
   return rows[0];
+}
+
+// Versões que o cadastro aceita: a vigente de cada documento ou uma publicada que ainda está no
+// período de aviso (quem se cadastra já lê o texto novo). Versão não publicada ou antiga → erro:
+// sem isso o body escolhia qualquer versão e a clínica nunca via a tela da versão nova.
+// Devolve { erro } (400) ou { hashes: { termos, politica } }. Tabela ausente (migração pendente):
+// { hashes: null } e o cadastro segue como antes.
+export async function validarVersoesNoCadastro(db, { termosVersao, politicaVersao }) {
+  const pedidas = [['termos', termosVersao], ['politica', politicaVersao]].filter(([, v]) => v);
+  if (!pedidas.length) return { hashes: {} };
+  let rows;
+  try {
+    ({ rows } = await db.query(
+      `SELECT documento, versao, hash_texto, vigente_em <= NOW() AS em_vigor, vigente_em
+         FROM documentos_legais_versoes WHERE documento = ANY($1::text[])
+        ORDER BY documento, vigente_em DESC`, [pedidas.map(([d]) => d)]));
+  } catch (e) {
+    if (e?.code === '42P01') return { hashes: null };
+    throw e;
+  }
+  const hashes = {};
+  for (const [documento, versao] of pedidas) {
+    const doDoc = rows.filter(r => r.documento === documento);
+    const vigente = doDoc.find(r => r.em_vigor);
+    const pedida = doDoc.find(r => r.versao === String(versao));
+    const aceitavel = pedida && (pedida === vigente || !pedida.em_vigor);
+    if (!aceitavel) {
+      const nome = documento === 'termos' ? 'dos Termos de Uso' : 'da Política de Privacidade';
+      return { erro: `A versão ${String(versao).slice(0, 20)} ${nome} não é a publicada${vigente ? ` (em vigor: ${vigente.versao})` : ''}. Recarregue a página e aceite de novo.` };
+    }
+    hashes[documento] = pedida.hash_texto || null;
+  }
+  return { hashes };
 }
 
 // No cadastro da clínica: dentro da transação do signup, com SAVEPOINT para que a falta da
@@ -84,20 +120,22 @@ export async function pendenciasDaClinica(db, tenantId) {
       WHERE documento = ANY($1::text[])
       ORDER BY documento, vigente_em DESC`, [DOCUMENTOS_OBRIGATORIOS]);
   const { rows: aceites } = await db.query(
-    `SELECT DISTINCT documento, versao FROM aceites_documentos WHERE tenant_id = $1 AND documento = ANY($2::text[])`,
+    `SELECT DISTINCT documento, versao, hash_texto FROM aceites_documentos WHERE tenant_id = $1 AND documento = ANY($2::text[])`,
     [tenantId, DOCUMENTOS_OBRIGATORIOS]);
-  const aceito = new Set(aceites.map(a => `${a.documento}@${a.versao}`));
+  // Aceite só conta com o mesmo hash do texto publicado (as 1.0 não têm hash: null com null).
+  const chave = (documento, versao, hash) => `${documento}@${versao}#${hash || ''}`;
+  const aceito = new Set(aceites.map(a => chave(a.documento, a.versao, a.hash_texto)));
   const agora = new Date();
   const pendentes = [];
   const avisos = [];
   for (const doc of DOCUMENTOS_OBRIGATORIOS) {
     const doDoc = versoes.filter(v => v.documento === doc);
     const vigente = doDoc.find(v => new Date(v.vigente_em) <= agora);
-    if (vigente && !aceito.has(`${doc}@${vigente.versao}`)) {
+    if (vigente && !aceito.has(chave(doc, vigente.versao, vigente.hash_texto))) {
       pendentes.push({ documento: doc, versao: vigente.versao, vigente_em: vigente.vigente_em, hash_texto: vigente.hash_texto });
     }
     for (const futura of doDoc.filter(v => new Date(v.vigente_em) > agora)) {
-      if (!aceito.has(`${doc}@${futura.versao}`)) {
+      if (!aceito.has(chave(doc, futura.versao, futura.hash_texto))) {
         avisos.push({ documento: doc, versao: futura.versao, avisado_em: futura.avisado_em, vigente_em: futura.vigente_em });
       }
     }

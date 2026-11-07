@@ -29,7 +29,12 @@ function responder(sql, params = []) {
   if (/^SELECT documento, versao, hash_texto, avisado_em, vigente_em FROM documentos_legais_versoes/.test(text)) {
     return { rows: versoes.filter(v => params[0].includes(v.documento)).sort((a, b) => (a.vigente_em < b.vigente_em ? 1 : -1)) };
   }
-  if (/^SELECT DISTINCT documento, versao FROM aceites_documentos WHERE tenant_id = \$1/.test(text)) {
+  if (/^SELECT documento, versao, hash_texto, vigente_em <= NOW\(\) AS em_vigor/.test(text)) {
+    return { rows: versoes.filter(v => params[0].includes(v.documento))
+      .map(v => ({ ...v, em_vigor: new Date(v.vigente_em) <= new Date() }))
+      .sort((a, b) => (a.vigente_em < b.vigente_em ? 1 : -1)) };
+  }
+  if (/^SELECT DISTINCT documento, versao, hash_texto FROM aceites_documentos WHERE tenant_id = \$1/.test(text)) {
     return { rows: aceites.filter(a => a.tenant_id === params[0]) };
   }
   if (/^SELECT hash_texto FROM documentos_legais_versoes WHERE documento = \$1 AND versao = \$2/.test(text)) {
@@ -37,7 +42,7 @@ function responder(sql, params = []) {
     return { rows: v ? [{ hash_texto: v.hash_texto }] : [] };
   }
   if (/^INSERT INTO aceites_documentos/.test(text)) {
-    aceites.push({ tenant_id: params[0], documento: params[2], versao: params[3] });
+    aceites.push({ tenant_id: params[0], usuario_id: params[1], documento: params[2], versao: params[3], hash_texto: params[4] });
     return { rows: [{ id: 1, documento: params[2], versao: params[3], hash_texto: params[4], aceito_em: new Date().toISOString() }], rowCount: 1 };
   }
   if (/^INSERT INTO documentos_legais_versoes/.test(text)) {
@@ -73,7 +78,7 @@ afterAll(async () => { await pool.end(); });
 describe('cadastro da clínica', () => {
   test('grava um aceite por documento em aceites_documentos, com hash e IP, e mantém as colunas de tenants', async () => {
     versoes[0].hash_texto = hashTexto('Termos de uso versão 1.0 ...');
-    const res = await request(app).post('/api/auth/signup-clinic').set('X-Forwarded-For', '203.0.113.7, 10.0.0.1')
+    const res = await request(app).post('/api/auth/signup-clinic').set('X-Forwarded-For', '10.0.0.1, 203.0.113.7')
       .send({ clinic_name: 'Clínica Nova', admin_name: 'Admin', email: 'novo@b.test', password: 'senha-forte-1', termos_versao: '1.0', politica_versao: '1.0' });
     expect(res.status).toBe(200);
     const ins = sqlLog.filter(q => /^INSERT INTO aceites_documentos/.test(q.text));
@@ -84,6 +89,49 @@ describe('cadastro da clínica', () => {
     expect(termos.params[5]).toBe('203.0.113.7');
     expect(sqlLog.find(q => /^INSERT INTO tenants/.test(q.text)).text).toMatch(/termos_versao, politica_versao/);
     expect(sqlLog.some(q => /SAVEPOINT aceite_documento/.test(q.text))).toBe(true);
+  });
+
+  test('IP do aceite não vem do 1º valor do X-Forwarded-For (forjável): usa o IP visto pelo proxy confiável', async () => {
+    const res = await request(app).post('/api/auth/signup-clinic').set('X-Forwarded-For', '6.6.6.6, 203.0.113.50')
+      .send({ clinic_name: 'Clínica Nova', admin_name: 'Admin', email: 'ip@b.test', password: 'senha-forte-1', termos_versao: '1.0', politica_versao: '1.0' });
+    expect(res.status).toBe(200);
+    const ips = sqlLog.filter(q => /^INSERT INTO aceites_documentos/.test(q.text)).map(q => q.params[5]);
+    expect(ips).toEqual(['203.0.113.50', '203.0.113.50']);
+  });
+
+  test('versão não publicada no body: 400 com mensagem clara, sem criar a clínica', async () => {
+    const res = await request(app).post('/api/auth/signup-clinic')
+      .send({ clinic_name: 'Clínica Nova', admin_name: 'Admin', email: 'v9@b.test', password: 'senha-forte-1', termos_versao: '9.9', politica_versao: '1.0' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/9\.9 dos Termos de Uso não é a publicada \(em vigor: 1\.0\)/);
+    expect(sqlLog.some(q => /^INSERT INTO (tenants|aceites_documentos)/.test(q.text))).toBe(false);
+  });
+
+  test('versão publicada mas já substituída pela vigente: 400', async () => {
+    versoes.push({ documento: 'politica', versao: '2.0', hash_texto: 'hp2', avisado_em: dias(-31), vigente_em: dias(-1) });
+    const res = await request(app).post('/api/auth/signup-clinic')
+      .send({ clinic_name: 'Clínica Nova', admin_name: 'Admin', email: 'velha@b.test', password: 'senha-forte-1', termos_versao: '1.0', politica_versao: '1.0' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/da Política de Privacidade não é a publicada \(em vigor: 2\.0\)/);
+    expect(sqlLog.some(q => /^INSERT INTO tenants/.test(q.text))).toBe(false);
+  });
+
+  test('versão nova ainda no aviso de 30 dias: o cadastro pode aceitá-la (com o hash dela)', async () => {
+    versoes.push({ documento: 'termos', versao: '2.0', hash_texto: 'ht2', avisado_em: dias(-5), vigente_em: dias(25) });
+    const res = await request(app).post('/api/auth/signup-clinic')
+      .send({ clinic_name: 'Clínica Nova', admin_name: 'Admin', email: 'v2@b.test', password: 'senha-forte-1', termos_versao: '2.0', politica_versao: '1.0' });
+    expect(res.status).toBe(200);
+    const termos = sqlLog.find(q => /^INSERT INTO aceites_documentos/.test(q.text) && q.params[2] === 'termos');
+    expect(termos.params.slice(2, 5)).toEqual(['termos', '2.0', 'ht2']);
+  });
+
+  test('multi-clínica: tenant_id/usuario_id do body são ignorados; vale a clínica criada', async () => {
+    const res = await request(app).post('/api/auth/signup-clinic').set('X-Tenant-Id', tenantA)
+      .send({ clinic_name: 'Clínica Nova', admin_name: 'Admin', email: 'mt@b.test', password: 'senha-forte-1', termos_versao: '1.0', politica_versao: '1.0', tenant_id: tenantA, usuario_id: adminA });
+    expect(res.status).toBe(200);
+    const ins = sqlLog.filter(q => /^INSERT INTO aceites_documentos/.test(q.text));
+    expect(ins).toHaveLength(2);
+    for (const q of ins) expect(q.params.slice(0, 2)).toEqual([tenantB, '55555555-5555-5555-5555-555555555555']);
   });
 
   test('tabela de aceites ausente (migração pendente) não derruba o cadastro', async () => {
@@ -129,6 +177,14 @@ describe('GET /api/legal/pendencias', () => {
     expect(res.body.precisa_aceitar).toBe(true);
   });
 
+  test('aceite da versão vigente com hash diferente do publicado não conta: continua pendente', async () => {
+    versoes.push({ documento: 'termos', versao: '2.0', hash_texto: 'hash-certo', avisado_em: dias(-31), vigente_em: dias(-1) });
+    aceites.push({ tenant_id: tenantA, documento: 'termos', versao: '2.0', hash_texto: 'hash-outro' },
+      { tenant_id: tenantA, documento: 'politica', versao: '1.0', hash_texto: null });
+    const res = await request(app).get('/api/legal/pendencias').set('Authorization', `Bearer ${token()}`);
+    expect(res.body.pendentes).toEqual([expect.objectContaining({ documento: 'termos', versao: '2.0', hash_texto: 'hash-certo' })]);
+  });
+
   test('aceite de outra clínica não conta', async () => {
     aceites.push({ tenant_id: tenantB, documento: 'termos', versao: '1.0' }, { tenant_id: tenantB, documento: 'politica', versao: '1.0' });
     const res = await request(app).get('/api/legal/pendencias').set('Authorization', `Bearer ${token()}`);
@@ -153,6 +209,17 @@ describe('POST /api/legal/aceites', () => {
     expect(ins.params.slice(0, 6)).toEqual([tenantA, adminA, 'termos', '2.0', 'hash-v2', '198.51.100.2']);
     const upd = sqlLog.find(q => /^UPDATE tenants SET termos_versao/.test(q.text));
     expect(upd.params).toEqual([tenantA, '2.0', '198.51.100.2']);
+  });
+
+  test('multi-clínica: grava a clínica e o usuário do token, não os do body nem do X-Tenant-Id; IP forjado no XFF ignorado', async () => {
+    const res = await request(app).post('/api/legal/aceites').set('Authorization', `Bearer ${token()}`)
+      .set('X-Tenant-Id', tenantB).set('X-Forwarded-For', '6.6.6.6, 198.51.100.9')
+      .send({ documento: 'termos', versao: '1.0', tenant_id: tenantB, usuario_id: '99999999-9999-9999-9999-999999999999' });
+    expect(res.status).toBe(201);
+    const ins = sqlLog.find(q => /^INSERT INTO aceites_documentos/.test(q.text));
+    expect(ins.params.slice(0, 2)).toEqual([tenantA, adminA]);
+    expect(ins.params[5]).toBe('198.51.100.9');
+    expect(aceites.filter(a => a.tenant_id === tenantB)).toHaveLength(0);
   });
 
   test('tenants sem as colunas antigas: o aceite vale do mesmo jeito', async () => {

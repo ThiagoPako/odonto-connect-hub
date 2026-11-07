@@ -1349,6 +1349,13 @@ app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
     const plan = planRows[0];
     if (!plan) return res.status(400).json({ error: 'Plano inválido' });
 
+    // Só a versão vigente (ou publicada em aviso) de cada documento; versão inventada no body → 400.
+    const versoesAceite = await validarVersoesNoCadastro(client, {
+      termosVersao: termos_versao ? String(termos_versao) : null,
+      politicaVersao: politica_versao ? String(politica_versao) : null,
+    });
+    if (versoesAceite.erro) return res.status(400).json({ error: versoesAceite.erro });
+
     await client.query('BEGIN');
 
     const baseSlug = slugify(clinic_name) || 'clinica';
@@ -1388,7 +1395,7 @@ app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
       tenantId: tenant.id, usuarioId: profile.id,
       termosVersao: termos_versao ? String(termos_versao) : null,
       politicaVersao: politica_versao ? String(politica_versao) : null,
-      ip: String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim() || null,
+      ip: ipDe(req),
       userAgent: req.headers['user-agent'],
     });
 
@@ -17425,7 +17432,7 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
 import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
-import { registerLegal, registrarAceitesNoSignup } from './legal.mjs';
+import { registerLegal, registrarAceitesNoSignup, validarVersoesNoCadastro, ipDe } from './legal.mjs';
 registerClinicorp(app, pool, { verifyUser });
 // Aceite de Termos/Política com prova (aceites_documentos) e pendências de versão nova.
 registerLegal(app, { pool, verifyUser, verifyAdmin, verifySuperAdmin });
