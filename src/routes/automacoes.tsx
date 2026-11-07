@@ -1409,6 +1409,9 @@ function SolutionsGrid({
                 <Switch
                   checked={!!isActive}
                   onCheckedChange={handleToggle}
+                  // Solução sem base real fica travada; se já estava ligada, ainda dá para desligar
+                  disabled={!!sol.indisponivel && !isActive}
+                  aria-label={sol.indisponivel && !isActive ? `${sol.name}: indisponível` : `Ligar ou desligar ${sol.name}`}
                   className="data-[state=checked]:bg-primary"
                 />
                 {isActive && (
@@ -1439,6 +1442,9 @@ function SolutionsGrid({
 
               {/* Description */}
               <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">{sol.description}</p>
+              {sol.indisponivel && (
+                <p className="text-[11px] text-warning bg-warning/10 rounded-lg px-2 py-1.5 mb-3 leading-relaxed">{sol.indisponivel}</p>
+              )}
 
               {/* Patient count + sent messages */}
               <div className="flex items-center gap-2 mb-3">
