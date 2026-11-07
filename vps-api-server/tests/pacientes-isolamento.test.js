@@ -102,9 +102,10 @@ describe('Isolamento entre clínicas — rotas /api/pacientes/:id', () => {
     test('PUT /api/pacientes/:id retorna 404, filtra por tenant e não dispara Clinicorp', async () => {
       const res = await chamar('put', `/api/pacientes/${pacienteDaB}`, tokenA(), { nome: 'X' });
       expect(res.status).toBe(404);
-      const upd = sqlLog.find(q => /UPDATE pacientes/.test(q.text));
-      expect(upd.text).toMatch(/AND tenant_id=\$11/);
-      expect(upd.params[10]).toBe(tenantA);
+      // O PUT lê o cadastro atual filtrando pela clínica do token e para no 404: nenhum UPDATE.
+      const leitura = sqlLog.find(q => /SELECT cpf, telefone, email, data_nascimento FROM pacientes WHERE id = \$1 AND tenant_id = \$2/.test(q.text));
+      expect(leitura.params).toEqual([pacienteDaB, tenantA]);
+      expect(sqlLog.some(q => /UPDATE pacientes/.test(q.text))).toBe(false);
       // pushPatient começa com 'SELECT * FROM pacientes WHERE id = $1'
       expect(sqlLog.some(q => /SELECT \* FROM pacientes WHERE id = \$1$/.test(q.text))).toBe(false);
     });
