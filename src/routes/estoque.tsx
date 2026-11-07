@@ -303,7 +303,19 @@ function EstoquePage() {
                   </div>
                 </li>
               ))}
-              {filteredItems.length === 0 && <li className="py-8 text-center text-xs text-muted-foreground">{items.length === 0 ? "Nenhum item cadastrado. Clique em \u201cNovo Item\u201d para começar." : "Nenhum item com esse filtro."}</li>}
+              {filteredItems.length === 0 && (
+                <li className="py-8 text-center text-xs text-muted-foreground">
+                  {items.length === 0 && loadErrors.length === 0 ? (
+                    <EstadoVazio
+                      compacto
+                      icon={Package}
+                      titulo="Nenhum item no estoque"
+                      descricao="Cadastre materiais, medicamentos e descartáveis com a quantidade mínima: o sistema avisa quando um item estiver acabando."
+                      acao={{ label: "Novo item", icon: Plus, onClick: () => setShowAddItem(true) }}
+                    />
+                  ) : items.length === 0 ? "Nenhum item cadastrado." : "Nenhum item com esse filtro."}
+                </li>
+              )}
             </ul>
 
             {/* relative: o rótulo sr-only (absolute) da coluna Ações fica preso à rolagem da tabela */}

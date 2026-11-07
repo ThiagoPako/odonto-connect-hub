@@ -176,6 +176,14 @@ function ProcedimentosCatalogoPage() {
                     Não foi possível carregar os procedimentos. {loadError}{" "}
                     <button type="button" onClick={load} className="underline font-semibold">Tentar de novo</button>
                   </span>
+                ) : items.length === 0 ? (
+                  <EstadoVazio
+                    compacto
+                    icon={ClipboardList}
+                    titulo="Cadastre os procedimentos da clínica"
+                    descricao="O catálogo traz nome, código e valores. Ele é usado nos orçamentos, na agenda e nas comissões."
+                    acao={{ label: "Novo procedimento", icon: Plus, onClick: novo }}
+                  />
                 ) : vazioMsg}
               </li>
             )}
