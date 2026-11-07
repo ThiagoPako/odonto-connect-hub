@@ -1,14 +1,10 @@
-import { createRouter, useRouter } from "@tanstack/react-router";
+import { createRouter, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { routeTree } from "./routeTree.gen";
 
-function DefaultErrorComponent({
-  error,
-  reset,
-}: {
-  error: Error;
-  reset: () => void;
-}) {
+function DefaultErrorComponent({ error: rawError, reset }: ErrorComponentProps) {
   const router = useRouter();
+  // A partir do router 1.170 o erro chega como `unknown`.
+  const error = rawError instanceof Error ? rawError : new Error(String(rawError));
 
   // Log to console so we can capture it remotely
   if (typeof window !== "undefined") {

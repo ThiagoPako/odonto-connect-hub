@@ -9,230 +9,50 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as UsuariosRouteImport } from './routes/usuarios'
-import { Route as TratamentosRouteImport } from './routes/tratamentos'
-import { Route as TermosRouteImport } from './routes/termos'
-import { Route as SuperAdminRouteImport } from './routes/super-admin'
-import { Route as SignupRouteImport } from './routes/signup'
-import { Route as RelatoriosClinicosRouteImport } from './routes/relatorios-clinicos'
-import { Route as ReativacaoRouteImport } from './routes/reativacao'
-import { Route as ProntuarioRouteImport } from './routes/prontuario'
-import { Route as ProcedimentosRouteImport } from './routes/procedimentos'
-import { Route as PrivacidadeRouteImport } from './routes/privacidade'
-import { Route as PerfilRouteImport } from './routes/perfil'
-import { Route as PedidoExameRouteImport } from './routes/pedido-exame'
-import { Route as PainelDentistaRouteImport } from './routes/painel-dentista'
-import { Route as PainelComercialRouteImport } from './routes/painel-comercial'
-import { Route as PacientesRouteImport } from './routes/pacientes'
-import { Route as OrcamentosRouteImport } from './routes/orcamentos'
-import { Route as MinhaAssinaturaRouteImport } from './routes/minha-assinatura'
-import { Route as MetricasRouteImport } from './routes/metricas'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as IntegracoesRouteImport } from './routes/integracoes'
-import { Route as FinanceiroRouteImport } from './routes/financeiro'
-import { Route as ExamesRouteImport } from './routes/exames'
-import { Route as EstoqueRouteImport } from './routes/estoque'
-import { Route as EquipeRouteImport } from './routes/equipe'
-import { Route as DisparosRouteImport } from './routes/disparos'
-import { Route as DentistasRouteImport } from './routes/dentistas'
-import { Route as DashboardRouteImport } from './routes/dashboard'
-import { Route as CrmRouteImport } from './routes/crm'
-import { Route as ContatosRouteImport } from './routes/contatos'
-import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
-import { Route as ComissoesRouteImport } from './routes/comissoes'
-import { Route as ChatRouteImport } from './routes/chat'
-import { Route as CanaisRouteImport } from './routes/canais'
-import { Route as CampanhasRouteImport } from './routes/campanhas'
-import { Route as AutomacoesRouteImport } from './routes/automacoes'
-import { Route as AtendimentoRouteImport } from './routes/atendimento'
-import { Route as AnalyticsRouteImport } from './routes/analytics'
-import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AgendaRouteImport } from './routes/agenda'
+import { Route as AnalyticsRouteImport } from './routes/analytics'
+import { Route as AtendimentoRouteImport } from './routes/atendimento'
+import { Route as AutomacoesRouteImport } from './routes/automacoes'
+import { Route as CampanhasRouteImport } from './routes/campanhas'
+import { Route as CanaisRouteImport } from './routes/canais'
+import { Route as ChatRouteImport } from './routes/chat'
+import { Route as ComissoesRouteImport } from './routes/comissoes'
+import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
+import { Route as ContatosRouteImport } from './routes/contatos'
+import { Route as CrmRouteImport } from './routes/crm'
+import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as DentistasRouteImport } from './routes/dentistas'
+import { Route as DisparosRouteImport } from './routes/disparos'
+import { Route as EquipeRouteImport } from './routes/equipe'
+import { Route as EstoqueRouteImport } from './routes/estoque'
+import { Route as ExamesRouteImport } from './routes/exames'
+import { Route as FinanceiroRouteImport } from './routes/financeiro'
+import { Route as IntegracoesRouteImport } from './routes/integracoes'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as MetricasRouteImport } from './routes/metricas'
+import { Route as MinhaAssinaturaRouteImport } from './routes/minha-assinatura'
+import { Route as OrcamentosRouteImport } from './routes/orcamentos'
+import { Route as PacientesRouteImport } from './routes/pacientes'
+import { Route as PainelComercialRouteImport } from './routes/painel-comercial'
+import { Route as PainelDentistaRouteImport } from './routes/painel-dentista'
+import { Route as PedidoExameRouteImport } from './routes/pedido-exame'
+import { Route as PerfilRouteImport } from './routes/perfil'
+import { Route as PrivacidadeRouteImport } from './routes/privacidade'
+import { Route as ProcedimentosRouteImport } from './routes/procedimentos'
+import { Route as ProntuarioRouteImport } from './routes/prontuario'
+import { Route as ReativacaoRouteImport } from './routes/reativacao'
+import { Route as RelatoriosClinicosRouteImport } from './routes/relatorios-clinicos'
+import { Route as SignupRouteImport } from './routes/signup'
+import { Route as SuperAdminRouteImport } from './routes/super-admin'
+import { Route as TermosRouteImport } from './routes/termos'
+import { Route as TratamentosRouteImport } from './routes/tratamentos'
+import { Route as UsuariosRouteImport } from './routes/usuarios'
 import { Route as ConfiguracoesAgendaRouteImport } from './routes/configuracoes.agenda'
 
-const UsuariosRoute = UsuariosRouteImport.update({
-  id: '/usuarios',
-  path: '/usuarios',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TratamentosRoute = TratamentosRouteImport.update({
-  id: '/tratamentos',
-  path: '/tratamentos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TermosRoute = TermosRouteImport.update({
-  id: '/termos',
-  path: '/termos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SuperAdminRoute = SuperAdminRouteImport.update({
-  id: '/super-admin',
-  path: '/super-admin',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SignupRoute = SignupRouteImport.update({
-  id: '/signup',
-  path: '/signup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RelatoriosClinicosRoute = RelatoriosClinicosRouteImport.update({
-  id: '/relatorios-clinicos',
-  path: '/relatorios-clinicos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ReativacaoRoute = ReativacaoRouteImport.update({
-  id: '/reativacao',
-  path: '/reativacao',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProntuarioRoute = ProntuarioRouteImport.update({
-  id: '/prontuario',
-  path: '/prontuario',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProcedimentosRoute = ProcedimentosRouteImport.update({
-  id: '/procedimentos',
-  path: '/procedimentos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PrivacidadeRoute = PrivacidadeRouteImport.update({
-  id: '/privacidade',
-  path: '/privacidade',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PerfilRoute = PerfilRouteImport.update({
-  id: '/perfil',
-  path: '/perfil',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PedidoExameRoute = PedidoExameRouteImport.update({
-  id: '/pedido-exame',
-  path: '/pedido-exame',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PainelDentistaRoute = PainelDentistaRouteImport.update({
-  id: '/painel-dentista',
-  path: '/painel-dentista',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PainelComercialRoute = PainelComercialRouteImport.update({
-  id: '/painel-comercial',
-  path: '/painel-comercial',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PacientesRoute = PacientesRouteImport.update({
-  id: '/pacientes',
-  path: '/pacientes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OrcamentosRoute = OrcamentosRouteImport.update({
-  id: '/orcamentos',
-  path: '/orcamentos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MinhaAssinaturaRoute = MinhaAssinaturaRouteImport.update({
-  id: '/minha-assinatura',
-  path: '/minha-assinatura',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MetricasRoute = MetricasRouteImport.update({
-  id: '/metricas',
-  path: '/metricas',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const IntegracoesRoute = IntegracoesRouteImport.update({
-  id: '/integracoes',
-  path: '/integracoes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FinanceiroRoute = FinanceiroRouteImport.update({
-  id: '/financeiro',
-  path: '/financeiro',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ExamesRoute = ExamesRouteImport.update({
-  id: '/exames',
-  path: '/exames',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EstoqueRoute = EstoqueRouteImport.update({
-  id: '/estoque',
-  path: '/estoque',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EquipeRoute = EquipeRouteImport.update({
-  id: '/equipe',
-  path: '/equipe',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DisparosRoute = DisparosRouteImport.update({
-  id: '/disparos',
-  path: '/disparos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DentistasRoute = DentistasRouteImport.update({
-  id: '/dentistas',
-  path: '/dentistas',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DashboardRoute = DashboardRouteImport.update({
-  id: '/dashboard',
-  path: '/dashboard',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CrmRoute = CrmRouteImport.update({
-  id: '/crm',
-  path: '/crm',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ContatosRoute = ContatosRouteImport.update({
-  id: '/contatos',
-  path: '/contatos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ConfiguracoesRoute = ConfiguracoesRouteImport.update({
-  id: '/configuracoes',
-  path: '/configuracoes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ComissoesRoute = ComissoesRouteImport.update({
-  id: '/comissoes',
-  path: '/comissoes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ChatRoute = ChatRouteImport.update({
-  id: '/chat',
-  path: '/chat',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CanaisRoute = CanaisRouteImport.update({
-  id: '/canais',
-  path: '/canais',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CampanhasRoute = CampanhasRouteImport.update({
-  id: '/campanhas',
-  path: '/campanhas',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AutomacoesRoute = AutomacoesRouteImport.update({
-  id: '/automacoes',
-  path: '/automacoes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AtendimentoRoute = AtendimentoRouteImport.update({
-  id: '/atendimento',
-  path: '/atendimento',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AnalyticsRoute = AnalyticsRouteImport.update({
-  id: '/analytics',
-  path: '/analytics',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgendaRoute = AgendaRouteImport.update({
@@ -240,9 +60,189 @@ const AgendaRoute = AgendaRouteImport.update({
   path: '/agenda',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AnalyticsRoute = AnalyticsRouteImport.update({
+  id: '/analytics',
+  path: '/analytics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AtendimentoRoute = AtendimentoRouteImport.update({
+  id: '/atendimento',
+  path: '/atendimento',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AutomacoesRoute = AutomacoesRouteImport.update({
+  id: '/automacoes',
+  path: '/automacoes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CampanhasRoute = CampanhasRouteImport.update({
+  id: '/campanhas',
+  path: '/campanhas',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CanaisRoute = CanaisRouteImport.update({
+  id: '/canais',
+  path: '/canais',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ChatRoute = ChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ComissoesRoute = ComissoesRouteImport.update({
+  id: '/comissoes',
+  path: '/comissoes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConfiguracoesRoute = ConfiguracoesRouteImport.update({
+  id: '/configuracoes',
+  path: '/configuracoes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContatosRoute = ContatosRouteImport.update({
+  id: '/contatos',
+  path: '/contatos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CrmRoute = CrmRouteImport.update({
+  id: '/crm',
+  path: '/crm',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DentistasRoute = DentistasRouteImport.update({
+  id: '/dentistas',
+  path: '/dentistas',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DisparosRoute = DisparosRouteImport.update({
+  id: '/disparos',
+  path: '/disparos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EquipeRoute = EquipeRouteImport.update({
+  id: '/equipe',
+  path: '/equipe',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EstoqueRoute = EstoqueRouteImport.update({
+  id: '/estoque',
+  path: '/estoque',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ExamesRoute = ExamesRouteImport.update({
+  id: '/exames',
+  path: '/exames',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FinanceiroRoute = FinanceiroRouteImport.update({
+  id: '/financeiro',
+  path: '/financeiro',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IntegracoesRoute = IntegracoesRouteImport.update({
+  id: '/integracoes',
+  path: '/integracoes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MetricasRoute = MetricasRouteImport.update({
+  id: '/metricas',
+  path: '/metricas',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MinhaAssinaturaRoute = MinhaAssinaturaRouteImport.update({
+  id: '/minha-assinatura',
+  path: '/minha-assinatura',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OrcamentosRoute = OrcamentosRouteImport.update({
+  id: '/orcamentos',
+  path: '/orcamentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PacientesRoute = PacientesRouteImport.update({
+  id: '/pacientes',
+  path: '/pacientes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PainelComercialRoute = PainelComercialRouteImport.update({
+  id: '/painel-comercial',
+  path: '/painel-comercial',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PainelDentistaRoute = PainelDentistaRouteImport.update({
+  id: '/painel-dentista',
+  path: '/painel-dentista',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PedidoExameRoute = PedidoExameRouteImport.update({
+  id: '/pedido-exame',
+  path: '/pedido-exame',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PerfilRoute = PerfilRouteImport.update({
+  id: '/perfil',
+  path: '/perfil',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacidadeRoute = PrivacidadeRouteImport.update({
+  id: '/privacidade',
+  path: '/privacidade',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProcedimentosRoute = ProcedimentosRouteImport.update({
+  id: '/procedimentos',
+  path: '/procedimentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProntuarioRoute = ProntuarioRouteImport.update({
+  id: '/prontuario',
+  path: '/prontuario',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReativacaoRoute = ReativacaoRouteImport.update({
+  id: '/reativacao',
+  path: '/reativacao',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RelatoriosClinicosRoute = RelatoriosClinicosRouteImport.update({
+  id: '/relatorios-clinicos',
+  path: '/relatorios-clinicos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SuperAdminRoute = SuperAdminRouteImport.update({
+  id: '/super-admin',
+  path: '/super-admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TermosRoute = TermosRouteImport.update({
+  id: '/termos',
+  path: '/termos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TratamentosRoute = TratamentosRouteImport.update({
+  id: '/tratamentos',
+  path: '/tratamentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsuariosRoute = UsuariosRouteImport.update({
+  id: '/usuarios',
+  path: '/usuarios',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConfiguracoesAgendaRoute = ConfiguracoesAgendaRouteImport.update({
@@ -551,263 +551,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/usuarios': {
-      id: '/usuarios'
-      path: '/usuarios'
-      fullPath: '/usuarios'
-      preLoaderRoute: typeof UsuariosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/tratamentos': {
-      id: '/tratamentos'
-      path: '/tratamentos'
-      fullPath: '/tratamentos'
-      preLoaderRoute: typeof TratamentosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/termos': {
-      id: '/termos'
-      path: '/termos'
-      fullPath: '/termos'
-      preLoaderRoute: typeof TermosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/super-admin': {
-      id: '/super-admin'
-      path: '/super-admin'
-      fullPath: '/super-admin'
-      preLoaderRoute: typeof SuperAdminRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/signup': {
-      id: '/signup'
-      path: '/signup'
-      fullPath: '/signup'
-      preLoaderRoute: typeof SignupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/relatorios-clinicos': {
-      id: '/relatorios-clinicos'
-      path: '/relatorios-clinicos'
-      fullPath: '/relatorios-clinicos'
-      preLoaderRoute: typeof RelatoriosClinicosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/reativacao': {
-      id: '/reativacao'
-      path: '/reativacao'
-      fullPath: '/reativacao'
-      preLoaderRoute: typeof ReativacaoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/prontuario': {
-      id: '/prontuario'
-      path: '/prontuario'
-      fullPath: '/prontuario'
-      preLoaderRoute: typeof ProntuarioRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/procedimentos': {
-      id: '/procedimentos'
-      path: '/procedimentos'
-      fullPath: '/procedimentos'
-      preLoaderRoute: typeof ProcedimentosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/privacidade': {
-      id: '/privacidade'
-      path: '/privacidade'
-      fullPath: '/privacidade'
-      preLoaderRoute: typeof PrivacidadeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/perfil': {
-      id: '/perfil'
-      path: '/perfil'
-      fullPath: '/perfil'
-      preLoaderRoute: typeof PerfilRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/pedido-exame': {
-      id: '/pedido-exame'
-      path: '/pedido-exame'
-      fullPath: '/pedido-exame'
-      preLoaderRoute: typeof PedidoExameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/painel-dentista': {
-      id: '/painel-dentista'
-      path: '/painel-dentista'
-      fullPath: '/painel-dentista'
-      preLoaderRoute: typeof PainelDentistaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/painel-comercial': {
-      id: '/painel-comercial'
-      path: '/painel-comercial'
-      fullPath: '/painel-comercial'
-      preLoaderRoute: typeof PainelComercialRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/pacientes': {
-      id: '/pacientes'
-      path: '/pacientes'
-      fullPath: '/pacientes'
-      preLoaderRoute: typeof PacientesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/orcamentos': {
-      id: '/orcamentos'
-      path: '/orcamentos'
-      fullPath: '/orcamentos'
-      preLoaderRoute: typeof OrcamentosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/minha-assinatura': {
-      id: '/minha-assinatura'
-      path: '/minha-assinatura'
-      fullPath: '/minha-assinatura'
-      preLoaderRoute: typeof MinhaAssinaturaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/metricas': {
-      id: '/metricas'
-      path: '/metricas'
-      fullPath: '/metricas'
-      preLoaderRoute: typeof MetricasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/integracoes': {
-      id: '/integracoes'
-      path: '/integracoes'
-      fullPath: '/integracoes'
-      preLoaderRoute: typeof IntegracoesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/financeiro': {
-      id: '/financeiro'
-      path: '/financeiro'
-      fullPath: '/financeiro'
-      preLoaderRoute: typeof FinanceiroRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/exames': {
-      id: '/exames'
-      path: '/exames'
-      fullPath: '/exames'
-      preLoaderRoute: typeof ExamesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/estoque': {
-      id: '/estoque'
-      path: '/estoque'
-      fullPath: '/estoque'
-      preLoaderRoute: typeof EstoqueRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/equipe': {
-      id: '/equipe'
-      path: '/equipe'
-      fullPath: '/equipe'
-      preLoaderRoute: typeof EquipeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/disparos': {
-      id: '/disparos'
-      path: '/disparos'
-      fullPath: '/disparos'
-      preLoaderRoute: typeof DisparosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/dentistas': {
-      id: '/dentistas'
-      path: '/dentistas'
-      fullPath: '/dentistas'
-      preLoaderRoute: typeof DentistasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/dashboard': {
-      id: '/dashboard'
-      path: '/dashboard'
-      fullPath: '/dashboard'
-      preLoaderRoute: typeof DashboardRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/crm': {
-      id: '/crm'
-      path: '/crm'
-      fullPath: '/crm'
-      preLoaderRoute: typeof CrmRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/contatos': {
-      id: '/contatos'
-      path: '/contatos'
-      fullPath: '/contatos'
-      preLoaderRoute: typeof ContatosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/configuracoes': {
-      id: '/configuracoes'
-      path: '/configuracoes'
-      fullPath: '/configuracoes'
-      preLoaderRoute: typeof ConfiguracoesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/comissoes': {
-      id: '/comissoes'
-      path: '/comissoes'
-      fullPath: '/comissoes'
-      preLoaderRoute: typeof ComissoesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/chat': {
-      id: '/chat'
-      path: '/chat'
-      fullPath: '/chat'
-      preLoaderRoute: typeof ChatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/canais': {
-      id: '/canais'
-      path: '/canais'
-      fullPath: '/canais'
-      preLoaderRoute: typeof CanaisRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/campanhas': {
-      id: '/campanhas'
-      path: '/campanhas'
-      fullPath: '/campanhas'
-      preLoaderRoute: typeof CampanhasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/automacoes': {
-      id: '/automacoes'
-      path: '/automacoes'
-      fullPath: '/automacoes'
-      preLoaderRoute: typeof AutomacoesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/atendimento': {
-      id: '/atendimento'
-      path: '/atendimento'
-      fullPath: '/atendimento'
-      preLoaderRoute: typeof AtendimentoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/analytics': {
-      id: '/analytics'
-      path: '/analytics'
-      fullPath: '/analytics'
-      preLoaderRoute: typeof AnalyticsRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agenda': {
@@ -817,11 +565,263 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgendaRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/analytics': {
+      id: '/analytics'
+      path: '/analytics'
+      fullPath: '/analytics'
+      preLoaderRoute: typeof AnalyticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/atendimento': {
+      id: '/atendimento'
+      path: '/atendimento'
+      fullPath: '/atendimento'
+      preLoaderRoute: typeof AtendimentoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/automacoes': {
+      id: '/automacoes'
+      path: '/automacoes'
+      fullPath: '/automacoes'
+      preLoaderRoute: typeof AutomacoesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/campanhas': {
+      id: '/campanhas'
+      path: '/campanhas'
+      fullPath: '/campanhas'
+      preLoaderRoute: typeof CampanhasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/canais': {
+      id: '/canais'
+      path: '/canais'
+      fullPath: '/canais'
+      preLoaderRoute: typeof CanaisRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/chat': {
+      id: '/chat'
+      path: '/chat'
+      fullPath: '/chat'
+      preLoaderRoute: typeof ChatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/comissoes': {
+      id: '/comissoes'
+      path: '/comissoes'
+      fullPath: '/comissoes'
+      preLoaderRoute: typeof ComissoesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/configuracoes': {
+      id: '/configuracoes'
+      path: '/configuracoes'
+      fullPath: '/configuracoes'
+      preLoaderRoute: typeof ConfiguracoesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contatos': {
+      id: '/contatos'
+      path: '/contatos'
+      fullPath: '/contatos'
+      preLoaderRoute: typeof ContatosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/crm': {
+      id: '/crm'
+      path: '/crm'
+      fullPath: '/crm'
+      preLoaderRoute: typeof CrmRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dentistas': {
+      id: '/dentistas'
+      path: '/dentistas'
+      fullPath: '/dentistas'
+      preLoaderRoute: typeof DentistasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/disparos': {
+      id: '/disparos'
+      path: '/disparos'
+      fullPath: '/disparos'
+      preLoaderRoute: typeof DisparosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/equipe': {
+      id: '/equipe'
+      path: '/equipe'
+      fullPath: '/equipe'
+      preLoaderRoute: typeof EquipeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/estoque': {
+      id: '/estoque'
+      path: '/estoque'
+      fullPath: '/estoque'
+      preLoaderRoute: typeof EstoqueRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/exames': {
+      id: '/exames'
+      path: '/exames'
+      fullPath: '/exames'
+      preLoaderRoute: typeof ExamesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/financeiro': {
+      id: '/financeiro'
+      path: '/financeiro'
+      fullPath: '/financeiro'
+      preLoaderRoute: typeof FinanceiroRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integracoes': {
+      id: '/integracoes'
+      path: '/integracoes'
+      fullPath: '/integracoes'
+      preLoaderRoute: typeof IntegracoesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/metricas': {
+      id: '/metricas'
+      path: '/metricas'
+      fullPath: '/metricas'
+      preLoaderRoute: typeof MetricasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/minha-assinatura': {
+      id: '/minha-assinatura'
+      path: '/minha-assinatura'
+      fullPath: '/minha-assinatura'
+      preLoaderRoute: typeof MinhaAssinaturaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/orcamentos': {
+      id: '/orcamentos'
+      path: '/orcamentos'
+      fullPath: '/orcamentos'
+      preLoaderRoute: typeof OrcamentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pacientes': {
+      id: '/pacientes'
+      path: '/pacientes'
+      fullPath: '/pacientes'
+      preLoaderRoute: typeof PacientesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/painel-comercial': {
+      id: '/painel-comercial'
+      path: '/painel-comercial'
+      fullPath: '/painel-comercial'
+      preLoaderRoute: typeof PainelComercialRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/painel-dentista': {
+      id: '/painel-dentista'
+      path: '/painel-dentista'
+      fullPath: '/painel-dentista'
+      preLoaderRoute: typeof PainelDentistaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pedido-exame': {
+      id: '/pedido-exame'
+      path: '/pedido-exame'
+      fullPath: '/pedido-exame'
+      preLoaderRoute: typeof PedidoExameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/perfil': {
+      id: '/perfil'
+      path: '/perfil'
+      fullPath: '/perfil'
+      preLoaderRoute: typeof PerfilRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacidade': {
+      id: '/privacidade'
+      path: '/privacidade'
+      fullPath: '/privacidade'
+      preLoaderRoute: typeof PrivacidadeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/procedimentos': {
+      id: '/procedimentos'
+      path: '/procedimentos'
+      fullPath: '/procedimentos'
+      preLoaderRoute: typeof ProcedimentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/prontuario': {
+      id: '/prontuario'
+      path: '/prontuario'
+      fullPath: '/prontuario'
+      preLoaderRoute: typeof ProntuarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reativacao': {
+      id: '/reativacao'
+      path: '/reativacao'
+      fullPath: '/reativacao'
+      preLoaderRoute: typeof ReativacaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/relatorios-clinicos': {
+      id: '/relatorios-clinicos'
+      path: '/relatorios-clinicos'
+      fullPath: '/relatorios-clinicos'
+      preLoaderRoute: typeof RelatoriosClinicosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/super-admin': {
+      id: '/super-admin'
+      path: '/super-admin'
+      fullPath: '/super-admin'
+      preLoaderRoute: typeof SuperAdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/termos': {
+      id: '/termos'
+      path: '/termos'
+      fullPath: '/termos'
+      preLoaderRoute: typeof TermosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tratamentos': {
+      id: '/tratamentos'
+      path: '/tratamentos'
+      fullPath: '/tratamentos'
+      preLoaderRoute: typeof TratamentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/usuarios': {
+      id: '/usuarios'
+      path: '/usuarios'
+      fullPath: '/usuarios'
+      preLoaderRoute: typeof UsuariosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/configuracoes/agenda': {

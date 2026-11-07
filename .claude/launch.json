@@ -6,6 +6,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["vite", "dev", "--port", "5173", "--strictPort"],
       "port": 5173
+    },
+    {
+      "name": "web-local",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "dev", "-c", "vite.local.config.ts", "--port", "5173", "--strictPort"],
+      "port": 5173
     }
   ]
 }

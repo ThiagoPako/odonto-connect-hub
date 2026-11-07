@@ -1,0 +1,24 @@
+# Ambiente local de testes (banco fictício + e2e)
+
+Nunca aponte para produção. Todos os dados são fictícios (clínicas Alfa e Beta); senha de todos os usuários de teste: `Teste@123`.
+
+## Pré-requisitos
+- Postgres 16 local: `brew install postgresql@16 && brew services start postgresql@16`
+- Dependências: `bun install` na raiz e em `vps-api-server/`
+- **`cd vps-api-server && npm rebuild bcrypt`** — o `bun install` não roda o postinstall do bcrypt; sem isso o servidor não sobe e o seed falha (`crm_leads.tenant_id` inexistente).
+- **Não pode existir `vps-api-server/.env`.** O `server.mjs` o carrega com `override: true` e sobrescreveria o banco/Evolution locais (podendo ligar em produção). O `setup-local.sh` aborta se ele existir.
+- Navegador do Playwright: `npx playwright install chromium`
+
+## Passo a passo
+1. Banco: `bash vps-api-server/setup-local.sh --recriar` (outro banco: `ODONTO_LOCAL_DB=meu_banco`).
+2. Backend (porta livre, ex. 3012), sem WhatsApp real:
+   `cd vps-api-server && PG_DATABASE=odonto_local PG_USER=odonto_user PG_PASSWORD=local_test_pw PG_HOST=localhost JWT_SECRET=local-e2e API_PORT=3012 EVOLUTION_API_URL=http://127.0.0.1:9 node server.mjs`
+3. Frontend: `E2E_API_URL=http://localhost:3012 npx vite dev -c vite.local.config.ts --port 5173 --strictPort` (sem `E2E_API_URL`, o proxy usa `http://localhost:3002`).
+4. Testes: `npx playwright test -c playwright.local.config.ts`
+
+## e2e do WhatsApp (Evolution simulada)
+Não precisa de Evolution nem de WhatsApp: `e2e/fake-evolution.mjs` imita a Evolution 2.3.7 (responde com `key.id`, registra o que recebeu e dispara webhooks com o token do ambiente) e `e2e/api-teste.mjs` sobe o backend em modo de teste (sem crons; `/__tick` roda a fila na hora; `/__clock` muda o relógio). Os dois recusam banco ou Evolution que não sejam locais.
+`E2E_WA_DB=odonto_local npx playwright test -c playwright.whatsapp.config.ts` (portas 3071/3072/4010; mude com `E2E_WA_API_PORT`, `E2E_WA_CONTROL_PORT`, `E2E_WA_FAKE_PORT`).
+
+## Testar o `vite preview` (o que roda em produção)
+`npm run build` e depois `E2E_API_URL=http://localhost:<api> npx vite preview -c vite.preview-local.config.ts --port 5295`. O preview com o plugin da Cloudflare não repassa `/api`; em produção quem faz isso é o nginx. Localmente, `node e2e/proxy-preview.mjs 5296 http://127.0.0.1:5295 http://127.0.0.1:<api>` imita o nginx (abra `http://127.0.0.1:5296`). Os dois recusam destino que não seja local.
