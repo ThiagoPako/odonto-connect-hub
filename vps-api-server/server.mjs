@@ -25,6 +25,13 @@ import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
 import { createLimiter, rateLimitMiddleware, sendTooMany, clientIp, ipKey, sleep } from './rate-limit.mjs';
+import { registerProvider, providerForChannel } from './whatsapp/provider.mjs';
+import { credentialCipherFromEnv } from './whatsapp/crypto.mjs';
+import {
+  createEvolutionAdapter, extractEvolutionConnectionState, normalizeEvolutionConnectionState,
+  extractEvolutionMessageId, extractEvolutionInstanceName, normalizeEvolutionEventName, isEvolutionEvent,
+  extractEvolutionMessages, normalizeEvolutionAckStatus,
+} from './whatsapp/adapters/evolution.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
 // crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
@@ -52,7 +59,14 @@ app.set('trust proxy', 'loopback');
 
 // ─── Middleware ──────────────────────────────────────────────
 app.use(cors());
-app.use(express.json({ limit: '64mb' }));
+// Corpo bruto guardado só nas rotas de webhook (assinatura HMAC de provedores: Meta
+// X-Hub-Signature-256, OpenWA X-OpenWA-Signature). Nas demais rotas nada muda.
+app.use(express.json({
+  limit: '64mb',
+  verify: (req, _res, buf) => {
+    if (String(req.originalUrl || req.url || '').startsWith('/api/webhook/')) req.rawBody = Buffer.from(buf);
+  },
+}));
 
 // ─── Limites de taxa (rate-limit.mjs, memória do processo) ──
 // Login e reset contam por IP e por e-mail; signup por IP; busca, upload e envio
@@ -809,6 +823,17 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const APP_URL = (process.env.APP_URL || 'https://odontoconnect.tech').replace(/\/$/, '').replace(':443', '');
 const WEBHOOK_PUBLIC_URL = process.env.WEBHOOK_PUBLIC_URL?.replace(/\/$/, '');
 const isLocalAppUrl = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(APP_URL);
+// Camada de provedor (docs/whatsapp/migracao-provedores.md): toda chamada HTTP à Evolution
+// passa pelo adaptador. redactWebhookToken é declaração de função (içada).
+const evolutionProvider = registerProvider(createEvolutionAdapter({
+  baseUrl: EVOLUTION_API_URL, apiKey: EVOLUTION_API_KEY, redact: (d) => redactWebhookToken(d),
+}));
+// Cifra das credenciais de canal (whatsapp_channels.credentials_enc). Sem chave: null; os
+// provedores que precisam de credencial (OpenWA, Cloud API) ficam indisponíveis.
+const waCredentialCipher = credentialCipherFromEnv();
+if (!waCredentialCipher && process.env.NODE_ENV !== 'test') {
+  console.warn('⚠️ WA_CREDENTIALS_KEY ausente ou inválida (32 bytes em base64/hex): canais OpenWA/Cloud API não poderão guardar credenciais.');
+}
 if (!EVOLUTION_API_KEY) {
   console.error('❌ EVOLUTION_API_KEY não definida no .env do VPS — envios do WhatsApp retornarão erro até configurar a chave.');
 }
@@ -2102,7 +2127,7 @@ app.get('/api/health', async (req, res) => {
         const ctrl = new AbortController();
         const to = setTimeout(() => ctrl.abort(), HEALTH_EVOLUTION_TIMEOUT_MS);
         try {
-          return await fetch(`${EVOLUTION_API_URL}/`, { signal: ctrl.signal });
+          return await evolutionProvider.rawFetch('/', { signal: ctrl.signal }, { withKey: false });
         } finally {
           clearTimeout(to);
         }
@@ -2513,57 +2538,9 @@ app.put('/api/auth/users/:id', async (req, res) => {
 
 const execFileAsync = promisify(execFile);
 
-async function evolutionFetch(path, options = {}) {
-  if (!EVOLUTION_API_KEY) {
-    return {
-      ok: false,
-      status: 500,
-      data: { error: 'EVOLUTION_API_KEY não configurada no VPS' },
-    };
-  }
-
-  // Defesa contra "path traversal": um nome de instância como "abc/../outra"
-  // seria normalizado pelo fetch para a instância de outra clínica.
-  const pathOnly = String(path || '').split('?')[0];
-  if (pathOnly.includes('\\') || pathOnly.split('/').some(seg => seg === '..' || seg === '.')) {
-    console.warn(`[evolutionFetch] caminho recusado: ${pathOnly.slice(0, 120)}`);
-    return { ok: false, status: 400, data: { error: 'Nome de instância inválido' } };
-  }
-  const url = `${EVOLUTION_API_URL}${path}`;
-  const timeoutMs = Number(options.timeoutMs || process.env.EVOLUTION_API_REQUEST_TIMEOUT_MS || 15000);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
-    const res = await fetch(url, {
-      ...fetchOptions,
-      signal: fetchOptions.signal || controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: EVOLUTION_API_KEY,
-        ...fetchOptions.headers,
-      },
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      console.warn(`⚠️ Evolution API ${res.status} for ${path}:`, JSON.stringify(redactWebhookToken(data)).slice(0, 500));
-    }
-    return { ok: res.ok, status: res.status, data };
-  } catch (err) {
-    console.error(`❌ Evolution fetch error (${path}):`, err.message);
-    return { ok: false, status: err.name === 'AbortError' ? 504 : 500, data: { error: err.name === 'AbortError' ? 'Evolution API timeout' : err.message } };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function extractEvolutionConnectionState(data) {
-  const state = data?.instance?.state
-    || data?.instance?.connectionStatus
-    || data?.state
-    || data?.connectionStatus
-    || data?.status;
-  return String(state || '').toLowerCase();
+// Fachada: o HTTP da Evolution mora em whatsapp/adapters/evolution.mjs (mesmo comportamento).
+function evolutionFetch(path, options = {}) {
+  return evolutionProvider.request(path, options);
 }
 
 async function ensureEvolutionInstanceOpen(instanceName) {
@@ -2666,49 +2643,6 @@ function isLikelyLidIdentifier(value) {
   const raw = String(value || '');
   const digits = normalizeWhatsappNumber(raw);
   return raw.includes('@lid') || digits.length > 13;
-}
-
-function extractEvolutionMessageId(data) {
-  if (!data) return null;
-  if (Array.isArray(data)) {
-    for (const item of data) {
-      const id = extractEvolutionMessageId(item);
-      if (id) return id;
-    }
-    return null;
-  }
-
-  const pick = (value) => {
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      // WhatsApp/Baileys message ids are string-like and normally contain more
-      // entropy than wrapper request ids. Avoid accepting plain numeric wrapper
-      // ids because ACK correlation then becomes impossible.
-      if (trimmed && (!/^\d+$/.test(trimmed) || trimmed.length >= 12)) return trimmed;
-    }
-    return null;
-  };
-
-  const candidates = [
-    data?.key?.id,
-    data?.message?.key?.id,
-    data?.data?.key?.id,
-    data?.data?.message?.key?.id,
-    data?.response?.key?.id,
-    data?.response?.message?.key?.id,
-    data?.messageId,
-    data?.data?.messageId,
-    data?.response?.messageId,
-    data?.data?.id,
-    data?.response?.id,
-    data?.id,
-  ];
-
-  for (const candidate of candidates) {
-    const id = pick(candidate);
-    if (id) return id;
-  }
-  return null;
 }
 
 function getEvolutionErrorMessage(result, fallback = 'Falha ao enviar mensagem') {
@@ -3107,53 +3041,6 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   }
 
   return lastResult || { ok: false, status: 502, data: { error: 'Falha ao enviar mensagem', attempted } };
-}
-
-function extractEvolutionInstanceName(body) {
-  const candidates = [
-    body?.instanceName,
-    body?.instance,
-    body?.instance?.instanceName,
-    body?.instance?.name,
-    body?.data?.instanceName,
-    body?.data?.instance,
-    body?.data?.instance?.instanceName,
-    body?.data?.instance?.name,
-  ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
-  }
-
-  return '';
-}
-
-function normalizeEvolutionEventName(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/-/g, '_')
-    .replace(/\./g, '_');
-}
-
-function isEvolutionEvent(event, ...names) {
-  const normalized = normalizeEvolutionEventName(event);
-  return names.some((name) => normalizeEvolutionEventName(name) === normalized);
-}
-
-function extractEvolutionMessages(data) {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.messages?.records)) return data.messages.records;
-  if (Array.isArray(data?.messages)) return data.messages;
-  if (Array.isArray(data?.data?.records)) return data.data.records;
-  if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.result?.records)) return data.result.records;
-  if (Array.isArray(data?.result)) return data.result;
-  if (Array.isArray(data?.message)) return data.message;
-  if (Array.isArray(data?.records)) return data.records;
-  if (data?.message?.key) return [data.message];
-  if (data?.key) return [data];
-  return [];
 }
 
 function extractEvolutionArray(data) {
@@ -3788,6 +3675,17 @@ const WA_HEALTH_ALERT_AFTER_MS = 10 * 60_000;      // ignora quedas rápidas (< 
 const WA_HEALTH_ALERT_COOLDOWN_MS = 6 * 60 * 60_000; // no máximo 1 aviso a cada 6 h por número
 const WA_HEALTH_LOOP_MIN_CHANGES = 4;              // 4+ mudanças de estado em 1 h = loop de reconexão
 
+// Canais de WhatsApp por clínica (camada de provedor). Idempotente; mesmo SQL do deploy.
+async function ensureWhatsAppChannelsSchema() {
+  let sql;
+  try { sql = readFileSync(path.join(__dirname, 'migration-whatsapp-canais.sql'), 'utf8'); }
+  catch (e) { console.error('[wa-canais] migração não encontrada:', e.message); return; }
+  const statements = sql.split(/;\s*\n/).map(t => t.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);
+  for (const st of statements) {
+    await pool.query(st).catch(e => console.error('[wa-canais-schema]', e.message, '→', st.split('\n')[0].slice(0, 90)));
+  }
+}
+
 async function ensureWhatsAppHealthSchema() {
   let sql;
   try { sql = readFileSync(path.join(__dirname, 'migration-whatsapp-saude.sql'), 'utf8'); }
@@ -3796,13 +3694,6 @@ async function ensureWhatsAppHealthSchema() {
   for (const st of statements) {
     await pool.query(st).catch(e => console.error('[wa-health-schema]', e.message, '→', st.split('\n')[0].slice(0, 90)));
   }
-}
-
-function normalizeEvolutionConnectionState(inst) {
-  const raw = String(inst?.connectionStatus || inst?.status || inst?.instance?.state || inst?.state || '').toLowerCase();
-  if (raw === 'open') return 'open';
-  if (raw === 'connecting') return 'connecting';
-  return 'close';
 }
 
 async function alertWhatsAppDown(tenantId, instanceName, since) {
@@ -4835,11 +4726,8 @@ app.post('/api/whatsapp/send-media-upload', limiteUpload, express.raw({ type: '*
         console.log(`📤 send-media-upload trying ${variant.label} jobId=${jobId}, ${attemptMeta}`);
 
         if (variant.kind === 'multipart') {
-          const res = await fetch(`${EVOLUTION_API_URL}/message/sendMedia/${instance}`, {
+          const res = await evolutionProvider.rawFetch(`/message/sendMedia/${instance}`, {
             method: 'POST',
-            headers: {
-              apikey: EVOLUTION_API_KEY,
-            },
             body: variant.body,
             signal: controller.signal,
           });
@@ -9035,25 +8923,6 @@ function isHigherMessageStatus(nextStatus, currentStatus = 'sent') {
   return (MESSAGE_STATUS_PRIORITY[nextStatus] ?? 0) > (MESSAGE_STATUS_PRIORITY[currentStatus] ?? 0);
 }
 
-function normalizeEvolutionAckStatus(ack) {
-  if (ack === null || ack === undefined) return null;
-
-  const ackStr = String(ack).trim().toUpperCase();
-  const ackNum = typeof ack === 'number' ? ack : Number.parseInt(ackStr, 10);
-
-  if (ackStr === 'FAILED' || ackStr === 'NACK' || ackNum === -1) return 'failed';
-  if (ackStr === 'PENDING' || ackStr === 'PENDING_ACK' || ackStr === 'CLOCK' || ackNum === 0 || ackNum === 1) return 'sent';
-  // Evolution/Baileys versions can stringify ACK 0 as ERROR while the message is
-  // still only pending. Treat webhook/store ERROR as failed only when no numeric
-  // ACK is available; immediate send validation skips 201 responses above.
-  if (ackStr === 'ERROR') return 'failed';
-  if (ackStr === 'SERVER_ACK' || ackStr === 'SENT' || ackStr === 'SEND' || ackNum === 2) return 'sent';
-  if (ackStr === 'DELIVERY_ACK' || ackStr === 'DELIVERED' || ackStr === 'RECEIVED' || ackStr === 'DEVICE_ACK' || ackNum === 3) return 'delivered';
-  if (ackStr === 'READ' || ackStr === 'READ_ACK' || ackStr === 'PLAYED' || ackStr === 'PLAYED_ACK' || ackNum === 4 || ackNum === 5) return 'read';
-
-  return null;
-}
-
 function extractStatusUpdates(data) {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.updates)) return data.updates;
@@ -11518,13 +11387,8 @@ async function recordWhatsAppOptOut(tenantId, phone, { source = 'whatsapp', keyw
 let waOpenInstancesCache = { at: 0, names: new Set() };
 async function getOpenEvolutionInstances() {
   if (Date.now() - waOpenInstancesCache.at < 60_000) return waOpenInstancesCache.names;
-  const result = await evolutionFetch('/instance/fetchInstances');
-  const list = Array.isArray(result.data) ? result.data : [];
-  const names = new Set(
-    list.filter(i => (i.connectionStatus || i.status || i.instance?.state) === 'open')
-      .map(i => i.name || i.instanceName || i.instance?.instanceName)
-      .filter(Boolean)
-  );
+  const result = await providerForChannel(null).listStates();
+  const names = new Set(result.states.filter(st => st.state === 'open').map(st => st.ref));
   // Em falha, guarda o resultado vazio por ~30 s (cache negativo) para não
   // repetir a espera de timeout a cada mensagem enfileirada.
   waOpenInstancesCache = result.ok ? { at: Date.now(), names } : { at: Date.now() - 30_000, names: waOpenInstancesCache.names };
@@ -11931,33 +11795,28 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
   // 7) Envio com "digitando..."
   scheduleNextWhatsAppSend(instance);
   const phone = normalizeWhatsappNumber(job.patient_phone);
-  const number = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
-  const delivered = (r) => r.ok && !!(r.data?.key?.id || r.data?.message?.key?.id);
-  const sendTextNow = () => evolutionFetch(`/message/sendText/${encodeURIComponent(instance)}`, {
-    method: 'POST',
-    body: JSON.stringify({ number, text: job.message, delay: typingDelayMs(job.message) }),
-    timeoutMs: 45_000, // > tempo de "digitando" + margem; evita falso "falhou"
-  });
+  // Adaptador do canal (F0: sempre Evolution). Sucesso = ok + id da mensagem (key.id).
+  const provider = providerForChannel({ provider: 'evolution', externalId: instance });
+  // timeout > tempo de "digitando" + margem; evita falso "falhou"
+  const sendTextNow = () => provider.sendText(instance, phone, job.message, { delayMs: typingDelayMs(job.message), timeoutMs: 45_000 });
   // Botões/lista: tenta o endpoint interativo; sem ok/key.id (muitos aparelhos não
   // exibem botões via Baileys), cai para o texto do job, que é a versão numerada.
   const interactive = vars.interactive && WA_INTERACTIVE_ENDPOINTS.has(vars.interactive.endpoint)
     && vars.interactive.payload && typeof vars.interactive.payload === 'object' ? vars.interactive : null;
-  let result;
+  let sent;
   if (interactive) {
-    const { number: _ignored, ...payload } = interactive.payload;
-    result = await evolutionFetch(`/message/${interactive.endpoint}/${encodeURIComponent(instance)}`, {
-      method: 'POST',
-      body: JSON.stringify({ ...payload, number, delay: typingDelayMs(job.message) }),
-      timeoutMs: 45_000,
+    sent = await provider.sendInteractive(instance, phone, {
+      endpoint: interactive.endpoint, payload: interactive.payload, delayMs: typingDelayMs(job.message), timeoutMs: 45_000,
     });
     // Timeout (504 do evolutionFetch): os botões podem ter saído sem a resposta chegar.
     // Não reenvia em texto para não duplicar; o job falha como incerto. Verificar na
     // Evolution pelo id não é possível aqui (sem key.id na resposta).
-    if (!delivered(result) && result.status !== 504) result = await sendTextNow();
+    if (!sent.ok && !sent.uncertain) sent = await sendTextNow();
   } else {
-    result = await sendTextNow();
+    sent = await sendTextNow();
   }
-  const ok = delivered(result);
+  const ok = sent.ok;
+  const result = sent.raw || { status: sent.status, data: { error: sent.error } };
   await recordWhatsAppOutcome(instance, tenantId, ok);
   if (ok) {
     await pool.query(`UPDATE automation_jobs SET status = 'sent', sent_at = NOW(), claimed_at = NULL, error = NULL WHERE id = $1`, [job.id]);
@@ -14131,8 +13990,8 @@ async function syncWhatsAppContacts() {
     };
 
     // 1. Fetch connected instances from Evolution API
-    const instRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
-      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+    const instRes = await evolutionProvider.rawFetch('/instance/fetchInstances', {
+      headers: { 'Content-Type': 'application/json' },
     });
     if (!instRes.ok) return;
     const instances = await instRes.json();
@@ -14146,9 +14005,9 @@ async function syncWhatsAppContacts() {
       if (!instTenantId) continue; // instância sem clínica: não importa
       try {
         let waContacts = [];
-        const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
+        const cRes = await evolutionProvider.rawFetch(`/chat/findContacts/${name}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ where: {} }),
         });
         if (cRes.ok) {
@@ -14157,9 +14016,9 @@ async function syncWhatsAppContacts() {
         }
         if (waContacts.length === 0) {
           try {
-            const altRes = await fetch(`${EVOLUTION_API_URL}/contact/find/${name}`, {
+            const altRes = await evolutionProvider.rawFetch(`/contact/find/${name}`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({}),
             });
             if (altRes.ok) {
@@ -14244,8 +14103,8 @@ app.post('/api/contatos/sync/now', async (req, res) => {
     };
 
     // 1. Fetch connected instances
-    const instRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
-      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+    const instRes = await evolutionProvider.rawFetch('/instance/fetchInstances', {
+      headers: { 'Content-Type': 'application/json' },
     });
     if (!instRes.ok) return res.json({ success: false, error: 'Falha ao buscar instâncias', instances: [] });
     const instances = await instRes.json();
@@ -14277,9 +14136,9 @@ app.post('/api/contatos/sync/now', async (req, res) => {
       try {
         let waContacts = [];
         console.log(`[sync][${name}] Tentando chat/findContacts...`);
-        const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
+        const cRes = await evolutionProvider.rawFetch(`/chat/findContacts/${name}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ where: {} }),
         });
         console.log(`[sync][${name}] findContacts status: ${cRes.status}`);
@@ -14297,9 +14156,9 @@ app.post('/api/contatos/sync/now', async (req, res) => {
         if (waContacts.length === 0) {
           console.log(`[sync][${name}] Tentando fallback contact/find...`);
           try {
-            const altRes = await fetch(`${EVOLUTION_API_URL}/contact/find/${name}`, {
+            const altRes = await evolutionProvider.rawFetch(`/contact/find/${name}`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({}),
             });
             console.log(`[sync][${name}] contact/find status: ${altRes.status}`);
@@ -17653,6 +17512,7 @@ if (process.env.NODE_ENV !== 'test') {
   await asSystemJob(ensureTenantConfigSchema)();
   await asSystemJob(ensureWaitlistSchema)();
   await asSystemJob(ensureWhatsAppHealthSchema)();
+  await asSystemJob(ensureWhatsAppChannelsSchema)();
   asSystemJob(checkWhatsAppHealth)();
   setInterval(asSystemJob(checkWhatsAppHealth), WA_HEALTH_INTERVAL_MS);
   console.log(`   🩺 Saúde do WhatsApp: verificação a cada ${WA_HEALTH_INTERVAL_MS / 60_000} min`);
