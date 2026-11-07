@@ -1,3 +1,4 @@
+import { iniciaisNome } from "@/lib/iniciais";
 import { createFileRoute } from "@tanstack/react-router";
 import { BarraFiltros } from "@/components/filtros/BarraFiltros";
 import { useFiltroUrl } from "@/components/filtros/useFiltroUrl";
@@ -149,14 +150,7 @@ function normalizarSexo(sexo: string | null | undefined): "" | "masculino" | "fe
   return "outro";
 }
 
-function getInitials(nome: string) {
-  return nome
-    .split(/\s+/)
-    .filter((w) => /^\p{L}/u.test(w)) // ignora "(Alfa)", "-" etc.
-    .filter((_, i, arr) => i === 0 || i === arr.length - 1)
-    .map((n) => n[0]?.toUpperCase() ?? "")
-    .join("");
-}
+const getInitials = iniciaisNome; // ignora "(Alfa)", "-" etc.
 
 function PacientesPage() {
   const { pacienteId } = Route.useSearch();
@@ -252,7 +246,7 @@ function PacientesPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Cadastro de Pacientes" />
-      <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 overflow-auto">
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
           <div className="group bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
@@ -444,7 +438,7 @@ function PacientesPage() {
             }}
           />
         )}
-      </main>
+      </div>
     </div>
   );
 }

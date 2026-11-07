@@ -112,7 +112,7 @@ function ProcedimentosCatalogoPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Catálogo de Procedimentos" />
-      <main className="flex-1 p-4 sm:p-6 space-y-4 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 space-y-4 overflow-auto">
         <BarraFiltros
           busca={{ valor: search, onChange: setSearch, placeholder: "Nome ou código", rotulo: "Buscar procedimento por nome ou código" }}
           filtros={categorias.length > 0 ? [{
@@ -245,7 +245,7 @@ function ProcedimentosCatalogoPage() {
           </div>
           </>
         )}
-      </main>
+      </div>
 
       {/* Modal de edição */}
       {editing && (

@@ -203,7 +203,7 @@ function ReativacaoPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Reativação Inteligente" />
-      <main className="flex-1 p-6 overflow-auto space-y-5">
+      <div className="flex-1 p-6 overflow-auto space-y-5">
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <KpiBox icon={RefreshCcw} label="Regras Ativas" value={totalActive} color="text-primary" />
@@ -547,7 +547,7 @@ function ReativacaoPage() {
             )}
           </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

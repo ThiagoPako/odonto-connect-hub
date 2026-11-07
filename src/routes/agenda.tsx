@@ -269,7 +269,7 @@ function AgendaPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-background/50 animate-fade-in">
       <DashboardHeader title="Agenda" />
-      <main className="flex-1 p-4 overflow-hidden">
+      <div className="flex-1 p-4 overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" onClick={goPrev} aria-label="Dia anterior"><ChevronLeft className="h-4 w-4" /></Button>
@@ -425,7 +425,7 @@ function AgendaPage() {
           />
           </div>
         </div>
-      </main>
+      </div>
 
       <NovoAgendamentoModal
         open={showNovo}

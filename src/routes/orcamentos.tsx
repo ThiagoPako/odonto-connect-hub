@@ -218,7 +218,7 @@ function OrcamentosPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Orçamentos e Vendas" />
-      <main className="flex-1 p-4 sm:p-6 space-y-5 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 space-y-5 overflow-auto">
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
           <KpiMini icon={FileText} label="Total Orçamentos" value={orcamentos.length.toString()} />
@@ -312,7 +312,7 @@ function OrcamentosPage() {
             )}
           </div>
         </div>
-      </main>
+      </div>
 
       <AlertDialog open={!!confirmAcao} onOpenChange={(o) => { if (!o && !confirmando) setConfirmAcao(null); }}>
         <AlertDialogContent>
