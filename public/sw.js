@@ -13,16 +13,19 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('push', (event) => {
   if (!event.data) return;
 
+  // Fallback genérico: se o payload não vier no formato esperado, não mostra o
+  // conteúdo bruto (a notificação aparece na tela bloqueada).
   let payload;
   try {
     payload = event.data.json();
   } catch {
-    payload = { title: 'Odonto Connect', body: event.data.text() };
+    payload = {};
   }
+  if (!payload || typeof payload !== 'object') payload = {};
 
-  const title = payload.title || 'Nova mensagem';
+  const title = typeof payload.title === 'string' && payload.title ? payload.title : 'Nova mensagem';
   const options = {
-    body: payload.body || '',
+    body: typeof payload.body === 'string' && payload.body ? payload.body : 'Abra o Odonto Connect para ler',
     icon: '/favicon.ico',
     badge: '/favicon.ico',
     tag: payload.tag || 'odonto-push',
