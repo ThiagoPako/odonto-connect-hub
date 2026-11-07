@@ -13,3 +13,16 @@ export const STATUS_OPTIONS = [
 
 /** Ainda não confirmados: agendado + pediu remarcação (atalho "Só não confirmados"). */
 export const UNCONFIRMED_STATUSES = ["agendado", "remarcar"];
+
+const IDS_FILTRO = new Set(STATUS_OPTIONS.map((s) => s.id));
+/**
+ * Em qual opção do filtro lateral o status entra. "desmarcado" (horário liberado pela
+ * recepção, usado pela lista de espera) fica junto de "Cancelado / Desmarcado"; status
+ * desconhecidos (ex.: vindos do Clinicorp) contam como "Agendado", igual ao card da grade.
+ * Antes esses agendamentos sumiam da agenda sem aviso.
+ */
+export function statusDoFiltro(status?: string | null): string {
+  const s = status || "agendado";
+  if (s === "desmarcado") return "cancelado";
+  return IDS_FILTRO.has(s) ? s : "agendado";
+}

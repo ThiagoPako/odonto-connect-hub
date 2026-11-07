@@ -28,11 +28,30 @@ const STATUS_OPTIONS: { value: string; label: string; icon: React.ElementType; c
   { value: "cancelado", label: "Cancelado", icon: XCircle, color: "text-destructive" },
 ];
 
+// A API devolve a data como "2026-11-12T03:00:00.000Z" (DATE do Postgres serializado):
+// mostra dd/mm/aaaa e a hora sem segundos.
+function dataBR(v?: string | null) {
+  const ymd = String(v || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd.split("-").reverse().join("/") : "—";
+}
+
 export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged }: Props) {
   const podeAcessar = usePodeAcessar();
   const [saving, setSaving] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   if (!appointment) return null;
+
+  // Ao abrir "Editar" o foco vai para o modal e o Popover fechava, limpando o
+  // agendamento selecionado e desmontando o modal junto (o editar nunca aparecia).
+  // Agora o Popover só some enquanto o modal está aberto; fechar o modal encerra tudo.
+  const handlePopoverOpenChange = (v: boolean) => {
+    if (!v && editOpen) return;
+    onOpenChange(v);
+  };
+  const handleEditOpenChange = (v: boolean) => {
+    setEditOpen(v);
+    if (!v) onOpenChange(false);
+  };
 
   const handleStatusChange = async (status: string) => {
     setSaving(true);
@@ -45,7 +64,7 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
   const handleDelete = async (serie = false) => {
     const { error } = await agendaApi.delete(appointment.id, serie ? { serie: true } : undefined);
     if (error) toast.error("Erro ao excluir: " + error);
-    else { toast.success(serie ? "Série excluída" : "Agendamento excluído"); onChanged(); onOpenChange(false); }
+    else { toast.success(serie ? "Sessões da série excluídas" : "Agendamento excluído"); onChanged(); onOpenChange(false); }
   };
 
   // wa.me exige o código do país: "(11) 98888-7777" virava wa.me/11988887777 (outro país)
@@ -55,7 +74,7 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
     : null;
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <Popover open={open && !editOpen} onOpenChange={handlePopoverOpenChange}>
       <PopoverTrigger asChild>
         <span className="hidden" />
       </PopoverTrigger>
@@ -63,7 +82,7 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
         <div className="p-3 border-b border-border/60">
           <div className="font-medium text-sm">{appointment.paciente_nome || appointment.evento_titulo}</div>
           <div className="text-xs text-muted-foreground mt-0.5">
-            {appointment.data} · {appointment.hora} · {appointment.duracao}min
+            {dataBR(appointment.data)} · {String(appointment.hora || "").slice(0, 5)} · {appointment.duracao} min
           </div>
           {appointment.dentista_nome && (
             <div className="text-xs text-muted-foreground mt-0.5">{appointment.dentista_nome}</div>
@@ -158,14 +177,14 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
                 <AlertDialogTitle>Excluir agendamento?</AlertDialogTitle>
                 <AlertDialogDescription>
                   Esta ação não pode ser desfeita.
-                  {appointment.serie_id && " Este agendamento faz parte de uma série."}
+                  {appointment.serie_id && " Este agendamento faz parte de uma série. Sessões anteriores e as já atendidas (finalizadas, em atendimento ou faltas) são mantidas."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancelar</AlertDialogCancel>
                 {appointment.serie_id && (
                   <AlertDialogAction onClick={() => handleDelete(true)} className="bg-destructive text-destructive-foreground">
-                    Excluir toda a série
+                    Excluir este e os próximos da série
                   </AlertDialogAction>
                 )}
                 <AlertDialogAction onClick={() => handleDelete(false)} className="bg-destructive text-destructive-foreground">
@@ -180,8 +199,8 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
       <EditarAgendamentoModal
         appointment={appointment}
         open={editOpen}
-        onOpenChange={setEditOpen}
-        onSaved={() => { onChanged(); onOpenChange(false); }}
+        onOpenChange={handleEditOpenChange}
+        onSaved={onChanged}
       />
     </Popover>
   );

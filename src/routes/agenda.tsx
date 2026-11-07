@@ -15,9 +15,9 @@ import { NovoAgendamentoModal } from "@/components/agenda/NovoAgendamentoModal";
 import { AgendamentoPopover } from "@/components/agenda/AgendamentoPopover";
 import { AgendaStatusFilter } from "@/components/agenda/AgendaStatusFilter";
 import { ListaEsperaDialog } from "@/components/agenda/ListaEsperaDialog";
-import { STATUS_OPTIONS as AGENDA_STATUS_OPTIONS, UNCONFIRMED_STATUSES } from "@/components/agenda/agendaStatus";
+import { STATUS_OPTIONS as AGENDA_STATUS_OPTIONS, UNCONFIRMED_STATUSES, statusDoFiltro } from "@/components/agenda/agendaStatus";
+import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
-import { usePodeAcessar } from "@/hooks/usePodeAcessar";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -66,7 +66,9 @@ function clinicorpErrorMessage(err: unknown): string {
 }
 
 function AgendaPage() {
-  const podeAcessar = usePodeAcessar();
+  // Configurações > Agenda é só do admin: para os outros perfis o botão levava a "Acesso negado"
+  const { user: authUser } = useAuth();
+  const isAdmin = authUser?.role === "admin";
   const [currentDate, setCurrentDate] = useState(new Date());
   const [profs, setProfs] = useState<Prof[]>([]);
   const [listaEsperaOpen, setListaEsperaOpen] = useState(false);
@@ -174,7 +176,9 @@ function AgendaPage() {
   const loadRef = useRef(loadAppointments);
   loadRef.current = loadAppointments;
   useVpsEvent<{ data?: string }>("agendamento_changed", (evt) => {
-    if (!evt?.data || evt.data === currentDateRef.current) loadRef.current();
+    // O servidor às vezes manda a data como "2026-11-12T03:00:00.000Z" (DATE serializado):
+    // compara só AAAA-MM-DD, senão confirmação do paciente/edição de outro usuário não aparecia
+    if (!evt?.data || String(evt.data).slice(0, 10) === currentDateRef.current) loadRef.current();
   });
 
 
@@ -212,7 +216,7 @@ function AgendaPage() {
   const visibleProfs = profs.filter((p) => selectedProfs.includes(p.id));
   const visibleApts = appointments.filter((a) => {
     const matchProf = !a.dentista_id || selectedProfs.includes(a.dentista_id);
-    const matchStatus = selectedStatuses.includes(a.status || "agendado");
+    const matchStatus = selectedStatuses.includes(statusDoFiltro(a.status));
     return matchProf && matchStatus;
   });
 
@@ -336,7 +340,7 @@ function AgendaPage() {
               <Users className="h-4 w-4 mr-2 text-primary" />
               Lista de espera
             </Button>
-            <ListaEsperaDialog open={listaEsperaOpen} onOpenChange={setListaEsperaOpen} professionals={profs} />
+            <ListaEsperaDialog open={listaEsperaOpen} onOpenChange={setListaEsperaOpen} professionals={profs.filter((p) => p.id !== "__sem_dentista__")} />
             {clinicorpAtivo && (
                 <Button
                   size="sm"
@@ -364,8 +368,7 @@ function AgendaPage() {
             <Button size="sm" variant="outline" className="rounded-xl glass-card hover:bg-primary/10 transition-colors" onClick={loadAppointments} disabled={loading} aria-label="Recarregar agenda">
               <RefreshCw className={`h-4 w-4 text-primary ${loading ? "animate-spin" : ""}`} />
             </Button>
-            {/* Só admin abre /configuracoes/agenda: para os outros perfis o botão levava a "Acesso negado" */}
-            {podeAcessar("/configuracoes/agenda") && (
+            {isAdmin && (
               <Link to="/configuracoes/agenda">
                 <Button size="sm" variant="outline" className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider">
                   <Settings className="h-4 w-4 mr-2 text-primary" /> Config
@@ -442,7 +445,9 @@ function AgendaPage() {
       />
 
       <AgendamentoPopover
-        appointment={popoverApt}
+        // Depois de mudar status/liberar horário a agenda recarrega: mostra a versão nova
+        // (antes o popover seguia com o status antigo e o botão já usado)
+        appointment={popoverApt ? appointments.find((a) => a.id === popoverApt.id) ?? popoverApt : null}
         open={!!popoverApt}
         onOpenChange={(v) => !v && setPopoverApt(null)}
         onChanged={loadAppointments}

@@ -16,7 +16,7 @@ import { ExecucaoModal } from "@/components/orcamentos/ExecucaoModal";
 import { OrcamentoPrintPreview } from "@/components/orcamentos/OrcamentoPrintPreview";
 import { DEFAULT_PRINT_CONFIG } from "@/components/orcamentos/types";
 import { usePapel } from "@/hooks/usePodeAcessar";
-import { formatBRL } from "@/lib/formatos";
+import { formatBRL, textoParcelas } from "@/lib/formatos";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -582,7 +582,7 @@ function BudgetDetail({ budget: b, onStatusChange, onExecute, onPrint, onEdit, o
               <p className="text-xs font-medium text-foreground">{b.forma_pagamento}</p>
               {b.parcelas > 1 && (
                 <p className="text-[11px] text-muted-foreground">
-                  {b.parcelas}x de {formatBRL(finalValue / b.parcelas)}
+                  {textoParcelas(finalValue, b.parcelas)}
                 </p>
               )}
             </div>
